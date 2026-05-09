@@ -2,8 +2,11 @@ import XCTest
 @testable import IrockPerformanceKit
 
 final class IrockPerformanceKitTests: XCTestCase {
-    func testModuleNameAndDependency() {
-        XCTAssertEqual(IrockPerformanceKitModule.name, "IrockPerformanceKit")
-        XCTAssertEqual(IrockPerformanceKitModule.coreName, "IrockCore")
+    func testPerformanceBudgetStoresAlphaTargets() {
+        let budget = PerformanceBudget.alphaFlagship
+
+        XCTAssertEqual(budget.minimumThroughputMbps, 600)
+        XCTAssertEqual(budget.maximumAddedLatencyMs, 10)
+        XCTAssertEqual(budget.maximumTunnelMemoryMB, 50)
     }
 }

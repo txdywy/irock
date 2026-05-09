@@ -1,6 +1,17 @@
-import IrockCore
+public struct PerformanceBudget: Equatable, Sendable {
+    public let minimumThroughputMbps: Int
+    public let maximumAddedLatencyMs: Int
+    public let maximumTunnelMemoryMB: Int
 
-public enum IrockPerformanceKitModule {
-    public static let name = "IrockPerformanceKit"
-    public static let coreName = IrockCoreModule.name
+    public static let alphaFlagship = PerformanceBudget(
+        minimumThroughputMbps: 600,
+        maximumAddedLatencyMs: 10,
+        maximumTunnelMemoryMB: 50
+    )
+
+    public init(minimumThroughputMbps: Int, maximumAddedLatencyMs: Int, maximumTunnelMemoryMB: Int) {
+        self.minimumThroughputMbps = minimumThroughputMbps
+        self.maximumAddedLatencyMs = maximumAddedLatencyMs
+        self.maximumTunnelMemoryMB = maximumTunnelMemoryMB
+    }
 }
