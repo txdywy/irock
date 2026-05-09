@@ -629,9 +629,13 @@ Expected: FAIL because `ProxyNode`, `NodeID`, `TLSOptions`, `RuntimeSnapshot`, a
 
 - [ ] **Step 3: Implement core domain models**
 
-Replace `packages/IrockCore/Sources/IrockCore/IrockCore.swift` with this content:
+Replace `packages/IrockCore/Sources/IrockCore/IrockCore.swift` with this content. Keep `IrockCoreModule` because Task 2 module smoke tests still use it:
 
 ```swift
+public enum IrockCoreModule {
+    public static let name = "IrockCore"
+}
+
 public struct NodeID: Hashable, Codable, Sendable {
     public let rawValue: String
 
