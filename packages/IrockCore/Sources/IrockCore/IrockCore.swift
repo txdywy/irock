@@ -35,10 +35,14 @@ public enum TransportType: String, Codable, Sendable {
     case quic
 }
 
-public enum ProxyCredentials: Equatable, Codable, Sendable {
-    case password(String)
-    case uuid(String)
-    case token(String)
+public struct CredentialReference: Equatable, Codable, Sendable {
+    public let keychainService: String
+    public let account: String
+
+    public init(keychainService: String, account: String) {
+        self.keychainService = keychainService
+        self.account = account
+    }
 }
 
 public struct RealityOptions: Equatable, Codable, Sendable {
@@ -91,7 +95,7 @@ public struct ProxyNode: Equatable, Codable, Sendable {
     public let protocolType: ProxyProtocolType
     public let serverHost: String
     public let serverPort: Int
-    public let credentials: ProxyCredentials
+    public let credentialReference: CredentialReference
     public let transport: TransportType
     public let tls: TLSOptions
     public let udpPolicy: UDPPolicy
@@ -102,7 +106,7 @@ public struct ProxyNode: Equatable, Codable, Sendable {
         protocolType: ProxyProtocolType,
         serverHost: String,
         serverPort: Int,
-        credentials: ProxyCredentials,
+        credentialReference: CredentialReference,
         transport: TransportType,
         tls: TLSOptions,
         udpPolicy: UDPPolicy
@@ -112,7 +116,7 @@ public struct ProxyNode: Equatable, Codable, Sendable {
         self.protocolType = protocolType
         self.serverHost = serverHost
         self.serverPort = serverPort
-        self.credentials = credentials
+        self.credentialReference = credentialReference
         self.transport = transport
         self.tls = tls
         self.udpPolicy = udpPolicy

@@ -33,9 +33,11 @@ public struct RoutingDecision: Equatable, Sendable {
 
 public struct RoutingEngine: Sendable {
     private let rules: [RoutingRule]
+    private let defaultAction: RoutingAction
 
-    public init(rules: [RoutingRule]) {
+    public init(rules: [RoutingRule], defaultAction: RoutingAction = .reject) {
         self.rules = rules
+        self.defaultAction = defaultAction
     }
 
     public func resolve(_ context: RoutingContext) -> RoutingDecision {
@@ -53,7 +55,7 @@ public struct RoutingEngine: Sendable {
             }
         }
 
-        return RoutingDecision(action: .direct, matchedRule: nil)
+        return RoutingDecision(action: defaultAction, matchedRule: nil)
     }
 }
 

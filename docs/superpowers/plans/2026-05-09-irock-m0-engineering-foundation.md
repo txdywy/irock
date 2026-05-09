@@ -574,7 +574,7 @@ final class IrockCoreTests: XCTestCase {
             protocolType: .vless,
             serverHost: "example.com",
             serverPort: 443,
-            credentials: .uuid("00000000-0000-0000-0000-000000000000"),
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
             transport: .grpc,
             tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: "chrome", reality: nil),
             udpPolicy: .enabled
@@ -597,7 +597,7 @@ final class IrockCoreTests: XCTestCase {
             protocolType: .shadowsocks,
             serverHost: "127.0.0.1",
             serverPort: 8388,
-            credentials: .password("secret"),
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
             transport: .tcp,
             tls: .disabled,
             udpPolicy: .disabled
@@ -669,10 +669,14 @@ public enum TransportType: String, Codable, Sendable {
     case quic
 }
 
-public enum ProxyCredentials: Equatable, Codable, Sendable {
-    case password(String)
-    case uuid(String)
-    case token(String)
+public struct CredentialReference: Equatable, Codable, Sendable {
+    public let keychainService: String
+    public let account: String
+
+    public init(keychainService: String, account: String) {
+        self.keychainService = keychainService
+        self.account = account
+    }
 }
 
 public struct RealityOptions: Equatable, Codable, Sendable {
@@ -725,7 +729,7 @@ public struct ProxyNode: Equatable, Codable, Sendable {
     public let protocolType: ProxyProtocolType
     public let serverHost: String
     public let serverPort: Int
-    public let credentials: ProxyCredentials
+    public let credentialReference: CredentialReference
     public let transport: TransportType
     public let tls: TLSOptions
     public let udpPolicy: UDPPolicy
@@ -736,7 +740,7 @@ public struct ProxyNode: Equatable, Codable, Sendable {
         protocolType: ProxyProtocolType,
         serverHost: String,
         serverPort: Int,
-        credentials: ProxyCredentials,
+        credentialReference: CredentialReference,
         transport: TransportType,
         tls: TLSOptions,
         udpPolicy: UDPPolicy
@@ -746,7 +750,7 @@ public struct ProxyNode: Equatable, Codable, Sendable {
         self.protocolType = protocolType
         self.serverHost = serverHost
         self.serverPort = serverPort
-        self.credentials = credentials
+        self.credentialReference = credentialReference
         self.transport = transport
         self.tls = tls
         self.udpPolicy = udpPolicy
@@ -872,7 +876,7 @@ final class IrockProtocolsTests: XCTestCase {
             protocolType: .trojan,
             serverHost: "example.com",
             serverPort: 443,
-            credentials: .password("secret"),
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
             transport: .tcp,
             tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil),
             udpPolicy: .disabled
@@ -891,7 +895,7 @@ final class IrockProtocolsTests: XCTestCase {
             protocolType: .tuic,
             serverHost: "example.com",
             serverPort: 443,
-            credentials: .token("token"),
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
             transport: .quic,
             tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil),
             udpPolicy: .enabled
@@ -1091,7 +1095,7 @@ final class IrockStorageTests: XCTestCase {
             protocolType: .shadowsocks,
             serverHost: "127.0.0.1",
             serverPort: 8388,
-            credentials: .password("secret"),
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
             transport: .tcp,
             tls: .disabled,
             udpPolicy: .disabled
@@ -1195,9 +1199,11 @@ public struct RoutingDecision: Equatable, Sendable {
 
 public struct RoutingEngine: Sendable {
     private let rules: [RoutingRule]
+    private let defaultAction: RoutingAction
 
-    public init(rules: [RoutingRule]) {
+    public init(rules: [RoutingRule], defaultAction: RoutingAction = .reject) {
         self.rules = rules
+        self.defaultAction = defaultAction
     }
 
     public func resolve(_ context: RoutingContext) -> RoutingDecision {
@@ -1212,7 +1218,7 @@ public struct RoutingEngine: Sendable {
             }
         }
 
-        return RoutingDecision(action: .direct, matchedRule: nil)
+        return RoutingDecision(action: defaultAction, matchedRule: nil)
     }
 }
 ```

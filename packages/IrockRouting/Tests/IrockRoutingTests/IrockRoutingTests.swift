@@ -25,4 +25,12 @@ final class IrockRoutingTests: XCTestCase {
         XCTAssertEqual(decision.action, .direct)
         XCTAssertEqual(decision.matchedRule, .domainSuffix("apple.com", .direct))
     }
+
+    func testNoMatchUsesExplicitDefaultAction() {
+        let engine = RoutingEngine(rules: [.domainSuffix("apple.com", .proxy)], defaultAction: .reject)
+        let decision = engine.resolve(RoutingContext(host: "example.com", ipAddress: nil, port: 443))
+
+        XCTAssertEqual(decision.action, .reject)
+        XCTAssertNil(decision.matchedRule)
+    }
 }

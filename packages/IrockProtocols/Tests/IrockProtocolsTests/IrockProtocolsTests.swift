@@ -10,7 +10,7 @@ final class IrockProtocolsTests: XCTestCase {
             protocolType: .trojan,
             serverHost: "example.com",
             serverPort: 443,
-            credentials: .password("secret"),
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
             transport: .tcp,
             tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil),
             udpPolicy: .disabled
@@ -29,7 +29,7 @@ final class IrockProtocolsTests: XCTestCase {
             protocolType: .tuic,
             serverHost: "example.com",
             serverPort: 443,
-            credentials: .token("token"),
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
             transport: .quic,
             tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil),
             udpPolicy: .enabled
