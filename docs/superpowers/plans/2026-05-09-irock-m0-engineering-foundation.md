@@ -92,7 +92,6 @@ build/
 # Swift Package Manager
 .build/
 .swiftpm/
-Package.resolved
 
 # Planning/runtime scratch state
 .omc/
