@@ -15,3 +15,11 @@ M0 builds the engineering foundation:
 ## Design
 
 See `docs/superpowers/specs/2026-05-09-irock-design.md`.
+
+## Implementation plans
+
+- M0: `docs/superpowers/plans/2026-05-09-irock-m0-engineering-foundation.md`
+
+## Xcode targets
+
+See `apps/XCODE_TARGETS.md` for the required iOS/macOS app and Packet Tunnel target layout.
