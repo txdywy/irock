@@ -16,6 +16,7 @@ build/
 # Planning/runtime scratch state
 .omc/
 .superpowers/
+.claude/worktrees/
 
 # Secrets and local signing
 *.mobileprovision
