@@ -172,7 +172,34 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["destination"], "host:apple.com:443")
     }
 
-    private func makeNode(protocolType: ProxyProtocolType, transport: TransportType) -> ProxyNode {
+    func testTransportBackedProxyAdapterRejectsProtocolMismatchBeforeOpeningTransport() async {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = TransportBackedProxyAdapter(protocolType: .trojan, transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .vmess, transport: .tcp), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected unsupported protocol")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .unsupportedProtocol(.vmess))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testTransportBackedProxyAdapterOmitsDisabledTLS() async throws {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = TransportBackedProxyAdapter(protocolType: .trojan, transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .trojan, transport: .tcp, tls: .disabled), destination: .ipv4("93.184.216.34", port: 443))
+
+        _ = try await adapter.connect(request: request)
+
+        XCTAssertNil(transport.requests.first?.tls)
+        XCTAssertEqual(transport.requests.first?.metadata["destination"], "ipv4:93.184.216.34:443")
+    }
+
+    private func makeNode(protocolType: ProxyProtocolType, transport: TransportType, tls: TLSOptions = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)) -> ProxyNode {
         ProxyNode(
             id: NodeID(rawValue: "node-1"),
             name: "Demo Node",
@@ -181,7 +208,7 @@ final class IrockProtocolsTests: XCTestCase {
             serverPort: 443,
             credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
             transport: transport,
-            tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil),
+            tls: tls,
             udpPolicy: .disabled
         )
     }
