@@ -182,7 +182,9 @@ public struct RuntimeRoutingRule: Equatable, Codable, Sendable {
 }
 
 public struct RuntimeRoutingRuleManifest: Equatable, Codable, Sendable {
-    public static let empty = RuntimeRoutingRuleManifest(version: 1, rules: [])
+    public static var empty: RuntimeRoutingRuleManifest {
+        RuntimeRoutingRuleManifest(version: 1, rules: [])
+    }
 
     public let version: Int
     public let rules: [RuntimeRoutingRule]
