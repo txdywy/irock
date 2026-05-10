@@ -11,7 +11,7 @@ final class PacketTunnelRuntimeTests: XCTestCase {
         let malformedPacket = Packet(id: "bad", bytes: [0x45])
         let reader = InMemoryPacketReader(packets: [validPacket, malformedPacket])
         let writer = InMemoryPacketWriter()
-        let runtime = PacketTunnelRuntime(reader: reader, writer: writer, configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), batchLimit: 16, flowLimit: 32))
+        let runtime = PacketTunnelRuntime(reader: reader, writer: writer, configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), proxyAdapterRegistry: ProxyAdapterRegistry(adapters: [RuntimeRecordingProxyAdapter(protocolType: .trojan)]), batchLimit: 16, flowLimit: 32))
 
         let summary = try await runtime.runOnce()
 
@@ -32,7 +32,7 @@ final class PacketTunnelRuntimeTests: XCTestCase {
         let runtime = PacketTunnelRuntime(
             reader: reader,
             writer: writer,
-            configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), batchLimit: 16, flowLimit: 32),
+            configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), proxyAdapterRegistry: ProxyAdapterRegistry(adapters: [RuntimeRecordingProxyAdapter(protocolType: .trojan)]), batchLimit: 16, flowLimit: 32),
             reporter: reporter
         )
 
@@ -55,7 +55,7 @@ final class PacketTunnelRuntimeTests: XCTestCase {
         let runtime = PacketTunnelRuntime(
             reader: reader,
             writer: writer,
-            configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), batchLimit: 16, flowLimit: 32),
+            configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), proxyAdapterRegistry: ProxyAdapterRegistry(adapters: [RuntimeRecordingProxyAdapter(protocolType: .trojan)]), batchLimit: 16, flowLimit: 32),
             reporter: reporter
         )
 
@@ -74,7 +74,7 @@ final class PacketTunnelRuntimeTests: XCTestCase {
         let runtime = PacketTunnelRuntime(
             reader: reader,
             writer: writer,
-            configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), batchLimit: 16, flowLimit: 32),
+            configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), proxyAdapterRegistry: ProxyAdapterRegistry(adapters: [RuntimeRecordingProxyAdapter(protocolType: .trojan)]), batchLimit: 16, flowLimit: 32),
             reporter: reporter
         )
 
@@ -107,7 +107,7 @@ final class PacketTunnelRuntimeTests: XCTestCase {
             XCTAssertEqual(status.selectedNodeID, NodeID(rawValue: "node-1"))
             XCTAssertEqual(status.selectedNodeName, "Demo")
             XCTAssertEqual(status.message, "Packet batch failed")
-            XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Tunnel runtime failed"])
+            XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Packet batch failed"])
         } catch {
             XCTFail("Expected packet reader error, got \(error)")
         }
@@ -123,7 +123,7 @@ final class PacketTunnelRuntimeTests: XCTestCase {
         let runtime = PacketTunnelRuntime(
             reader: reader,
             writer: writer,
-            configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), batchLimit: 16, flowLimit: 32),
+            configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), proxyAdapterRegistry: ProxyAdapterRegistry(adapters: [RuntimeRecordingProxyAdapter(protocolType: .trojan)]), batchLimit: 16, flowLimit: 32),
             reporter: reporter
         )
 
@@ -136,10 +136,37 @@ final class PacketTunnelRuntimeTests: XCTestCase {
             XCTAssertEqual(status.selectedNodeID, NodeID(rawValue: "node-1"))
             XCTAssertEqual(status.selectedNodeName, "Demo")
             XCTAssertEqual(status.message, "Packet batch failed")
-            XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Tunnel runtime failed"])
+            XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Packet batch failed"])
         } catch {
             XCTFail("Expected packet writer error, got \(error)")
         }
+    }
+
+    func testRuntimeConnectsProxyResultsBeforeWritingBatch() async throws {
+        let adapter = RuntimeRecordingProxyAdapter(protocolType: .trojan)
+        let validPacket = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let reader = InMemoryPacketReader(packets: [validPacket])
+        let writer = InMemoryPacketWriter()
+        let runtime = PacketTunnelRuntime(
+            reader: reader,
+            writer: writer,
+            configuration: TunnelRuntimeConfiguration(
+                snapshot: snapshot(routeMode: .globalProxy),
+                routingEngine: RoutingEngine(rules: [.final(.proxy)]),
+                proxyAdapterRegistry: ProxyAdapterRegistry(adapters: [adapter]),
+                batchLimit: 16,
+                flowLimit: 32
+            )
+        )
+
+        let summary = try await runtime.runOnce()
+
+        XCTAssertEqual(summary.readCount, 1)
+        XCTAssertEqual(summary.writtenCount, 1)
+        XCTAssertEqual(summary.dropCount, 0)
+        XCTAssertEqual(summary.proxyConnectCount, 1)
+        XCTAssertEqual(adapter.connectCount, 1)
+        XCTAssertEqual(writer.writtenResults.count, 1)
     }
 
     func testConfigurationStoresProxyAdapterRegistry() async throws {
