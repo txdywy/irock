@@ -30,4 +30,10 @@ final class AppFeatureModelsTests: XCTestCase {
         XCTAssertEqual(ConnectionStatus.connected.displayText, "已连接")
         XCTAssertEqual(ConnectionStatus.failed.displayText, "连接失败")
     }
+
+    @MainActor
+    func testRootViewCanBeConstructed() {
+        let viewModel = AppViewModel(nodes: [])
+        _ = IrockRootView(viewModel: viewModel)
+    }
 }
