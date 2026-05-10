@@ -191,3 +191,23 @@ public struct TransportBackedProxyAdapter: ProxyAdapter {
         }
     }
 }
+
+public struct ShadowsocksProxyAdapter: ProxyAdapter {
+    public let supportedProtocol: ProxyProtocolType = .shadowsocks
+    private let transportBackedAdapter: TransportBackedProxyAdapter
+
+    public init(transportRegistry: TransportAdapterRegistry) {
+        self.transportBackedAdapter = TransportBackedProxyAdapter(protocolType: .shadowsocks, transportRegistry: transportRegistry)
+    }
+
+    public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
+        try validate(request.node)
+        return try await transportBackedAdapter.connect(request: request)
+    }
+
+    private func validate(_ node: ProxyNode) throws {
+        guard node.protocolType == .shadowsocks else {
+            throw ProxyProtocolError.unsupportedProtocol(node.protocolType)
+        }
+    }
+}

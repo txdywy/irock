@@ -199,6 +199,30 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["destination"], "ipv4:93.184.216.34:443")
     }
 
+    func testShadowsocksProxyAdapterReportsSupportedProtocol() {
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: []))
+
+        XCTAssertEqual(adapter.supportedProtocol, .shadowsocks)
+    }
+
+    func testShadowsocksProxyAdapterOpensTCPTransportAndReturnsProxyConnection() async throws {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let node = makeNode(protocolType: .shadowsocks, transport: .tcp)
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests.first?.host, "example.com")
+        XCTAssertEqual(transport.requests.first?.port, 443)
+        XCTAssertEqual(transport.requests.first?.transport, .tcp)
+        XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "shadowsocks")
+    }
+
     func testTransportBackedProxyAdapterMapsTransportErrorsToProtocolErrors() async {
         let cases: [(TransportError, ProxyProtocolError)] = [
             (.invalidConfiguration("secret invalid"), .invalidConfiguration("transport invalid")),
