@@ -142,6 +142,34 @@ final class PacketTunnelRuntimeTests: XCTestCase {
         }
     }
 
+    func testRuntimeConnectsProxyResultsOncePerFlowBeforeWritingBatch() async throws {
+        let adapter = RuntimeRecordingProxyAdapter(protocolType: .trojan)
+        let firstPacket = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let secondPacket = Packet.ipv4TCP(id: "tcp-2", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let reader = InMemoryPacketReader(packets: [firstPacket, secondPacket])
+        let writer = InMemoryPacketWriter()
+        let runtime = PacketTunnelRuntime(
+            reader: reader,
+            writer: writer,
+            configuration: TunnelRuntimeConfiguration(
+                snapshot: snapshot(routeMode: .globalProxy),
+                routingEngine: RoutingEngine(rules: [.final(.proxy)]),
+                proxyAdapterRegistry: ProxyAdapterRegistry(adapters: [adapter]),
+                batchLimit: 16,
+                flowLimit: 32
+            )
+        )
+
+        let summary = try await runtime.runOnce()
+
+        XCTAssertEqual(summary.readCount, 2)
+        XCTAssertEqual(summary.writtenCount, 2)
+        XCTAssertEqual(summary.dropCount, 0)
+        XCTAssertEqual(summary.proxyConnectCount, 1)
+        XCTAssertEqual(adapter.connectCount, 1)
+        XCTAssertEqual(writer.writtenResults.count, 2)
+    }
+
     func testRuntimeConnectsProxyResultsBeforeWritingBatch() async throws {
         let adapter = RuntimeRecordingProxyAdapter(protocolType: .trojan)
         let validPacket = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)

@@ -76,8 +76,12 @@ public struct PacketTunnelRuntime<Reader: PacketReader, Writer: PacketWriter>: S
 
     private func connectProxyResults(_ results: [PacketProcessingResult]) async throws -> Int {
         let outbound = ProxyOutbound(node: configuration.snapshot.selectedNode, registry: configuration.proxyAdapterRegistry)
+        var connectedFlows: Set<FlowKey> = []
         var connectCount = 0
         for result in results {
+            guard let flowKey = result.flowKey, connectedFlows.insert(flowKey).inserted else {
+                continue
+            }
             if try await outbound.connect(result: result) != nil {
                 connectCount += 1
             }
