@@ -34,18 +34,63 @@ public struct EstablishedTransportConnection: TransportConnection, Equatable, Se
     }
 }
 
-public enum TransportError: Error, Equatable, Sendable {
+public enum TransportError: Error, Equatable, CustomStringConvertible, Sendable {
+    case invalidConfiguration(String)
+    case dnsFailed(String)
+    case tcpConnectFailed(String)
+    case tlsHandshakeFailed(String)
     case unsupportedTransport(TransportType)
+    case quicHandshakeFailed(String)
+    case remoteClosed
+    case timeout
+
+    public var description: String {
+        switch self {
+        case .invalidConfiguration:
+            return "Invalid configuration"
+        case .dnsFailed:
+            return "DNS failed"
+        case .tcpConnectFailed:
+            return "TCP connect failed"
+        case .tlsHandshakeFailed:
+            return "TLS handshake failed"
+        case let .unsupportedTransport(transport):
+            return "Unsupported transport: \(transport.rawValue)"
+        case .quicHandshakeFailed:
+            return "QUIC handshake failed"
+        case .remoteClosed:
+            return "Remote closed"
+        case .timeout:
+            return "Timeout"
+        }
+    }
 }
 
 public protocol TransportAdapter: Sendable {
-    func open(_ request: TransportRequest) async throws -> any TransportConnection
+    var supportedTransport: TransportType { get }
+    func open(request: TransportRequest) async throws -> any TransportConnection
+}
+
+public struct UnsupportedTransportAdapter: TransportAdapter {
+    public let supportedTransport: TransportType
+
+    public init(transport: TransportType) {
+        self.supportedTransport = transport
+    }
+
+    public func open(request: TransportRequest) async throws -> any TransportConnection {
+        throw TransportError.unsupportedTransport(request.transport)
+    }
 }
 
 public struct NoopTransportAdapter: TransportAdapter {
-    public init() {}
+    public let supportedTransport: TransportType
 
-    public func open(_ request: TransportRequest) async throws -> any TransportConnection {
+    public init(transport: TransportType = .tcp) {
+        self.supportedTransport = transport
+    }
+
+    public func open(request: TransportRequest) async throws -> any TransportConnection {
         throw TransportError.unsupportedTransport(request.transport)
     }
 }
