@@ -117,6 +117,51 @@ final class AppViewModelsTests: XCTestCase {
         XCTAssertTrue(model.overviewState.recentLogMessages.contains { $0.contains("Routing rules invalid") })
     }
 
+    @MainActor
+    func testAppViewModelRefreshesRuntimeFeedback() throws {
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+        let status = RuntimeConnectionStatus(
+            phase: .connected,
+            selectedNodeID: NodeID(rawValue: "node-1"),
+            selectedNodeName: "Demo",
+            updatedAt: Date(timeIntervalSince1970: 1_715_000_030),
+            message: "Connected"
+        )
+        let log = RuntimeLogEntry(
+            id: "log-1",
+            timestamp: Date(timeIntervalSince1970: 1_715_000_031),
+            level: .user,
+            message: "Tunnel runtime connected",
+            nodeID: NodeID(rawValue: "node-1"),
+            phase: .connected
+        )
+        try statusStore.save(status)
+        try logStore.append(log)
+        let model = AppViewModel(nodes: [], runtimeStatusStore: statusStore, runtimeLogStore: logStore)
+
+        let result = model.refreshRuntimeFeedback()
+
+        XCTAssertEqual(result, .refreshed)
+        XCTAssertEqual(model.runtimeConnectionStatus, status)
+        XCTAssertEqual(model.runtimeLogs, [log])
+        XCTAssertEqual(model.overviewState.connectionStatus, .connected)
+        XCTAssertEqual(model.overviewState.recentLogMessages, ["Tunnel runtime connected"])
+    }
+
+    @MainActor
+    func testAppViewModelRefreshUsesDisconnectedWhenStatusIsMissing() throws {
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+        let model = AppViewModel(nodes: [], runtimeStatusStore: statusStore, runtimeLogStore: logStore)
+
+        let result = model.refreshRuntimeFeedback()
+
+        XCTAssertEqual(result, .refreshed)
+        XCTAssertEqual(model.runtimeConnectionStatus?.phase, .disconnected)
+        XCTAssertEqual(model.overviewState.connectionStatus, .disconnected)
+    }
+
     private func makeNode(id: String, name: String) -> ProxyNode {
         ProxyNode(
             id: NodeID(rawValue: id),

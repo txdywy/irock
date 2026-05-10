@@ -2,20 +2,40 @@ import Foundation
 import IrockCore
 import IrockStorage
 
+public enum RuntimeFeedbackRefreshResult: Equatable, Sendable {
+    case refreshed
+    case statusLoadFailed(String)
+    case logLoadFailed(String)
+}
+
 @MainActor
 public final class AppViewModel: ObservableObject {
     @Published public private(set) var overviewState: OverviewState
     @Published public private(set) var nodeListState: NodeListState
     @Published public private(set) var settingsState: SettingsState
+    @Published public private(set) var runtimeConnectionStatus: RuntimeConnectionStatus?
+    @Published public private(set) var runtimeLogs: [RuntimeLogEntry]
 
     private let logLimit: Int
     private let runtimeSnapshotPublisher: RuntimeSnapshotPublisher
+    private let runtimeStatusStore: RuntimeStatusStore
+    private let runtimeLogStore: RuntimeLogStore
     private var routingRuleText: String
 
-    public init(nodes: [ProxyNode], logLimit: Int = 5, runtimeSnapshotStore: RuntimeSnapshotStore = InMemoryRuntimeSnapshotStore()) {
+    public init(
+        nodes: [ProxyNode],
+        logLimit: Int = 5,
+        runtimeSnapshotStore: RuntimeSnapshotStore = InMemoryRuntimeSnapshotStore(),
+        runtimeStatusStore: RuntimeStatusStore = InMemoryRuntimeStatusStore(),
+        runtimeLogStore: RuntimeLogStore = InMemoryRuntimeLogStore()
+    ) {
         self.logLimit = max(0, logLimit)
         self.runtimeSnapshotPublisher = RuntimeSnapshotPublisher(store: runtimeSnapshotStore)
+        self.runtimeStatusStore = runtimeStatusStore
+        self.runtimeLogStore = runtimeLogStore
         self.routingRuleText = ""
+        self.runtimeConnectionStatus = nil
+        self.runtimeLogs = []
         self.nodeListState = NodeListState(nodes: nodes, selectedNodeID: nil)
         self.overviewState = OverviewState(connectionStatus: .disconnected, selectedNode: nil, routeMode: .ruleBased, recentLogMessages: [])
         self.settingsState = SettingsState(vpnPermissionStatus: "未配置", appGroupStatus: "未验证", debugLoggingEnabled: false)
@@ -62,6 +82,46 @@ public final class AppViewModel: ObservableObject {
         }
 
         return result
+    }
+
+    @discardableResult
+    public func refreshRuntimeFeedback() -> RuntimeFeedbackRefreshResult {
+        let status: RuntimeConnectionStatus
+        do {
+            status = try runtimeStatusStore.load() ?? .disconnected()
+        } catch {
+            return .statusLoadFailed(String(describing: error))
+        }
+
+        let logs: [RuntimeLogEntry]
+        do {
+            logs = try runtimeLogStore.loadRecent()
+        } catch {
+            return .logLoadFailed(String(describing: error))
+        }
+
+        runtimeConnectionStatus = status
+        runtimeLogs = logs
+        overviewState = OverviewState(
+            connectionStatus: appConnectionStatus(from: status.phase),
+            selectedNode: overviewState.selectedNode,
+            routeMode: overviewState.routeMode,
+            recentLogMessages: Array(logs.suffix(logLimit).map(\.message))
+        )
+        return .refreshed
+    }
+
+    private func appConnectionStatus(from phase: RuntimeConnectionPhase) -> ConnectionStatus {
+        switch phase {
+        case .disconnected, .disconnecting:
+            return .disconnected
+        case .preparing, .connecting, .reconnecting:
+            return .connecting
+        case .connected:
+            return .connected
+        case .failed:
+            return .failed
+        }
     }
 
     public func appendLog(_ message: String) {
