@@ -93,6 +93,14 @@ public final class AppViewModel: ObservableObject {
             return .statusLoadFailed(String(describing: error))
         }
 
+        runtimeConnectionStatus = status
+        overviewState = OverviewState(
+            connectionStatus: appConnectionStatus(from: status.phase),
+            selectedNode: overviewState.selectedNode,
+            routeMode: overviewState.routeMode,
+            recentLogMessages: overviewState.recentLogMessages
+        )
+
         let logs: [RuntimeLogEntry]
         do {
             logs = try runtimeLogStore.loadRecent()
@@ -100,7 +108,6 @@ public final class AppViewModel: ObservableObject {
             return .logLoadFailed(String(describing: error))
         }
 
-        runtimeConnectionStatus = status
         runtimeLogs = logs
         overviewState = OverviewState(
             connectionStatus: appConnectionStatus(from: status.phase),

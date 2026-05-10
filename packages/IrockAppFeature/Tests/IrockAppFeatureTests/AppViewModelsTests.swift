@@ -162,6 +162,43 @@ final class AppViewModelsTests: XCTestCase {
         XCTAssertEqual(model.overviewState.connectionStatus, .disconnected)
     }
 
+    @MainActor
+    func testAppViewModelRefreshAppliesStatusWhenLogLoadFails() throws {
+        let statusStore = InMemoryRuntimeStatusStore()
+        let status = RuntimeConnectionStatus(
+            phase: .connected,
+            selectedNodeID: NodeID(rawValue: "node-1"),
+            selectedNodeName: "Demo",
+            updatedAt: Date(timeIntervalSince1970: 1_715_000_032),
+            message: "Connected"
+        )
+        try statusStore.save(status)
+        let model = AppViewModel(nodes: [], runtimeStatusStore: statusStore, runtimeLogStore: ThrowingRuntimeLogStore())
+
+        let result = model.refreshRuntimeFeedback()
+
+        guard case .logLoadFailed(let message) = result else {
+            return XCTFail("Expected logLoadFailed result")
+        }
+        XCTAssertTrue(message.contains("loadFailed"))
+        XCTAssertEqual(model.runtimeConnectionStatus, status)
+        XCTAssertEqual(model.overviewState.connectionStatus, .connected)
+    }
+
+    private struct ThrowingRuntimeLogStore: RuntimeLogStore {
+        func append(_ entry: RuntimeLogEntry) throws {}
+
+        func loadRecent() throws -> [RuntimeLogEntry] {
+            throw TestError.loadFailed
+        }
+
+        func clear() throws {}
+    }
+
+    private enum TestError: Error {
+        case loadFailed
+    }
+
     private func makeNode(id: String, name: String) -> ProxyNode {
         ProxyNode(
             id: NodeID(rawValue: id),
