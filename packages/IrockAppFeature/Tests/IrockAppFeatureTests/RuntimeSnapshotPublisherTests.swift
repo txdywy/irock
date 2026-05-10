@@ -50,6 +50,33 @@ final class RuntimeSnapshotPublisherTests: XCTestCase {
         XCTAssertTrue(message.contains("write failed"))
     }
 
+    func testPublisherSavesRoutingRuleManifest() throws {
+        let store = InMemoryRuntimeSnapshotStore()
+        let publisher = RuntimeSnapshotPublisher(store: store)
+        let manifest = RuntimeRoutingRuleManifest(
+            version: 1,
+            rules: [RuntimeRoutingRule(kind: .domainSuffix, value: "apple.com", action: .direct)]
+        )
+
+        _ = publisher.publish(
+            selectedNode: makeNode(id: "node-1", name: "Demo"),
+            routeMode: .ruleBased,
+            logLevel: .user,
+            routingRuleManifest: manifest
+        )
+
+        XCTAssertEqual(try store.load()?.routingRuleManifest, manifest)
+    }
+
+    func testPublisherDefaultsToEmptyRoutingRuleManifest() throws {
+        let store = InMemoryRuntimeSnapshotStore()
+        let publisher = RuntimeSnapshotPublisher(store: store)
+
+        _ = publisher.publish(selectedNode: makeNode(id: "node-1", name: "Demo"), routeMode: .ruleBased, logLevel: .user)
+
+        XCTAssertEqual(try store.load()?.routingRuleManifest, .empty)
+    }
+
     private func makeNode(id: String, name: String) -> ProxyNode {
         ProxyNode(
             id: NodeID(rawValue: id),

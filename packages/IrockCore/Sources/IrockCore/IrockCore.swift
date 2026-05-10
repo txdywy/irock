@@ -135,16 +135,135 @@ public enum IrockLogLevel: String, Codable, Sendable {
     case debug
 }
 
+public enum RuntimeRoutingAction: String, Codable, Sendable {
+    case direct
+    case proxy
+    case reject
+}
+
+public enum RuntimeRoutingRuleKind: String, Codable, Sendable {
+    case domain
+    case domainSuffix
+    case domainKeyword
+    case ipCIDR
+    case finalRule = "final"
+}
+
+public struct RuntimeRoutingRule: Equatable, Codable, Sendable {
+    public let kind: RuntimeRoutingRuleKind
+    public let value: String?
+    public let action: RuntimeRoutingAction
+
+    public init(kind: RuntimeRoutingRuleKind, value: String?, action: RuntimeRoutingAction) {
+        self.kind = kind
+        self.value = value
+        self.action = action
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case value
+        case action
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.kind = try container.decode(RuntimeRoutingRuleKind.self, forKey: .kind)
+        self.value = try container.decodeIfPresent(String.self, forKey: .value)
+        self.action = try container.decode(RuntimeRoutingAction.self, forKey: .action)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
+        try container.encodeIfPresent(value, forKey: .value)
+        try container.encode(action, forKey: .action)
+    }
+}
+
+public struct RuntimeRoutingRuleManifest: Equatable, Codable, Sendable {
+    public static let empty = RuntimeRoutingRuleManifest(version: 1, rules: [])
+
+    public let version: Int
+    public let rules: [RuntimeRoutingRule]
+
+    public init(version: Int, rules: [RuntimeRoutingRule]) {
+        self.version = version
+        self.rules = rules
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case rules
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.version = try container.decode(Int.self, forKey: .version)
+        self.rules = try container.decode([RuntimeRoutingRule].self, forKey: .rules)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(rules, forKey: .rules)
+    }
+}
+
 public struct RuntimeSnapshot: Equatable, Codable, Sendable {
     public let id: SnapshotID
     public let selectedNode: ProxyNode
     public let routeMode: RouteMode
     public let logLevel: IrockLogLevel
+    public let routingRuleManifest: RuntimeRoutingRuleManifest
 
     public init(id: SnapshotID, selectedNode: ProxyNode, routeMode: RouteMode, logLevel: IrockLogLevel) {
+        self.init(
+            id: id,
+            selectedNode: selectedNode,
+            routeMode: routeMode,
+            logLevel: logLevel,
+            routingRuleManifest: .empty
+        )
+    }
+
+    public init(
+        id: SnapshotID,
+        selectedNode: ProxyNode,
+        routeMode: RouteMode,
+        logLevel: IrockLogLevel,
+        routingRuleManifest: RuntimeRoutingRuleManifest
+    ) {
         self.id = id
         self.selectedNode = selectedNode
         self.routeMode = routeMode
         self.logLevel = logLevel
+        self.routingRuleManifest = routingRuleManifest
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case selectedNode
+        case routeMode
+        case logLevel
+        case routingRuleManifest
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(SnapshotID.self, forKey: .id)
+        self.selectedNode = try container.decode(ProxyNode.self, forKey: .selectedNode)
+        self.routeMode = try container.decode(RouteMode.self, forKey: .routeMode)
+        self.logLevel = try container.decode(IrockLogLevel.self, forKey: .logLevel)
+        self.routingRuleManifest = try container.decodeIfPresent(RuntimeRoutingRuleManifest.self, forKey: .routingRuleManifest) ?? .empty
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(selectedNode, forKey: .selectedNode)
+        try container.encode(routeMode, forKey: .routeMode)
+        try container.encode(logLevel, forKey: .logLevel)
+        try container.encode(routingRuleManifest, forKey: .routingRuleManifest)
     }
 }

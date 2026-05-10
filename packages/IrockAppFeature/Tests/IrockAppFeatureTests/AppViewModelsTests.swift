@@ -68,6 +68,55 @@ final class AppViewModelsTests: XCTestCase {
         XCTAssertTrue(model.overviewState.recentLogMessages.contains("请选择节点后再启动"))
     }
 
+    @MainActor
+    func testAppViewModelPublishesRoutingRuleManifestFromLocalText() throws {
+        let store = InMemoryRuntimeSnapshotStore()
+        let node = makeNode(id: "node-1", name: "Demo")
+        let model = AppViewModel(nodes: [node], runtimeSnapshotStore: store)
+        model.selectNode(id: node.id)
+        model.setRoutingRuleText("DOMAIN-SUFFIX,apple.com,DIRECT\nFINAL,PROXY")
+
+        _ = model.publishRuntimeSnapshot()
+
+        XCTAssertEqual(try store.load()?.routingRuleManifest, RuntimeRoutingRuleManifest(
+            version: 1,
+            rules: [
+                RuntimeRoutingRule(kind: .domainSuffix, value: "apple.com", action: .direct),
+                RuntimeRoutingRule(kind: .finalRule, value: nil, action: .proxy)
+            ]
+        ))
+    }
+
+    @MainActor
+    func testAppViewModelPublishesEmptyManifestForCommentOnlyRules() throws {
+        let store = InMemoryRuntimeSnapshotStore()
+        let node = makeNode(id: "node-1", name: "Demo")
+        let model = AppViewModel(nodes: [node], runtimeSnapshotStore: store)
+        model.selectNode(id: node.id)
+        model.setRoutingRuleText("# no local rules")
+
+        _ = model.publishRuntimeSnapshot()
+
+        XCTAssertEqual(try store.load()?.routingRuleManifest, .empty)
+    }
+
+    @MainActor
+    func testAppViewModelDoesNotPublishWhenRoutingRulesAreInvalid() throws {
+        let store = InMemoryRuntimeSnapshotStore()
+        let node = makeNode(id: "node-1", name: "Demo")
+        let model = AppViewModel(nodes: [node], runtimeSnapshotStore: store)
+        model.selectNode(id: node.id)
+        model.setRoutingRuleText("DOMAIN,example.com,DROP")
+
+        let result = model.publishRuntimeSnapshot()
+
+        guard case .storageFailed = result else {
+            return XCTFail("Expected storageFailed result")
+        }
+        XCTAssertNil(try store.load())
+        XCTAssertTrue(model.overviewState.recentLogMessages.contains { $0.contains("Routing rules invalid") })
+    }
+
     private func makeNode(id: String, name: String) -> ProxyNode {
         ProxyNode(
             id: NodeID(rawValue: id),

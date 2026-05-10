@@ -15,7 +15,12 @@ public struct RuntimeSnapshotPublisher: Sendable {
         self.store = store
     }
 
-    public func publish(selectedNode: ProxyNode?, routeMode: RouteMode, logLevel: IrockLogLevel) -> RuntimeSnapshotPublishResult {
+    public func publish(
+        selectedNode: ProxyNode?,
+        routeMode: RouteMode,
+        logLevel: IrockLogLevel,
+        routingRuleManifest: RuntimeRoutingRuleManifest = .empty
+    ) -> RuntimeSnapshotPublishResult {
         guard let selectedNode else {
             return .missingSelectedNode
         }
@@ -24,7 +29,8 @@ public struct RuntimeSnapshotPublisher: Sendable {
             id: SnapshotID(rawValue: "snapshot-\(UUID().uuidString)"),
             selectedNode: selectedNode,
             routeMode: routeMode,
-            logLevel: logLevel
+            logLevel: logLevel,
+            routingRuleManifest: routingRuleManifest
         )
 
         do {
