@@ -44,6 +44,24 @@ final class ProxyOutboundTests: XCTestCase {
         XCTAssertEqual(adapter.requests.map(\.destination), [.ipv6("2606:2800:220:1:248:1893:25c8:1946", port: 443)])
     }
 
+    func testConnectThrowsUDPUunsupportedWhenNodeDisablesUDPWithoutCallingAdapter() async {
+        let adapter = RecordingProxyAdapter(protocolType: .trojan)
+        let outbound = ProxyOutbound(node: makeNode(protocolType: .trojan), registry: ProxyAdapterRegistry(adapters: [adapter]))
+        var processor = PacketProcessor(configuration: configuration(routeMode: .globalProxy))
+        let packet = Packet.ipv4UDP(id: "udp-1", source: .v4(10, 0, 0, 2), destination: .v4(1, 1, 1, 1), sourcePort: 55_555, destinationPort: 53)
+        let result = processor.process(packet)
+
+        do {
+            _ = try await outbound.connect(result: result)
+            XCTFail("Expected UDP unsupported")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .udpUnsupported)
+            XCTAssertEqual(adapter.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testConnectReturnsNilForNonProxyResults() async throws {
         let adapter = RecordingProxyAdapter(protocolType: .trojan)
         let outbound = ProxyOutbound(node: makeNode(protocolType: .trojan), registry: ProxyAdapterRegistry(adapters: [adapter]))

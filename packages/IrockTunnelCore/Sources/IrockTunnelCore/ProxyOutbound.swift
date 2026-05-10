@@ -15,6 +15,10 @@ public struct ProxyOutbound: Sendable {
             return nil
         }
 
+        if parsedPacket.transportProtocol == .udp && node.udpPolicy == .disabled {
+            throw ProxyProtocolError.udpUnsupported
+        }
+
         let request = ProxyRequest(
             node: node,
             destination: destination(for: parsedPacket),
