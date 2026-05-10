@@ -73,4 +73,51 @@ final class IrockCoreTests: XCTestCase {
         XCTAssertFalse(encoded.contains("password"))
         XCTAssertFalse(encoded.contains("token"))
     }
+
+    func testRuntimeSnapshotDefaultsToEmptyRoutingRuleManifest() {
+        let snapshot = RuntimeSnapshot(
+            id: SnapshotID(rawValue: "snapshot-1"),
+            selectedNode: makeNode(),
+            routeMode: .ruleBased,
+            logLevel: .user
+        )
+
+        XCTAssertEqual(snapshot.routingRuleManifest, .empty)
+    }
+
+    func testRuntimeSnapshotCodableRoundTripsRoutingRuleManifest() throws {
+        let manifest = RuntimeRoutingRuleManifest(
+            version: 1,
+            rules: [
+                RuntimeRoutingRule(kind: .domainSuffix, value: "apple.com", action: .direct),
+                RuntimeRoutingRule(kind: .domainKeyword, value: "google", action: .proxy)
+            ]
+        )
+        let snapshot = RuntimeSnapshot(
+            id: SnapshotID(rawValue: "snapshot-1"),
+            selectedNode: makeNode(),
+            routeMode: .ruleBased,
+            logLevel: .user,
+            routingRuleManifest: manifest
+        )
+
+        let data = try JSONEncoder().encode(snapshot)
+        let decoded = try JSONDecoder().decode(RuntimeSnapshot.self, from: data)
+
+        XCTAssertEqual(decoded.routingRuleManifest, manifest)
+    }
+
+    private func makeNode() -> ProxyNode {
+        ProxyNode(
+            id: NodeID(rawValue: "node-1"),
+            name: "Demo",
+            protocolType: .shadowsocks,
+            serverHost: "example.com",
+            serverPort: 8388,
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
+            transport: .tcp,
+            tls: .disabled,
+            udpPolicy: .disabled
+        )
+    }
 }
