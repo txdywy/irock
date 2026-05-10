@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-irock has a SwiftPM package graph, M1 app feature configuration scaffolding, M2 tunnel core, and M4 runtime snapshot publishing foundation in the working tree. The committed product/architecture spec is `docs/superpowers/specs/2026-05-09-irock-design.md`. Implementation plans live under `docs/superpowers/plans/`, including M0 engineering foundation, M1 UI configuration, M2 TUN data path, and M4 runtime snapshot publishing.
+irock has a SwiftPM package graph, M1 app feature configuration scaffolding, M2 tunnel core, M3 runtime snapshot persistence foundation, and M4 runtime snapshot publishing foundation in the working tree. The committed product/architecture spec is `docs/superpowers/specs/2026-05-09-irock-design.md`. Implementation plans live under `docs/superpowers/plans/`, including M0 engineering foundation, M1 UI configuration, M2 TUN data path, M3 runtime snapshot persistence, and M4 runtime snapshot publishing.
 
 There is not yet an Xcode workspace, app target, or Packet Tunnel target in the working tree. Do not assume `xcodebuild` or app schemes exist until Xcode targets are created.
 
@@ -26,7 +26,7 @@ Current and planned package boundaries:
 - `IrockProtocols`: protocol adapters for Shadowsocks, VMess, VLESS, Trojan, Hysteria2, TUIC, and Reality-related behavior.
 - `IrockTransport`: TCP, TLS, WebSocket, HTTP/2, gRPC, and QUIC transport abstractions.
 - `IrockRouting`: rule parsing, rule precompilation, and routing decisions.
-- `IrockStorage`: local configuration, App Group snapshots, credentials, and basic logs.
+- `IrockStorage`: local configuration, file-backed App Group-ready runtime snapshots, credentials, and basic logs.
 - `IrockDiagnostics`: user-facing logs, debug logs, and error presentation.
 - `IrockPerformanceKit`: throughput, latency, memory, handshake, and rule-matching measurements.
 
@@ -34,7 +34,7 @@ The app runtime must not embed sing-box, xray, clash, or other full proxy cores.
 
 ## Current repository structure
 
-The working tree currently contains the SwiftPM package graph, including `IrockAppFeature` and `IrockTunnelCore`, plus fixture and tooling directories:
+The working tree currently contains the SwiftPM package graph, including `IrockAppFeature`, `IrockTunnelCore`, and file-backed runtime snapshot persistence in `IrockStorage`, plus fixture and tooling directories:
 
 ```text
 Package.swift
