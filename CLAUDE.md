@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-irock has a SwiftPM package graph, M1 app feature configuration scaffolding, and M2 tunnel core in the working tree. The committed product/architecture spec is `docs/superpowers/specs/2026-05-09-irock-design.md`. Implementation plans live under `docs/superpowers/plans/`, including M0 engineering foundation, M1 UI configuration, and M2 TUN data path.
+irock has a SwiftPM package graph, M1 app feature configuration scaffolding, M2 tunnel core, and M4 runtime snapshot publishing foundation in the working tree. The committed product/architecture spec is `docs/superpowers/specs/2026-05-09-irock-design.md`. Implementation plans live under `docs/superpowers/plans/`, including M0 engineering foundation, M1 UI configuration, M2 TUN data path, and M4 runtime snapshot publishing.
 
 There is not yet an Xcode workspace, app target, or Packet Tunnel target in the working tree. Do not assume `xcodebuild` or app schemes exist until Xcode targets are created.
 
@@ -21,7 +21,7 @@ The project is planned as a Swift-first iOS/macOS network proxy client with:
 Current and planned package boundaries:
 
 - `IrockCore`: shared domain types such as nodes, runtime snapshots, connection state, and errors.
-- `IrockAppFeature`: reusable app-facing configuration, validation, and snapshot coordination logic for future thin platform app shells.
+- `IrockAppFeature`: reusable app-facing configuration, validation, runtime snapshot publishing, and snapshot coordination logic for future thin platform app shells.
 - `IrockTunnelCore`: reusable TUN data-path primitives, packet processing, runtime configuration, and in-memory packet I/O for future Packet Tunnel targets.
 - `IrockProtocols`: protocol adapters for Shadowsocks, VMess, VLESS, Trojan, Hysteria2, TUIC, and Reality-related behavior.
 - `IrockTransport`: TCP, TLS, WebSocket, HTTP/2, gRPC, and QUIC transport abstractions.
