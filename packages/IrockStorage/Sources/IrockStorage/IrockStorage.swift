@@ -1,12 +1,12 @@
 import Foundation
 import IrockCore
 
-public protocol RuntimeSnapshotStore {
+public protocol RuntimeSnapshotStore: Sendable {
     func save(_ snapshot: RuntimeSnapshot) throws
     func load() throws -> RuntimeSnapshot?
 }
 
-public final class InMemoryRuntimeSnapshotStore: RuntimeSnapshotStore {
+public final class InMemoryRuntimeSnapshotStore: RuntimeSnapshotStore, @unchecked Sendable {
     private let lock = NSLock()
     private var snapshot: RuntimeSnapshot?
 

@@ -8,7 +8,7 @@ public enum RuntimeSnapshotPublishResult: Equatable, Sendable {
     case storageFailed(String)
 }
 
-public struct RuntimeSnapshotPublisher: @unchecked Sendable {
+public struct RuntimeSnapshotPublisher: Sendable {
     private let store: RuntimeSnapshotStore
 
     public init(store: RuntimeSnapshotStore) {
