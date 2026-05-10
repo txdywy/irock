@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-irock has a SwiftPM package graph and M1 app feature configuration scaffolding in the working tree. The committed product/architecture spec is `docs/superpowers/specs/2026-05-09-irock-design.md`. Implementation plans live under `docs/superpowers/plans/`, including M0 engineering foundation and M1 UI configuration.
+irock has a SwiftPM package graph, M1 app feature configuration scaffolding, and M2 tunnel core in the working tree. The committed product/architecture spec is `docs/superpowers/specs/2026-05-09-irock-design.md`. Implementation plans live under `docs/superpowers/plans/`, including M0 engineering foundation, M1 UI configuration, and M2 TUN data path.
 
 There is not yet an Xcode workspace, app target, or Packet Tunnel target in the working tree. Do not assume `xcodebuild` or app schemes exist until Xcode targets are created.
 
@@ -72,6 +72,7 @@ After M0 creates `Package.swift`:
 - Run all SwiftPM tests: `swift test`
 - Run a single test target: `swift test --filter IrockCoreTests`
 - Run app feature tests: `swift test --filter IrockAppFeatureTests`
+- Run tunnel core tests: `swift test --filter IrockTunnelCoreTests`
 
 After Xcode targets exist, add concrete `xcodebuild` commands here based on the actual workspace, schemes, and signing setup.
 
