@@ -1,3 +1,5 @@
+import Foundation
+
 public enum IrockCoreModule {
     public static let name = "IrockCore"
 }
@@ -133,6 +135,65 @@ public enum IrockLogLevel: String, Codable, Sendable {
     case off
     case user
     case debug
+}
+
+public enum RuntimeConnectionPhase: String, Codable, Sendable {
+    case disconnected
+    case preparing
+    case connecting
+    case connected
+    case reconnecting
+    case disconnecting
+    case failed
+}
+
+public struct RuntimeConnectionStatus: Equatable, Codable, Sendable {
+    public let phase: RuntimeConnectionPhase
+    public let selectedNodeID: NodeID?
+    public let selectedNodeName: String?
+    public let updatedAt: Date
+    public let message: String?
+
+    public static func disconnected(updatedAt: Date = Date()) -> RuntimeConnectionStatus {
+        RuntimeConnectionStatus(
+            phase: .disconnected,
+            selectedNodeID: nil,
+            selectedNodeName: nil,
+            updatedAt: updatedAt,
+            message: nil
+        )
+    }
+
+    public init(phase: RuntimeConnectionPhase, selectedNodeID: NodeID?, selectedNodeName: String?, updatedAt: Date = Date(), message: String?) {
+        self.phase = phase
+        self.selectedNodeID = selectedNodeID
+        self.selectedNodeName = selectedNodeName
+        self.updatedAt = updatedAt
+        self.message = message
+    }
+}
+
+public enum RuntimeLogLevel: String, Codable, Sendable {
+    case user
+    case debug
+}
+
+public struct RuntimeLogEntry: Equatable, Codable, Identifiable, Sendable {
+    public let id: String
+    public let timestamp: Date
+    public let level: RuntimeLogLevel
+    public let message: String
+    public let nodeID: NodeID?
+    public let phase: RuntimeConnectionPhase?
+
+    public init(id: String, timestamp: Date = Date(), level: RuntimeLogLevel, message: String, nodeID: NodeID?, phase: RuntimeConnectionPhase?) {
+        self.id = id
+        self.timestamp = timestamp
+        self.level = level
+        self.message = message
+        self.nodeID = nodeID
+        self.phase = phase
+    }
 }
 
 public enum RuntimeRoutingAction: String, Codable, Sendable {

@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import IrockCore
 
@@ -105,6 +106,47 @@ final class IrockCoreTests: XCTestCase {
         let decoded = try JSONDecoder().decode(RuntimeSnapshot.self, from: data)
 
         XCTAssertEqual(decoded.routingRuleManifest, manifest)
+    }
+
+    func testRuntimeConnectionStatusCodableRoundTrips() throws {
+        let status = RuntimeConnectionStatus(
+            phase: .connected,
+            selectedNodeID: NodeID(rawValue: "node-1"),
+            selectedNodeName: "Demo Node",
+            updatedAt: Date(timeIntervalSince1970: 1_715_000_000),
+            message: "Connected"
+        )
+
+        let data = try JSONEncoder().encode(status)
+        let decoded = try JSONDecoder().decode(RuntimeConnectionStatus.self, from: data)
+
+        XCTAssertEqual(decoded, status)
+    }
+
+    func testRuntimeConnectionStatusDisconnectedDefault() {
+        let status = RuntimeConnectionStatus.disconnected(updatedAt: Date(timeIntervalSince1970: 1_715_000_001))
+
+        XCTAssertEqual(status.phase, .disconnected)
+        XCTAssertNil(status.selectedNodeID)
+        XCTAssertNil(status.selectedNodeName)
+        XCTAssertEqual(status.updatedAt, Date(timeIntervalSince1970: 1_715_000_001))
+        XCTAssertNil(status.message)
+    }
+
+    func testRuntimeLogEntryCodableRoundTrips() throws {
+        let entry = RuntimeLogEntry(
+            id: "log-1",
+            timestamp: Date(timeIntervalSince1970: 1_715_000_002),
+            level: .user,
+            message: "Tunnel connected",
+            nodeID: NodeID(rawValue: "node-1"),
+            phase: .connected
+        )
+
+        let data = try JSONEncoder().encode(entry)
+        let decoded = try JSONDecoder().decode(RuntimeLogEntry.self, from: data)
+
+        XCTAssertEqual(decoded, entry)
     }
 
     private func makeNode() -> ProxyNode {
