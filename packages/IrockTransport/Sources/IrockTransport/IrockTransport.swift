@@ -94,3 +94,19 @@ public struct NoopTransportAdapter: TransportAdapter {
         throw TransportError.unsupportedTransport(request.transport)
     }
 }
+
+public struct TransportAdapterRegistry: Sendable {
+    private let adapters: [TransportType: any TransportAdapter]
+
+    public init(adapters: [any TransportAdapter]) {
+        var indexed: [TransportType: any TransportAdapter] = [:]
+        for adapter in adapters {
+            indexed[adapter.supportedTransport] = adapter
+        }
+        self.adapters = indexed
+    }
+
+    public func adapter(for transport: TransportType) -> any TransportAdapter {
+        adapters[transport] ?? UnsupportedTransportAdapter(transport: transport)
+    }
+}

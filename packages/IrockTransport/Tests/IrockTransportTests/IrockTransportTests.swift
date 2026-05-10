@@ -76,4 +76,59 @@ final class IrockTransportTests: XCTestCase {
             XCTAssertFalse(error.description.contains("token"))
         }
     }
+
+    func testTransportAdapterRegistryReturnsRegisteredAdapter() async throws {
+        let adapter = RecordingTransportAdapter(transport: .grpc)
+        let registry = TransportAdapterRegistry(adapters: [adapter])
+        let selected = registry.adapter(for: .grpc)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .grpc)
+
+        let connection = try await selected.open(request: request)
+
+        XCTAssertEqual(selected.supportedTransport, .grpc)
+        XCTAssertEqual(connection.host, "example.com")
+        XCTAssertEqual(connection.port, 443)
+        XCTAssertEqual(connection.transport, .grpc)
+    }
+
+    func testTransportAdapterRegistryFallsBackToUnsupportedAdapter() async {
+        let registry = TransportAdapterRegistry(adapters: [])
+        let selected = registry.adapter(for: .quic)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .quic)
+
+        do {
+            _ = try await selected.open(request: request)
+            XCTFail("Expected unsupported transport")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .unsupportedTransport(.quic))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testTransportAdapterRegistryUsesLastRegisteredAdapterForDuplicates() async throws {
+        let first = RecordingTransportAdapter(transport: .tcp, connectionHost: "first.example.com")
+        let second = RecordingTransportAdapter(transport: .tcp, connectionHost: "second.example.com")
+        let registry = TransportAdapterRegistry(adapters: [first, second])
+        let selected = registry.adapter(for: .tcp)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .tcp)
+
+        let connection = try await selected.open(request: request)
+
+        XCTAssertEqual(connection.host, "second.example.com")
+    }
+}
+
+private struct RecordingTransportAdapter: TransportAdapter {
+    let supportedTransport: TransportType
+    let connectionHost: String
+
+    init(transport: TransportType, connectionHost: String = "example.com") {
+        self.supportedTransport = transport
+        self.connectionHost = connectionHost
+    }
+
+    func open(request: TransportRequest) async throws -> any TransportConnection {
+        EstablishedTransportConnection(host: connectionHost, port: request.port, transport: request.transport)
+    }
 }
