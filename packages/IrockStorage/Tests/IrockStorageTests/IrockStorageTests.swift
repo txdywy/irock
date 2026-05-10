@@ -147,6 +147,30 @@ final class IrockStorageTests: XCTestCase {
         XCTAssertEqual(try store.loadRecent().map(\.message), ["second", "third"])
     }
 
+    func testFileRuntimeLogStorePreservesConcurrentAppends() throws {
+        let directoryURL = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directoryURL) }
+        let entryCount = 200
+        let store = FileRuntimeLogStore(directoryURL: directoryURL, limit: entryCount)
+        let errorLock = NSLock()
+        var appendErrors: [Error] = []
+
+        DispatchQueue.concurrentPerform(iterations: entryCount) { index in
+            do {
+                try store.append(makeLog(id: "\(index)", message: "message-\(index)"))
+            } catch {
+                errorLock.lock()
+                appendErrors.append(error)
+                errorLock.unlock()
+            }
+        }
+
+        XCTAssertTrue(appendErrors.isEmpty)
+        let messages = try store.loadRecent().map(\.message)
+        XCTAssertEqual(messages.count, entryCount)
+        XCTAssertEqual(Set(messages).count, entryCount)
+    }
+
     func testFileRuntimeLogStoreThrowsForCorruptJSON() throws {
         let directoryURL = try makeTemporaryDirectory()
         defer { removeTemporaryDirectory(directoryURL) }

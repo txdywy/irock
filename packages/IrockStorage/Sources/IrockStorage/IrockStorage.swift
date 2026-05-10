@@ -152,6 +152,7 @@ public final class FileRuntimeStatusStore: RuntimeStatusStore, @unchecked Sendab
 }
 
 public final class FileRuntimeLogStore: RuntimeLogStore, @unchecked Sendable {
+    private let lock = NSLock()
     private let directoryURL: URL
     private let fileManager: FileManager
     private let encoder: JSONEncoder
@@ -171,8 +172,11 @@ public final class FileRuntimeLogStore: RuntimeLogStore, @unchecked Sendable {
     }
 
     public func append(_ entry: RuntimeLogEntry) throws {
+        lock.lock()
+        defer { lock.unlock() }
+
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        var entries = try loadRecent()
+        var entries = try loadRecentUnlocked()
         entries.append(entry)
         if entries.count > limit {
             entries.removeFirst(entries.count - limit)
@@ -182,16 +186,26 @@ public final class FileRuntimeLogStore: RuntimeLogStore, @unchecked Sendable {
     }
 
     public func loadRecent() throws -> [RuntimeLogEntry] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        return try loadRecentUnlocked()
+    }
+
+    public func clear() throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        let data = try encoder.encode([RuntimeLogEntry]())
+        try data.write(to: logsURL, options: .atomic)
+    }
+
+    private func loadRecentUnlocked() throws -> [RuntimeLogEntry] {
         guard fileManager.fileExists(atPath: logsURL.path) else {
             return []
         }
         let data = try Data(contentsOf: logsURL)
         return try decoder.decode([RuntimeLogEntry].self, from: data)
-    }
-
-    public func clear() throws {
-        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        let data = try encoder.encode([RuntimeLogEntry]())
-        try data.write(to: logsURL, options: .atomic)
     }
 }
