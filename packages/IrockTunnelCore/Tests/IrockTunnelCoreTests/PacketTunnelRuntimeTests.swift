@@ -169,6 +169,72 @@ final class PacketTunnelRuntimeTests: XCTestCase {
         XCTAssertEqual(writer.writtenResults.count, 1)
     }
 
+    func testRuntimePublishesFailedStatusAndLogWhenProxyAdapterIsUnsupported() async throws {
+        let validPacket = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let reader = InMemoryPacketReader(packets: [validPacket])
+        let writer = InMemoryPacketWriter()
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+        let reporter = TunnelRuntimeReporter(statusStore: statusStore, logStore: logStore)
+        let runtime = PacketTunnelRuntime(
+            reader: reader,
+            writer: writer,
+            configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), batchLimit: 16, flowLimit: 32),
+            reporter: reporter
+        )
+
+        do {
+            _ = try await runtime.runOnce()
+            XCTFail("Expected unsupported protocol")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .unsupportedProtocol(.trojan))
+            let status = try XCTUnwrap(statusStore.load())
+            XCTAssertEqual(status.phase, .failed)
+            XCTAssertEqual(status.selectedNodeID, NodeID(rawValue: "node-1"))
+            XCTAssertEqual(status.selectedNodeName, "Demo")
+            XCTAssertEqual(status.message, "Proxy adapter failed: Unsupported protocol: trojan")
+            XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Proxy adapter failed: Unsupported protocol: trojan"])
+            XCTAssertEqual(writer.writtenResults, [])
+        } catch {
+            XCTFail("Expected proxy protocol error, got \(error)")
+        }
+    }
+
+    func testRuntimePublishesFailedStatusAndLogWhenProxyAdapterThrows() async throws {
+        let validPacket = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let reader = InMemoryPacketReader(packets: [validPacket])
+        let writer = InMemoryPacketWriter()
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+        let reporter = TunnelRuntimeReporter(statusStore: statusStore, logStore: logStore)
+        let runtime = PacketTunnelRuntime(
+            reader: reader,
+            writer: writer,
+            configuration: TunnelRuntimeConfiguration(
+                snapshot: snapshot(routeMode: .globalProxy),
+                routingEngine: RoutingEngine(rules: [.final(.proxy)]),
+                proxyAdapterRegistry: ProxyAdapterRegistry(adapters: [FailingProxyAdapter(protocolType: .trojan)]),
+                batchLimit: 16,
+                flowLimit: 32
+            ),
+            reporter: reporter
+        )
+
+        do {
+            _ = try await runtime.runOnce()
+            XCTFail("Expected protocol failure")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .tcpConnectFailed("secret connection refused"))
+            let status = try XCTUnwrap(statusStore.load())
+            XCTAssertEqual(status.phase, .failed)
+            XCTAssertEqual(status.message, "Proxy adapter failed: TCP connect failed")
+            XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Proxy adapter failed: TCP connect failed"])
+            XCTAssertEqual(writer.writtenResults, [])
+        } catch {
+            XCTFail("Expected proxy protocol error, got \(error)")
+        }
+    }
+
     func testConfigurationStoresProxyAdapterRegistry() async throws {
         let adapter = RuntimeRecordingProxyAdapter(protocolType: .trojan)
         let registry = ProxyAdapterRegistry(adapters: [adapter])
@@ -240,6 +306,18 @@ private final class RuntimeRecordingProxyAdapter: ProxyAdapter, @unchecked Senda
         lock.lock()
         defer { lock.unlock() }
         connectCountValue += 1
+    }
+}
+
+private struct FailingProxyAdapter: ProxyAdapter {
+    let supportedProtocol: ProxyProtocolType
+
+    init(protocolType: ProxyProtocolType) {
+        self.supportedProtocol = protocolType
+    }
+
+    func connect(request: ProxyRequest) async throws -> any ProxyConnection {
+        throw ProxyProtocolError.tcpConnectFailed("secret connection refused")
     }
 }
 
