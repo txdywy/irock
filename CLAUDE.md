@@ -18,9 +18,11 @@ The project is planned as a Swift-first iOS/macOS network proxy client with:
 - App Group runtime snapshots between the main app and tunnel extension.
 - Local-first storage; no iCloud, account system, or backend in the Alpha scope.
 
-Planned package boundaries:
+Current and planned package boundaries:
 
 - `IrockCore`: shared domain types such as nodes, runtime snapshots, connection state, and errors.
+- `IrockAppFeature`: reusable app-facing configuration, validation, and snapshot coordination logic for future thin platform app shells.
+- `IrockTunnelCore`: reusable TUN data-path primitives, packet processing, runtime configuration, and in-memory packet I/O for future Packet Tunnel targets.
 - `IrockProtocols`: protocol adapters for Shadowsocks, VMess, VLESS, Trojan, Hysteria2, TUIC, and Reality-related behavior.
 - `IrockTransport`: TCP, TLS, WebSocket, HTTP/2, gRPC, and QUIC transport abstractions.
 - `IrockRouting`: rule parsing, rule precompilation, and routing decisions.
@@ -30,9 +32,9 @@ Planned package boundaries:
 
 The app runtime must not embed sing-box, xray, clash, or other full proxy cores. They may be used only as development-time protocol comparison references.
 
-## Planned repository structure
+## Current repository structure
 
-M0 is expected to create this structure:
+The working tree currently contains the SwiftPM package graph, including `IrockAppFeature` and `IrockTunnelCore`, plus fixture and tooling directories:
 
 ```text
 Package.swift
@@ -40,13 +42,15 @@ apps/
   irock-iOS/
   irock-macOS/
 packages/
+  IrockAppFeature/
   IrockCore/
-  IrockProtocols/
-  IrockRouting/
-  IrockTransport/
-  IrockStorage/
   IrockDiagnostics/
   IrockPerformanceKit/
+  IrockProtocols/
+  IrockRouting/
+  IrockStorage/
+  IrockTransport/
+  IrockTunnelCore/
 tools/
   protocol-lab/
   benchmark-runner/
@@ -57,7 +61,7 @@ tests/
   performance-baselines/
 ```
 
-Xcode workspace and Network Extension targets are planned after the SwiftPM foundation is in place because signing, App Groups, and Network Extension capabilities depend on local Apple Developer Team choices.
+Xcode workspace, app targets, and Network Extension targets remain planned separately because signing, App Groups, and Network Extension capabilities depend on local Apple Developer Team choices.
 
 ## Commands
 
@@ -67,7 +71,7 @@ Current state:
 - Review the design spec: `less docs/superpowers/specs/2026-05-09-irock-design.md`
 - Review the M0 plan: `less docs/superpowers/plans/2026-05-09-irock-m0-engineering-foundation.md`
 
-After M0 creates `Package.swift`:
+SwiftPM commands:
 
 - Run all SwiftPM tests: `swift test`
 - Run a single test target: `swift test --filter IrockCoreTests`
@@ -78,7 +82,7 @@ After Xcode targets exist, add concrete `xcodebuild` commands here based on the 
 
 ## Development guidance specific to this repo
 
-- Follow the M0 plan before starting app or protocol implementation.
+- Follow the active milestone plan before extending app, protocol, tunnel, or routing behavior.
 - Keep `.omc/` and `.superpowers/` out of commits; they are planning/runtime scratch state.
 - Keep platform app code thin and put reusable logic in shared Swift packages.
 - Treat Packet Tunnel hot paths as performance-sensitive: avoid database access, unbounded logging, and unnecessary allocations in packet processing.
