@@ -25,7 +25,7 @@ public final class InMemoryRuntimeSnapshotStore: RuntimeSnapshotStore, @unchecke
     }
 }
 
-public final class FileRuntimeSnapshotStore: RuntimeSnapshotStore {
+public final class FileRuntimeSnapshotStore: RuntimeSnapshotStore, @unchecked Sendable {
     private let directoryURL: URL
     private let fileManager: FileManager
     private let encoder: JSONEncoder
