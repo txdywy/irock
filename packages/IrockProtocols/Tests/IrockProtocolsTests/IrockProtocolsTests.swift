@@ -111,6 +111,46 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testProxyAdapterRegistryReturnsRegisteredAdapter() async throws {
+        let adapter = RecordingProxyAdapter(protocolType: .trojan)
+        let registry = ProxyAdapterRegistry(adapters: [adapter])
+        let selected = registry.adapter(for: .trojan)
+        let request = ProxyRequest(node: makeNode(protocolType: .trojan, transport: .tcp), destination: .host("apple.com", port: 443))
+
+        let connection = try await selected.connect(request: request)
+
+        XCTAssertEqual(selected.supportedProtocol, .trojan)
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
+    }
+
+    func testProxyAdapterRegistryFallsBackToUnsupportedAdapter() async {
+        let registry = ProxyAdapterRegistry(adapters: [])
+        let selected = registry.adapter(for: .vless)
+        let request = ProxyRequest(node: makeNode(protocolType: .vless, transport: .tcp), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await selected.connect(request: request)
+            XCTFail("Expected unsupported protocol")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .unsupportedProtocol(.vless))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testProxyAdapterRegistryUsesLastRegisteredAdapterForDuplicates() async throws {
+        let first = RecordingProxyAdapter(protocolType: .vmess, connectionNodeID: NodeID(rawValue: "first"))
+        let second = RecordingProxyAdapter(protocolType: .vmess, connectionNodeID: NodeID(rawValue: "second"))
+        let registry = ProxyAdapterRegistry(adapters: [first, second])
+        let selected = registry.adapter(for: .vmess)
+        let request = ProxyRequest(node: makeNode(protocolType: .vmess, transport: .tcp), destination: .host("apple.com", port: 443))
+
+        let connection = try await selected.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "second"))
+    }
+
     private func makeNode(protocolType: ProxyProtocolType, transport: TransportType) -> ProxyNode {
         ProxyNode(
             id: NodeID(rawValue: "node-1"),
@@ -123,5 +163,19 @@ final class IrockProtocolsTests: XCTestCase {
             tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil),
             udpPolicy: .disabled
         )
+    }
+
+    private struct RecordingProxyAdapter: ProxyAdapter {
+        let supportedProtocol: ProxyProtocolType
+        let connectionNodeID: NodeID
+
+        init(protocolType: ProxyProtocolType, connectionNodeID: NodeID = NodeID(rawValue: "node-1")) {
+            self.supportedProtocol = protocolType
+            self.connectionNodeID = connectionNodeID
+        }
+
+        func connect(request: ProxyRequest) async throws -> any ProxyConnection {
+            EstablishedProxyConnection(nodeID: connectionNodeID, destination: request.destination)
+        }
     }
 }

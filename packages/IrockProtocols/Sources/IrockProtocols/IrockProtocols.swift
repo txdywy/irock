@@ -106,3 +106,19 @@ public struct NoopProxyAdapter: ProxyAdapter {
         throw ProxyProtocolError.unsupportedProtocol(request.node.protocolType)
     }
 }
+
+public struct ProxyAdapterRegistry: Sendable {
+    private let adapters: [ProxyProtocolType: any ProxyAdapter]
+
+    public init(adapters: [any ProxyAdapter]) {
+        var indexed: [ProxyProtocolType: any ProxyAdapter] = [:]
+        for adapter in adapters {
+            indexed[adapter.supportedProtocol] = adapter
+        }
+        self.adapters = indexed
+    }
+
+    public func adapter(for protocolType: ProxyProtocolType) -> any ProxyAdapter {
+        adapters[protocolType] ?? UnsupportedProxyAdapter(protocolType: protocolType)
+    }
+}
