@@ -84,6 +84,63 @@ final class PacketTunnelRuntimeTests: XCTestCase {
         XCTAssertEqual(writer.writtenResults.count, 1)
     }
 
+    func testRuntimePublishesFailedStatusAndLogWhenReaderThrows() async throws {
+        let reader = ThrowingPacketReader()
+        let writer = InMemoryPacketWriter()
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+        let reporter = TunnelRuntimeReporter(statusStore: statusStore, logStore: logStore)
+        let runtime = PacketTunnelRuntime(
+            reader: reader,
+            writer: writer,
+            configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), batchLimit: 16, flowLimit: 32),
+            reporter: reporter
+        )
+
+        do {
+            _ = try await runtime.runOnce()
+            XCTFail("Expected packet reader error")
+        } catch PacketRuntimeTestError.failed {
+            let status = try XCTUnwrap(statusStore.load())
+            XCTAssertEqual(status.phase, .failed)
+            XCTAssertEqual(status.selectedNodeID, NodeID(rawValue: "node-1"))
+            XCTAssertEqual(status.selectedNodeName, "Demo")
+            XCTAssertEqual(status.message, "Packet batch failed")
+            XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Tunnel runtime failed"])
+        } catch {
+            XCTFail("Expected packet reader error, got \(error)")
+        }
+    }
+
+    func testRuntimePublishesFailedStatusAndLogWhenWriterThrows() async throws {
+        let validPacket = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let reader = InMemoryPacketReader(packets: [validPacket])
+        let writer = ThrowingPacketWriter()
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+        let reporter = TunnelRuntimeReporter(statusStore: statusStore, logStore: logStore)
+        let runtime = PacketTunnelRuntime(
+            reader: reader,
+            writer: writer,
+            configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), batchLimit: 16, flowLimit: 32),
+            reporter: reporter
+        )
+
+        do {
+            _ = try await runtime.runOnce()
+            XCTFail("Expected packet writer error")
+        } catch PacketRuntimeTestError.failed {
+            let status = try XCTUnwrap(statusStore.load())
+            XCTAssertEqual(status.phase, .failed)
+            XCTAssertEqual(status.selectedNodeID, NodeID(rawValue: "node-1"))
+            XCTAssertEqual(status.selectedNodeName, "Demo")
+            XCTAssertEqual(status.message, "Packet batch failed")
+            XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Tunnel runtime failed"])
+        } catch {
+            XCTFail("Expected packet writer error, got \(error)")
+        }
+    }
+
     private func snapshot(routeMode: RouteMode) -> RuntimeSnapshot {
         RuntimeSnapshot(
             id: SnapshotID(rawValue: "snapshot-1"),
@@ -94,8 +151,24 @@ final class PacketTunnelRuntimeTests: XCTestCase {
     }
 }
 
+private enum PacketRuntimeTestError: Error {
+    case failed
+}
+
 private enum FailingRuntimeStoreError: Error {
     case failed
+}
+
+private struct ThrowingPacketReader: PacketReader {
+    func readBatch() async throws -> [Packet] {
+        throw PacketRuntimeTestError.failed
+    }
+}
+
+private struct ThrowingPacketWriter: PacketWriter {
+    func write(_ results: [PacketProcessingResult]) async throws {
+        throw PacketRuntimeTestError.failed
+    }
 }
 
 private final class FailingRuntimeStatusStore: RuntimeStatusStore, @unchecked Sendable {

@@ -38,11 +38,19 @@ public struct PacketTunnelRuntime<Reader: PacketReader, Writer: PacketWriter>: S
         publish(.preparing, message: "Preparing packet batch")
         appendLog(message: "Tunnel runtime preparing", phase: .preparing)
 
-        let packets = try await reader.readBatch()
-        var processor = PacketProcessor(configuration: configuration)
-        let results = processor.process(packets)
+        let packets: [Packet]
+        let results: [PacketProcessingResult]
+        do {
+            packets = try await reader.readBatch()
+            var processor = PacketProcessor(configuration: configuration)
+            results = processor.process(packets)
 
-        try await writer.write(results)
+            try await writer.write(results)
+        } catch {
+            publish(.failed, message: "Packet batch failed")
+            appendLog(message: "Tunnel runtime failed", phase: .failed)
+            throw error
+        }
 
         publish(.connected, message: "Packet batch processed")
         appendLog(message: "Tunnel runtime connected", phase: .connected)
