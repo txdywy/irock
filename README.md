@@ -19,6 +19,7 @@ See `docs/superpowers/specs/2026-05-09-irock-design.md`.
 ## Implementation plans
 
 - M0: `docs/superpowers/plans/2026-05-09-irock-m0-engineering-foundation.md`
+- M1: `docs/superpowers/plans/2026-05-10-irock-m1-ui-configuration.md`
 
 ## Xcode targets
 

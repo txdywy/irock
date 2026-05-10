@@ -71,7 +71,7 @@ After M0 creates `Package.swift`:
 
 - Run all SwiftPM tests: `swift test`
 - Run a single test target: `swift test --filter IrockCoreTests`
-- Run selected test targets: `swift test --filter 'IrockTransportTests|IrockProtocolsTests'`
+- Run app feature tests: `swift test --filter IrockAppFeatureTests`
 
 After Xcode targets exist, add concrete `xcodebuild` commands here based on the actual workspace, schemes, and signing setup.
 
