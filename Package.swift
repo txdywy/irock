@@ -100,12 +100,12 @@ let package = Package(
         ),
         .target(
             name: "IrockTunnelCore",
-            dependencies: ["IrockCore", "IrockRouting"],
+            dependencies: ["IrockCore", "IrockRouting", "IrockStorage"],
             path: "packages/IrockTunnelCore/Sources/IrockTunnelCore"
         ),
         .testTarget(
             name: "IrockTunnelCoreTests",
-            dependencies: ["IrockTunnelCore"],
+            dependencies: ["IrockTunnelCore", "IrockStorage"],
             path: "packages/IrockTunnelCore/Tests/IrockTunnelCoreTests"
         )
     ]
