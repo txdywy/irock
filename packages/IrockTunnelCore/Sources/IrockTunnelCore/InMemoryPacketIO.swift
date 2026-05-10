@@ -1,3 +1,5 @@
+import Foundation
+
 public struct InMemoryPacketReader: PacketReader {
     private let packets: [Packet]
 
@@ -11,13 +13,26 @@ public struct InMemoryPacketReader: PacketReader {
 }
 
 public final class InMemoryPacketWriter: PacketWriter, @unchecked Sendable {
-    public private(set) var writtenResults: [PacketProcessingResult]
+    private let lock = NSLock()
+    private var storage: [PacketProcessingResult]
+
+    public var writtenResults: [PacketProcessingResult] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
 
     public init(writtenResults: [PacketProcessingResult] = []) {
-        self.writtenResults = writtenResults
+        self.storage = writtenResults
     }
 
     public func write(_ results: [PacketProcessingResult]) async throws {
-        writtenResults.append(contentsOf: results)
+        append(results)
+    }
+
+    private func append(_ results: [PacketProcessingResult]) {
+        lock.lock()
+        defer { lock.unlock() }
+        storage.append(contentsOf: results)
     }
 }
