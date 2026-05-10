@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-irock is currently in planning/engineering-foundation setup. The committed product/architecture spec is `docs/superpowers/specs/2026-05-09-irock-design.md`. The active implementation plan is `docs/superpowers/plans/2026-05-09-irock-m0-engineering-foundation.md`.
+irock has a SwiftPM package graph and M1 app feature configuration scaffolding in the working tree. The committed product/architecture spec is `docs/superpowers/specs/2026-05-09-irock-design.md`. Implementation plans live under `docs/superpowers/plans/`, including M0 engineering foundation and M1 UI configuration.
 
-There is not yet a Swift package, Xcode workspace, app target, or Packet Tunnel target in the working tree. Do not assume `swift test`, `xcodebuild`, or app schemes exist until M0 creates them.
+There is not yet an Xcode workspace, app target, or Packet Tunnel target in the working tree. Do not assume `xcodebuild` or app schemes exist until Xcode targets are created.
 
 ## Intended architecture
 

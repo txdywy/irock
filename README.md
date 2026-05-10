@@ -4,13 +4,11 @@ irock is a personal iOS/macOS network proxy client inspired by Shadowrocket's in
 
 ## Current phase
 
-M0 builds the engineering foundation:
+The repository currently contains the M0 SwiftPM engineering foundation and M1 UI configuration scaffolding:
 
-- SwiftPM package graph
-- Core domain models
-- Module boundaries
-- XCTest baseline
-- Xcode target creation instructions
+- Shared package graph with core, protocol, routing, storage, diagnostics, performance, and app feature modules
+- XCTest coverage for package boundaries, runtime snapshots, routing/storage behavior, and app feature state
+- Xcode target creation instructions; Xcode workspace, app targets, and Packet Tunnel targets are not yet committed
 
 ## Design
 
