@@ -71,15 +71,15 @@ final class IrockProtocolsTests: XCTestCase {
 
     func testProxyProtocolErrorDescriptionsAreStableAndCredentialSafe() {
         let errors: [(ProxyProtocolError, String)] = [
-            (.invalidConfiguration("missing server host"), "Invalid configuration: missing server host"),
-            (.dnsFailed("example.com"), "DNS failed: example.com"),
-            (.tcpConnectFailed("connection refused"), "TCP connect failed: connection refused"),
-            (.tlsHandshakeFailed("certificate rejected"), "TLS handshake failed: certificate rejected"),
-            (.authenticationFailed("method rejected"), "Authentication failed: method rejected"),
+            (.invalidConfiguration("missing server host"), "Invalid configuration"),
+            (.dnsFailed("example.com"), "DNS failed"),
+            (.tcpConnectFailed("connection refused"), "TCP connect failed"),
+            (.tlsHandshakeFailed("certificate rejected"), "TLS handshake failed"),
+            (.authenticationFailed("method rejected"), "Authentication failed"),
             (.unsupportedTransport(.quic), "Unsupported transport: quic"),
             (.unsupportedProtocol(.tuic), "Unsupported protocol: tuic"),
-            (.protocolHandshakeFailed("bad response"), "Protocol handshake failed: bad response"),
-            (.quicHandshakeFailed("timeout"), "QUIC handshake failed: timeout"),
+            (.protocolHandshakeFailed("bad response"), "Protocol handshake failed"),
+            (.quicHandshakeFailed("timeout"), "QUIC handshake failed"),
             (.udpUnsupported, "UDP unsupported"),
             (.remoteClosed, "Remote closed"),
             (.timeout, "Timeout")
@@ -89,6 +89,24 @@ final class IrockProtocolsTests: XCTestCase {
             XCTAssertEqual(error.description, description)
             XCTAssertFalse(error.description.contains("secret"))
             XCTAssertFalse(error.description.contains("password"))
+            XCTAssertFalse(error.description.contains("token"))
+        }
+    }
+
+    func testProxyProtocolErrorDescriptionsRedactSensitiveAssociatedStrings() {
+        let errors: [ProxyProtocolError] = [
+            .invalidConfiguration("uri=ss://password=secret-token@example.com"),
+            .dnsFailed("password=secret-token"),
+            .tcpConnectFailed("token=secret-token"),
+            .tlsHandshakeFailed("password=secret-token"),
+            .authenticationFailed("password=secret-token"),
+            .protocolHandshakeFailed("password=secret-token"),
+            .quicHandshakeFailed("password=secret-token")
+        ]
+
+        for error in errors {
+            XCTAssertFalse(error.description.contains("password"))
+            XCTAssertFalse(error.description.contains("secret"))
             XCTAssertFalse(error.description.contains("token"))
         }
     }

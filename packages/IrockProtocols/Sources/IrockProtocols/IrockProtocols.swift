@@ -50,24 +50,24 @@ public enum ProxyProtocolError: Error, Equatable, CustomStringConvertible, Senda
 
     public var description: String {
         switch self {
-        case let .invalidConfiguration(reason):
-            return "Invalid configuration: \(reason)"
-        case let .dnsFailed(reason):
-            return "DNS failed: \(reason)"
-        case let .tcpConnectFailed(reason):
-            return "TCP connect failed: \(reason)"
-        case let .tlsHandshakeFailed(reason):
-            return "TLS handshake failed: \(reason)"
-        case let .authenticationFailed(reason):
-            return "Authentication failed: \(reason)"
+        case .invalidConfiguration:
+            return "Invalid configuration"
+        case .dnsFailed:
+            return "DNS failed"
+        case .tcpConnectFailed:
+            return "TCP connect failed"
+        case .tlsHandshakeFailed:
+            return "TLS handshake failed"
+        case .authenticationFailed:
+            return "Authentication failed"
         case let .unsupportedTransport(transport):
             return "Unsupported transport: \(transport.rawValue)"
         case let .unsupportedProtocol(protocolType):
             return "Unsupported protocol: \(protocolType.rawValue)"
-        case let .protocolHandshakeFailed(reason):
-            return "Protocol handshake failed: \(reason)"
-        case let .quicHandshakeFailed(reason):
-            return "QUIC handshake failed: \(reason)"
+        case .protocolHandshakeFailed:
+            return "Protocol handshake failed"
+        case .quicHandshakeFailed:
+            return "QUIC handshake failed"
         case .udpUnsupported:
             return "UDP unsupported"
         case .remoteClosed:
