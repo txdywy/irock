@@ -199,6 +199,36 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["destination"], "ipv4:93.184.216.34:443")
     }
 
+    func testTransportBackedProxyAdapterMapsTransportErrorsToProtocolErrors() async {
+        let cases: [(TransportError, ProxyProtocolError)] = [
+            (.invalidConfiguration("secret invalid"), .invalidConfiguration("transport invalid")),
+            (.dnsFailed("secret host"), .dnsFailed("transport dns failed")),
+            (.tcpConnectFailed("password refused"), .tcpConnectFailed("transport tcp connect failed")),
+            (.tlsHandshakeFailed("token rejected"), .tlsHandshakeFailed("transport tls handshake failed")),
+            (.unsupportedTransport(.quic), .unsupportedTransport(.quic)),
+            (.quicHandshakeFailed("secret timeout"), .quicHandshakeFailed("transport quic handshake failed")),
+            (.remoteClosed, .remoteClosed),
+            (.timeout, .timeout)
+        ]
+
+        for (transportError, expectedProtocolError) in cases {
+            let adapter = TransportBackedProxyAdapter(
+                protocolType: .trojan,
+                transportRegistry: TransportAdapterRegistry(adapters: [FailingTransportAdapter(transport: .tcp, error: transportError)])
+            )
+            let request = ProxyRequest(node: makeNode(protocolType: .trojan, transport: .tcp), destination: .host("apple.com", port: 443))
+
+            do {
+                _ = try await adapter.connect(request: request)
+                XCTFail("Expected protocol error")
+            } catch let error as ProxyProtocolError {
+                XCTAssertEqual(error, expectedProtocolError)
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
     private func makeNode(protocolType: ProxyProtocolType, transport: TransportType, tls: TLSOptions = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)) -> ProxyNode {
         ProxyNode(
             id: NodeID(rawValue: "node-1"),
@@ -252,5 +282,19 @@ private final class RecordingTransportAdapter: TransportAdapter, @unchecked Send
         lock.lock()
         defer { lock.unlock() }
         storedRequests.append(request)
+    }
+}
+
+private struct FailingTransportAdapter: TransportAdapter {
+    let supportedTransport: TransportType
+    let error: TransportError
+
+    init(transport: TransportType, error: TransportError) {
+        self.supportedTransport = transport
+        self.error = error
+    }
+
+    func open(request: TransportRequest) async throws -> any TransportConnection {
+        throw error
     }
 }

@@ -144,7 +144,11 @@ public struct TransportBackedProxyAdapter: ProxyAdapter {
             tls: request.node.tls.enabled ? request.node.tls : nil,
             metadata: transportMetadata(for: request)
         )
-        _ = try await transportRegistry.adapter(for: request.node.transport).open(request: transportRequest)
+        do {
+            _ = try await transportRegistry.adapter(for: request.node.transport).open(request: transportRequest)
+        } catch let error as TransportError {
+            throw proxyProtocolError(for: error)
+        }
         return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination)
     }
 
@@ -163,6 +167,27 @@ public struct TransportBackedProxyAdapter: ProxyAdapter {
             return "ipv4:\(address):\(port)"
         case let .ipv6(address, port):
             return "ipv6:\(address):\(port)"
+        }
+    }
+
+    private func proxyProtocolError(for error: TransportError) -> ProxyProtocolError {
+        switch error {
+        case .invalidConfiguration:
+            return .invalidConfiguration("transport invalid")
+        case .dnsFailed:
+            return .dnsFailed("transport dns failed")
+        case .tcpConnectFailed:
+            return .tcpConnectFailed("transport tcp connect failed")
+        case .tlsHandshakeFailed:
+            return .tlsHandshakeFailed("transport tls handshake failed")
+        case let .unsupportedTransport(transport):
+            return .unsupportedTransport(transport)
+        case .quicHandshakeFailed:
+            return .quicHandshakeFailed("transport quic handshake failed")
+        case .remoteClosed:
+            return .remoteClosed
+        case .timeout:
+            return .timeout
         }
     }
 }
