@@ -122,3 +122,47 @@ public struct ProxyAdapterRegistry: Sendable {
         adapters[protocolType] ?? UnsupportedProxyAdapter(protocolType: protocolType)
     }
 }
+
+public struct TransportBackedProxyAdapter: ProxyAdapter {
+    public let supportedProtocol: ProxyProtocolType
+    private let transportRegistry: TransportAdapterRegistry
+
+    public init(protocolType: ProxyProtocolType, transportRegistry: TransportAdapterRegistry) {
+        self.supportedProtocol = protocolType
+        self.transportRegistry = transportRegistry
+    }
+
+    public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
+        guard request.node.protocolType == supportedProtocol else {
+            throw ProxyProtocolError.unsupportedProtocol(request.node.protocolType)
+        }
+
+        let transportRequest = TransportRequest(
+            host: request.node.serverHost,
+            port: request.node.serverPort,
+            transport: request.node.transport,
+            tls: request.node.tls.enabled ? request.node.tls : nil,
+            metadata: transportMetadata(for: request)
+        )
+        _ = try await transportRegistry.adapter(for: request.node.transport).open(request: transportRequest)
+        return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination)
+    }
+
+    private func transportMetadata(for request: ProxyRequest) -> [String: String] {
+        var metadata = request.metadata
+        metadata["proxyProtocol"] = request.node.protocolType.rawValue
+        metadata["destination"] = destinationDescription(request.destination)
+        return metadata
+    }
+
+    private func destinationDescription(_ destination: ProxyDestination) -> String {
+        switch destination {
+        case let .host(host, port):
+            return "host:\(host):\(port)"
+        case let .ipv4(address, port):
+            return "ipv4:\(address):\(port)"
+        case let .ipv6(address, port):
+            return "ipv6:\(address):\(port)"
+        }
+    }
+}

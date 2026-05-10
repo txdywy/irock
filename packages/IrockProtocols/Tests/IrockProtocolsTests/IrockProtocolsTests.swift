@@ -1,5 +1,6 @@
 import XCTest
 import IrockCore
+import IrockTransport
 @testable import IrockProtocols
 
 final class IrockProtocolsTests: XCTestCase {
@@ -151,6 +152,26 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(connection.nodeID, NodeID(rawValue: "second"))
     }
 
+    func testTransportBackedProxyAdapterOpensNodeTransportAndReturnsProxyConnection() async throws {
+        let transport = RecordingTransportAdapter(transport: .grpc)
+        let adapter = TransportBackedProxyAdapter(protocolType: .trojan, transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let node = makeNode(protocolType: .trojan, transport: .grpc)
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests.first?.host, "example.com")
+        XCTAssertEqual(transport.requests.first?.port, 443)
+        XCTAssertEqual(transport.requests.first?.transport, .grpc)
+        XCTAssertEqual(transport.requests.first?.tls?.enabled, true)
+        XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "trojan")
+        XCTAssertEqual(transport.requests.first?.metadata["destination"], "host:apple.com:443")
+    }
+
     private func makeNode(protocolType: ProxyProtocolType, transport: TransportType) -> ProxyNode {
         ProxyNode(
             id: NodeID(rawValue: "node-1"),
@@ -177,5 +198,32 @@ final class IrockProtocolsTests: XCTestCase {
         func connect(request: ProxyRequest) async throws -> any ProxyConnection {
             EstablishedProxyConnection(nodeID: connectionNodeID, destination: request.destination)
         }
+    }
+}
+
+private final class RecordingTransportAdapter: TransportAdapter, @unchecked Sendable {
+    let supportedTransport: TransportType
+    private let lock = NSLock()
+    private var storedRequests: [TransportRequest] = []
+
+    var requests: [TransportRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedRequests
+    }
+
+    init(transport: TransportType) {
+        self.supportedTransport = transport
+    }
+
+    func open(request: TransportRequest) async throws -> any TransportConnection {
+        record(request)
+        return EstablishedTransportConnection(host: request.host, port: request.port, transport: request.transport)
+    }
+
+    private func record(_ request: TransportRequest) {
+        lock.lock()
+        defer { lock.unlock() }
+        storedRequests.append(request)
     }
 }
