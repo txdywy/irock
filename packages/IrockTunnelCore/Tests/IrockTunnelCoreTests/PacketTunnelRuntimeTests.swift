@@ -1,5 +1,6 @@
 import XCTest
 import IrockCore
+import IrockProtocols
 import IrockRouting
 import IrockStorage
 @testable import IrockTunnelCore
@@ -141,6 +142,23 @@ final class PacketTunnelRuntimeTests: XCTestCase {
         }
     }
 
+    func testConfigurationStoresProxyAdapterRegistry() async throws {
+        let adapter = RuntimeRecordingProxyAdapter(protocolType: .trojan)
+        let registry = ProxyAdapterRegistry(adapters: [adapter])
+        let configuration = TunnelRuntimeConfiguration(
+            snapshot: snapshot(routeMode: .globalProxy),
+            routingEngine: RoutingEngine(rules: [.final(.proxy)]),
+            proxyAdapterRegistry: registry,
+            batchLimit: 16,
+            flowLimit: 32
+        )
+
+        let selected = configuration.proxyAdapterRegistry.adapter(for: .trojan)
+        let connection = try await selected.connect(request: ProxyRequest(node: snapshot(routeMode: .globalProxy).selectedNode, destination: .ipv4("93.184.216.34", port: 443)))
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+    }
+
     private func snapshot(routeMode: RouteMode) -> RuntimeSnapshot {
         RuntimeSnapshot(
             id: SnapshotID(rawValue: "snapshot-1"),
@@ -168,6 +186,33 @@ private struct ThrowingPacketReader: PacketReader {
 private struct ThrowingPacketWriter: PacketWriter {
     func write(_ results: [PacketProcessingResult]) async throws {
         throw PacketRuntimeTestError.failed
+    }
+}
+
+private final class RuntimeRecordingProxyAdapter: ProxyAdapter, @unchecked Sendable {
+    let supportedProtocol: ProxyProtocolType
+    private let lock = NSLock()
+    private var connectCountValue = 0
+
+    var connectCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return connectCountValue
+    }
+
+    init(protocolType: ProxyProtocolType) {
+        self.supportedProtocol = protocolType
+    }
+
+    func connect(request: ProxyRequest) async throws -> any ProxyConnection {
+        recordConnection()
+        return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination)
+    }
+
+    private func recordConnection() {
+        lock.lock()
+        defer { lock.unlock() }
+        connectCountValue += 1
     }
 }
 
