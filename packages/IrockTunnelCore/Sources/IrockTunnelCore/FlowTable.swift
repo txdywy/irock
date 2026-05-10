@@ -65,8 +65,9 @@ public struct FlowTable: Equatable, Sendable {
         guard capacity > 0 else { return inserted }
 
         records.append(inserted)
-        if records.count > capacity {
-            records.removeFirst(records.count - capacity)
+        if records.count > capacity,
+           let evictionIndex = records.indices.min(by: { records[$0].lastSeenSequence < records[$1].lastSeenSequence }) {
+            records.remove(at: evictionIndex)
         }
         return inserted
     }
