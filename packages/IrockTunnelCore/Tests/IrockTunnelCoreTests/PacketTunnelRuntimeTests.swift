@@ -46,6 +46,44 @@ final class PacketTunnelRuntimeTests: XCTestCase {
         XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Tunnel runtime connected"])
     }
 
+    func testRuntimeIgnoresReporterFailuresBeforePacketProcessing() async throws {
+        let validPacket = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let reader = InMemoryPacketReader(packets: [validPacket])
+        let writer = InMemoryPacketWriter()
+        let reporter = TunnelRuntimeReporter(statusStore: FailingRuntimeStatusStore(), logStore: FailingRuntimeLogStore())
+        let runtime = PacketTunnelRuntime(
+            reader: reader,
+            writer: writer,
+            configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), batchLimit: 16, flowLimit: 32),
+            reporter: reporter
+        )
+
+        let summary = try await runtime.runOnce()
+
+        XCTAssertEqual(summary.readCount, 1)
+        XCTAssertEqual(summary.writtenCount, 1)
+        XCTAssertEqual(writer.writtenResults.count, 1)
+    }
+
+    func testRuntimeIgnoresReporterFailuresAfterPacketWrite() async throws {
+        let validPacket = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let reader = InMemoryPacketReader(packets: [validPacket])
+        let writer = InMemoryPacketWriter()
+        let reporter = TunnelRuntimeReporter(statusStore: FailingAfterFirstSaveRuntimeStatusStore(), logStore: FailingAfterFirstAppendRuntimeLogStore())
+        let runtime = PacketTunnelRuntime(
+            reader: reader,
+            writer: writer,
+            configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), batchLimit: 16, flowLimit: 32),
+            reporter: reporter
+        )
+
+        let summary = try await runtime.runOnce()
+
+        XCTAssertEqual(summary.readCount, 1)
+        XCTAssertEqual(summary.writtenCount, 1)
+        XCTAssertEqual(writer.writtenResults.count, 1)
+    }
+
     private func snapshot(routeMode: RouteMode) -> RuntimeSnapshot {
         RuntimeSnapshot(
             id: SnapshotID(rawValue: "snapshot-1"),
@@ -54,4 +92,70 @@ final class PacketTunnelRuntimeTests: XCTestCase {
             logLevel: .user
         )
     }
+}
+
+private enum FailingRuntimeStoreError: Error {
+    case failed
+}
+
+private final class FailingRuntimeStatusStore: RuntimeStatusStore, @unchecked Sendable {
+    func save(_ status: RuntimeConnectionStatus) throws {
+        throw FailingRuntimeStoreError.failed
+    }
+
+    func load() throws -> RuntimeConnectionStatus? {
+        nil
+    }
+}
+
+private final class FailingRuntimeLogStore: RuntimeLogStore, @unchecked Sendable {
+    func append(_ entry: RuntimeLogEntry) throws {
+        throw FailingRuntimeStoreError.failed
+    }
+
+    func loadRecent() throws -> [RuntimeLogEntry] {
+        []
+    }
+
+    func clear() throws {}
+}
+
+private final class FailingAfterFirstSaveRuntimeStatusStore: RuntimeStatusStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var saveCount = 0
+
+    func save(_ status: RuntimeConnectionStatus) throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        saveCount += 1
+        if saveCount > 1 {
+            throw FailingRuntimeStoreError.failed
+        }
+    }
+
+    func load() throws -> RuntimeConnectionStatus? {
+        nil
+    }
+}
+
+private final class FailingAfterFirstAppendRuntimeLogStore: RuntimeLogStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var appendCount = 0
+
+    func append(_ entry: RuntimeLogEntry) throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        appendCount += 1
+        if appendCount > 1 {
+            throw FailingRuntimeStoreError.failed
+        }
+    }
+
+    func loadRecent() throws -> [RuntimeLogEntry] {
+        []
+    }
+
+    func clear() throws {}
 }
