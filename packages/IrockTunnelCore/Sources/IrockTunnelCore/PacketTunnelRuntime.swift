@@ -3,7 +3,7 @@ public protocol PacketReader: Sendable {
 }
 
 public protocol PacketWriter: Sendable {
-    func write(_ result: PacketProcessingResult) async throws
+    func write(_ results: [PacketProcessingResult]) async throws
 }
 
 public struct PacketTunnelRuntimeSummary: Equatable, Sendable {
@@ -34,9 +34,7 @@ public struct PacketTunnelRuntime<Reader: PacketReader, Writer: PacketWriter>: S
         var processor = PacketProcessor(configuration: configuration)
         let results = processor.process(packets)
 
-        for result in results {
-            try await writer.write(result)
-        }
+        try await writer.write(results)
 
         return PacketTunnelRuntimeSummary(
             readCount: packets.count,

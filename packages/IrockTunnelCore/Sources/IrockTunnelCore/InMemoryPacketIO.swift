@@ -17,7 +17,7 @@ public final class InMemoryPacketWriter: PacketWriter, @unchecked Sendable {
         self.writtenResults = writtenResults
     }
 
-    public func write(_ result: PacketProcessingResult) async throws {
-        writtenResults.append(result)
+    public func write(_ results: [PacketProcessingResult]) async throws {
+        writtenResults.append(contentsOf: results)
     }
 }
