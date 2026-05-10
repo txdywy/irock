@@ -199,6 +199,86 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["destination"], "ipv4:93.184.216.34:443")
     }
 
+    func testShadowsocksProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .trojan, transport: .tcp), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected unsupported protocol")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .unsupportedProtocol(.trojan))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testShadowsocksProxyAdapterRejectsEmptyServerHostBeforeTransportOpen() async {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp, serverHost: "   "), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected invalid configuration")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .invalidConfiguration("missing shadowsocks server host"))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testShadowsocksProxyAdapterRejectsInvalidServerPortBeforeTransportOpen() async {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp, serverPort: 0), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected invalid configuration")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .invalidConfiguration("invalid shadowsocks server port"))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testShadowsocksProxyAdapterRejectsEmptyCredentialAccountBeforeTransportOpen() async {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp, credentialAccount: "   "), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected invalid configuration")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .invalidConfiguration("missing shadowsocks credential account"))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testShadowsocksProxyAdapterRejectsNonTCPTransportBeforeTransportOpen() async {
+        let transport = RecordingTransportAdapter(transport: .grpc)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .grpc), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected unsupported transport")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .unsupportedTransport(.grpc))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testShadowsocksProxyAdapterReportsSupportedProtocol() {
         let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: []))
 
@@ -253,14 +333,21 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
-    private func makeNode(protocolType: ProxyProtocolType, transport: TransportType, tls: TLSOptions = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)) -> ProxyNode {
+    private func makeNode(
+        protocolType: ProxyProtocolType,
+        transport: TransportType,
+        tls: TLSOptions = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil),
+        serverHost: String = "example.com",
+        serverPort: Int = 443,
+        credentialAccount: String = "node-1"
+    ) -> ProxyNode {
         ProxyNode(
             id: NodeID(rawValue: "node-1"),
             name: "Demo Node",
             protocolType: protocolType,
-            serverHost: "example.com",
-            serverPort: 443,
-            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
+            serverHost: serverHost,
+            serverPort: serverPort,
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: credentialAccount),
             transport: transport,
             tls: tls,
             udpPolicy: .disabled

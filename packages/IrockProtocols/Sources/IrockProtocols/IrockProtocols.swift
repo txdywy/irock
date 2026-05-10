@@ -209,5 +209,17 @@ public struct ShadowsocksProxyAdapter: ProxyAdapter {
         guard node.protocolType == .shadowsocks else {
             throw ProxyProtocolError.unsupportedProtocol(node.protocolType)
         }
+        guard !node.serverHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing shadowsocks server host")
+        }
+        guard (1...65_535).contains(node.serverPort) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks server port")
+        }
+        guard !node.credentialReference.account.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing shadowsocks credential account")
+        }
+        guard node.transport == .tcp else {
+            throw ProxyProtocolError.unsupportedTransport(node.transport)
+        }
     }
 }
