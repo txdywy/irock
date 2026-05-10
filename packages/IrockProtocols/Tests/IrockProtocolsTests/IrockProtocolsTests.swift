@@ -39,28 +39,57 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
     }
 
-    func testNoopProxyAdapterFailsWithUnsupportedProtocol() async {
-        let node = ProxyNode(
-            id: NodeID(rawValue: "node-1"),
-            name: "Demo TUIC",
-            protocolType: .tuic,
-            serverHost: "example.com",
-            serverPort: 443,
-            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
-            transport: .quic,
-            tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil),
-            udpPolicy: .enabled
-        )
+    func testUnsupportedProxyAdapterFailsWithRequestedProtocol() async {
+        let node = makeNode(protocolType: .tuic, transport: .quic)
+        let adapter = UnsupportedProxyAdapter(protocolType: .tuic)
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected unsupported protocol")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .unsupportedProtocol(.tuic))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testNoopProxyAdapterRemainsUnsupportedAlias() async {
+        let node = makeNode(protocolType: .hysteria2, transport: .quic)
         let adapter = NoopProxyAdapter()
         let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443))
 
         do {
             _ = try await adapter.connect(request: request)
             XCTFail("Expected unsupported protocol")
-        } catch let error as ProtocolAdapterError {
-            XCTAssertEqual(error, .unsupportedProtocol(.tuic))
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .unsupportedProtocol(.hysteria2))
         } catch {
             XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testProxyProtocolErrorDescriptionsAreStableAndCredentialSafe() {
+        let errors: [(ProxyProtocolError, String)] = [
+            (.invalidConfiguration("missing server host"), "Invalid configuration: missing server host"),
+            (.dnsFailed("example.com"), "DNS failed: example.com"),
+            (.tcpConnectFailed("connection refused"), "TCP connect failed: connection refused"),
+            (.tlsHandshakeFailed("certificate rejected"), "TLS handshake failed: certificate rejected"),
+            (.authenticationFailed("method rejected"), "Authentication failed: method rejected"),
+            (.unsupportedTransport(.quic), "Unsupported transport: quic"),
+            (.unsupportedProtocol(.tuic), "Unsupported protocol: tuic"),
+            (.protocolHandshakeFailed("bad response"), "Protocol handshake failed: bad response"),
+            (.quicHandshakeFailed("timeout"), "QUIC handshake failed: timeout"),
+            (.udpUnsupported, "UDP unsupported"),
+            (.remoteClosed, "Remote closed"),
+            (.timeout, "Timeout")
+        ]
+
+        for (error, description) in errors {
+            XCTAssertEqual(error.description, description)
+            XCTAssertFalse(error.description.contains("secret"))
+            XCTAssertFalse(error.description.contains("password"))
+            XCTAssertFalse(error.description.contains("token"))
         }
     }
 
