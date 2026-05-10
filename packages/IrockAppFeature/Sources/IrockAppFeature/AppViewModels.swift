@@ -10,10 +10,12 @@ public final class AppViewModel: ObservableObject {
 
     private let logLimit: Int
     private let runtimeSnapshotPublisher: RuntimeSnapshotPublisher
+    private var routingRuleText: String
 
     public init(nodes: [ProxyNode], logLimit: Int = 5, runtimeSnapshotStore: RuntimeSnapshotStore = InMemoryRuntimeSnapshotStore()) {
         self.logLimit = max(0, logLimit)
         self.runtimeSnapshotPublisher = RuntimeSnapshotPublisher(store: runtimeSnapshotStore)
+        self.routingRuleText = ""
         self.nodeListState = NodeListState(nodes: nodes, selectedNodeID: nil)
         self.overviewState = OverviewState(connectionStatus: .disconnected, selectedNode: nil, routeMode: .ruleBased, recentLogMessages: [])
         self.settingsState = SettingsState(vpnPermissionStatus: "未配置", appGroupStatus: "未验证", debugLoggingEnabled: false)
@@ -33,10 +35,22 @@ public final class AppViewModel: ObservableObject {
         settingsState = SettingsState(vpnPermissionStatus: settingsState.vpnPermissionStatus, appGroupStatus: settingsState.appGroupStatus, debugLoggingEnabled: enabled)
     }
 
+    public func setRoutingRuleText(_ text: String) {
+        routingRuleText = text
+    }
+
     @discardableResult
     public func publishRuntimeSnapshot() -> RuntimeSnapshotPublishResult {
         let logLevel: IrockLogLevel = settingsState.debugLoggingEnabled ? .debug : .user
-        let result = runtimeSnapshotPublisher.publish(selectedNode: overviewState.selectedNode, routeMode: overviewState.routeMode, logLevel: logLevel)
+        let routingRuleManifest: RuntimeRoutingRuleManifest
+        do {
+            routingRuleManifest = try RoutingRuleManifestBuilder.buildManifest(from: routingRuleText)
+        } catch {
+            appendLog("Routing rules invalid: \(error)")
+            return .storageFailed(String(describing: error))
+        }
+
+        let result = runtimeSnapshotPublisher.publish(selectedNode: overviewState.selectedNode, routeMode: overviewState.routeMode, logLevel: logLevel, routingRuleManifest: routingRuleManifest)
 
         switch result {
         case .published:
