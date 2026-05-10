@@ -1,6 +1,7 @@
 import XCTest
 import IrockCore
 import IrockRouting
+import IrockStorage
 @testable import IrockTunnelCore
 
 final class PacketTunnelRuntimeTests: XCTestCase {
@@ -18,6 +19,31 @@ final class PacketTunnelRuntimeTests: XCTestCase {
         XCTAssertEqual(summary.writtenCount, 2)
         XCTAssertEqual(summary.dropCount, 1)
         XCTAssertEqual(writer.writtenResults.map(\.action), [.proxy(flowKey), .drop(.parseFailed(.tooShort))])
+    }
+
+    func testRuntimePublishesPreparingAndConnectedStatus() async throws {
+        let validPacket = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let reader = InMemoryPacketReader(packets: [validPacket])
+        let writer = InMemoryPacketWriter()
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+        let reporter = TunnelRuntimeReporter(statusStore: statusStore, logStore: logStore)
+        let runtime = PacketTunnelRuntime(
+            reader: reader,
+            writer: writer,
+            configuration: TunnelRuntimeConfiguration(snapshot: snapshot(routeMode: .globalProxy), routingEngine: RoutingEngine(rules: [.final(.proxy)]), batchLimit: 16, flowLimit: 32),
+            reporter: reporter
+        )
+
+        let summary = try await runtime.runOnce()
+
+        XCTAssertEqual(summary.readCount, 1)
+        let status = try XCTUnwrap(statusStore.load())
+        XCTAssertEqual(status.phase, .connected)
+        XCTAssertEqual(status.selectedNodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(status.selectedNodeName, "Demo")
+        XCTAssertEqual(status.message, "Packet batch processed")
+        XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Tunnel runtime connected"])
     }
 
     private func snapshot(routeMode: RouteMode) -> RuntimeSnapshot {
