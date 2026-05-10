@@ -15,7 +15,8 @@ let package = Package(
         .library(name: "IrockStorage", targets: ["IrockStorage"]),
         .library(name: "IrockDiagnostics", targets: ["IrockDiagnostics"]),
         .library(name: "IrockPerformanceKit", targets: ["IrockPerformanceKit"]),
-        .library(name: "IrockAppFeature", targets: ["IrockAppFeature"])
+        .library(name: "IrockAppFeature", targets: ["IrockAppFeature"]),
+        .library(name: "IrockTunnelCore", targets: ["IrockTunnelCore"])
     ],
     targets: [
         .target(
@@ -96,6 +97,16 @@ let package = Package(
             name: "IrockAppFeatureTests",
             dependencies: ["IrockAppFeature"],
             path: "packages/IrockAppFeature/Tests/IrockAppFeatureTests"
+        ),
+        .target(
+            name: "IrockTunnelCore",
+            dependencies: ["IrockCore", "IrockRouting"],
+            path: "packages/IrockTunnelCore/Sources/IrockTunnelCore"
+        ),
+        .testTarget(
+            name: "IrockTunnelCoreTests",
+            dependencies: ["IrockTunnelCore"],
+            path: "packages/IrockTunnelCore/Tests/IrockTunnelCoreTests"
         )
     ]
 )
