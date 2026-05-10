@@ -16,6 +16,7 @@ public struct PacketParser: Sendable {
         guard version == 4 else { throw PacketParseError.unsupportedIPVersion }
 
         let headerLength = Int(bytes[0] & 0x0f) * 4
+        guard headerLength >= 20 else { throw PacketParseError.truncatedHeader }
         guard bytes.count >= headerLength else { throw PacketParseError.truncatedHeader }
         guard bytes.count >= headerLength + 4 else { throw PacketParseError.truncatedHeader }
 

@@ -64,6 +64,15 @@ final class PacketParserTests: XCTestCase {
         }
     }
 
+    func testRejectsInvalidIPv4HeaderLength() {
+        var bytes = Packet.ipv4TCP(id: "invalid-ihl", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 1_000, destinationPort: 443).bytes
+        bytes[0] = 0x44
+
+        XCTAssertThrowsError(try PacketParser().parse(Packet(id: "invalid-ihl", bytes: bytes))) { error in
+            XCTAssertEqual(error as? PacketParseError, .truncatedHeader)
+        }
+    }
+
     func testRejectsTruncatedTransportHeader() {
         let packet = Packet(id: "truncated", bytes: Array(Packet.ipv4UDP(id: "udp", source: .v4(10, 0, 0, 2), destination: .v4(1, 1, 1, 1), sourcePort: 1_000, destinationPort: 53).bytes.prefix(22)))
 

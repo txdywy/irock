@@ -1,4 +1,4 @@
-public struct Packet: Equatable, Sendable {
+public struct Packet: Equatable, Hashable, Sendable {
     public let id: String
     public let bytes: [UInt8]
 
@@ -19,12 +19,12 @@ public enum IPAddress: Equatable, Hashable, Sendable {
     }
 }
 
-public enum TransportProtocol: UInt8, Equatable, Sendable {
+public enum TransportProtocol: UInt8, Equatable, Hashable, Sendable {
     case tcp = 6
     case udp = 17
 }
 
-public struct ParsedPacket: Equatable, Sendable {
+public struct ParsedPacket: Equatable, Hashable, Sendable {
     public let packet: Packet
     public let sourceIP: IPAddress
     public let destinationIP: IPAddress
