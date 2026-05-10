@@ -333,6 +333,22 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testShadowsocksProxyAdapterPropagatesMappedTransportFailure() async {
+        let adapter = ShadowsocksProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: [FailingTransportAdapter(transport: .tcp, error: .tcpConnectFailed("password refused"))])
+        )
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected mapped transport failure")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .tcpConnectFailed("transport tcp connect failed"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     private func makeNode(
         protocolType: ProxyProtocolType,
         transport: TransportType,
