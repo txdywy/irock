@@ -60,6 +60,7 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(project.contains("SDKROOT = iphoneos"))
         XCTAssertTrue(project.contains("SUPPORTED_PLATFORMS = \"iphoneos iphonesimulator\""))
         XCTAssertTrue(project.contains("TARGETED_DEVICE_FAMILY = \"1,2\""))
+        XCTAssertEqual(project.components(separatedBy: "ALWAYS_SEARCH_USER_PATHS = NO").count - 1, 2)
         XCTAssertTrue(project.contains("APPLICATION_EXTENSION_API_ONLY = YES"))
         XCTAssertTrue(project.contains("IrockApp.swift in Sources"))
         XCTAssertTrue(project.contains("ContentView.swift in Sources"))
