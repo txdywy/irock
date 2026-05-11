@@ -128,6 +128,19 @@ final class PacketFlowRuntimeIOTests: XCTestCase {
         XCTAssertEqual(flow.writtenResults, [result])
         XCTAssertEqual(flow.readLimits, [])
     }
+
+    func testPacketProcessingResultCanCarryExplicitResponseBytes() async throws {
+        let packet = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        var processor = PacketProcessor(configuration: try TunnelRuntimeConfiguration(snapshot: packetFlowSnapshot(tls: .disabled), batchLimit: 16, flowLimit: 32))
+        let result = processor.process(packet).withResponsePacketBytes([0x45, 0x00, 0x00, 0x28])
+        let flow = RecordingPacketFlowIO(packets: [])
+        let io = PacketFlowRuntimeIO(flow: flow, batchLimit: 7)
+
+        try await io.write([result])
+
+        XCTAssertEqual(flow.writtenResults.first?.responsePacketBytes, [0x45, 0x00, 0x00, 0x28])
+        XCTAssertEqual(flow.writtenResults.first?.packet.id, "tcp-1")
+    }
 }
 
 private final class RecordingPacketFlowIO: PacketFlowIO, @unchecked Sendable {

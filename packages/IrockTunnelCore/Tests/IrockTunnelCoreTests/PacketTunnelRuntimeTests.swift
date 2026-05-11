@@ -197,6 +197,57 @@ final class PacketTunnelRuntimeTests: XCTestCase {
         XCTAssertEqual(writer.writtenResults.count, 1)
     }
 
+    func testRuntimeWritesProxyInitialResponseBytesForMatchingFlow() async throws {
+        let adapter = RuntimeRecordingProxyAdapter(protocolType: .trojan, initialResponseBytes: [0x45, 0x00, 0x00, 0x28])
+        let packet = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let reader = InMemoryPacketReader(packets: [packet])
+        let writer = InMemoryPacketWriter()
+        let runtime = PacketTunnelRuntime(
+            reader: reader,
+            writer: writer,
+            configuration: TunnelRuntimeConfiguration(
+                snapshot: snapshot(routeMode: .globalProxy),
+                routingEngine: RoutingEngine(rules: [.final(.proxy)]),
+                proxyAdapterRegistry: ProxyAdapterRegistry(adapters: [adapter]),
+                batchLimit: 16,
+                flowLimit: 32
+            )
+        )
+
+        let summary = try await runtime.runOnce()
+
+        XCTAssertEqual(summary.readCount, 1)
+        XCTAssertEqual(summary.writtenCount, 1)
+        XCTAssertEqual(summary.proxyConnectCount, 1)
+        XCTAssertEqual(writer.writtenResults.first?.responsePacketBytes, [0x45, 0x00, 0x00, 0x28])
+    }
+
+    func testRuntimeAttachesProxyInitialResponseBytesOnlyToConnectedResult() async throws {
+        let adapter = RuntimeRecordingProxyAdapter(protocolType: .trojan, initialResponseBytes: [0x45, 0x00, 0x00, 0x28])
+        let firstPacket = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let secondPacket = Packet.ipv4TCP(id: "tcp-2", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let reader = InMemoryPacketReader(packets: [firstPacket, secondPacket])
+        let writer = InMemoryPacketWriter()
+        let runtime = PacketTunnelRuntime(
+            reader: reader,
+            writer: writer,
+            configuration: TunnelRuntimeConfiguration(
+                snapshot: snapshot(routeMode: .globalProxy),
+                routingEngine: RoutingEngine(rules: [.final(.proxy)]),
+                proxyAdapterRegistry: ProxyAdapterRegistry(adapters: [adapter]),
+                batchLimit: 16,
+                flowLimit: 32
+            )
+        )
+
+        let summary = try await runtime.runOnce()
+
+        XCTAssertEqual(summary.readCount, 2)
+        XCTAssertEqual(summary.writtenCount, 2)
+        XCTAssertEqual(summary.proxyConnectCount, 1)
+        XCTAssertEqual(writer.writtenResults.map(\.responsePacketBytes), [[0x45, 0x00, 0x00, 0x28], nil])
+    }
+
     func testRuntimePublishesFailedStatusAndLogWhenProxyAdapterIsUnsupported() async throws {
         let validPacket = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
         let reader = InMemoryPacketReader(packets: [validPacket])
@@ -312,6 +363,7 @@ private struct ThrowingPacketWriter: PacketWriter {
 
 private final class RuntimeRecordingProxyAdapter: ProxyAdapter, @unchecked Sendable {
     let supportedProtocol: ProxyProtocolType
+    private let initialResponseBytes: [UInt8]?
     private let lock = NSLock()
     private var connectCountValue = 0
 
@@ -321,13 +373,14 @@ private final class RuntimeRecordingProxyAdapter: ProxyAdapter, @unchecked Senda
         return connectCountValue
     }
 
-    init(protocolType: ProxyProtocolType) {
+    init(protocolType: ProxyProtocolType, initialResponseBytes: [UInt8]? = nil) {
         self.supportedProtocol = protocolType
+        self.initialResponseBytes = initialResponseBytes
     }
 
     func connect(request: ProxyRequest) async throws -> any ProxyConnection {
         recordConnection()
-        return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination)
+        return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination, initialResponseBytes: initialResponseBytes)
     }
 
     private func recordConnection() {

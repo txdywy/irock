@@ -163,15 +163,18 @@ public struct ProxyRequest: Equatable, Sendable {
 public protocol ProxyConnection: Sendable {
     var nodeID: NodeID { get }
     var destination: ProxyDestination { get }
+    var initialResponseBytes: [UInt8]? { get }
 }
 
 public struct EstablishedProxyConnection: ProxyConnection, Equatable, Sendable {
     public let nodeID: NodeID
     public let destination: ProxyDestination
+    public let initialResponseBytes: [UInt8]?
 
-    public init(nodeID: NodeID, destination: ProxyDestination) {
+    public init(nodeID: NodeID, destination: ProxyDestination, initialResponseBytes: [UInt8]? = nil) {
         self.nodeID = nodeID
         self.destination = destination
+        self.initialResponseBytes = initialResponseBytes
     }
 }
 

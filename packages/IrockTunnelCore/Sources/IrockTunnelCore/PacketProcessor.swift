@@ -20,12 +20,18 @@ public struct PacketProcessingResult: Equatable, Sendable {
     public let parsedPacket: ParsedPacket?
     public let flowKey: FlowKey?
     public let action: PacketAction
+    public let responsePacketBytes: [UInt8]?
 
-    public init(packet: Packet, parsedPacket: ParsedPacket?, flowKey: FlowKey?, action: PacketAction) {
+    public init(packet: Packet, parsedPacket: ParsedPacket?, flowKey: FlowKey?, action: PacketAction, responsePacketBytes: [UInt8]? = nil) {
         self.packet = packet
         self.parsedPacket = parsedPacket
         self.flowKey = flowKey
         self.action = action
+        self.responsePacketBytes = responsePacketBytes
+    }
+
+    public func withResponsePacketBytes(_ bytes: [UInt8]?) -> PacketProcessingResult {
+        PacketProcessingResult(packet: packet, parsedPacket: parsedPacket, flowKey: flowKey, action: action, responsePacketBytes: bytes)
     }
 }
 

@@ -43,14 +43,20 @@ public struct PacketTunnelRuntime<Reader: PacketReader, Writer: PacketWriter>: S
 
         let packets: [Packet]
         let results: [PacketProcessingResult]
-        let proxyConnectCount: Int
+        let proxyConnectionSummary: ProxyConnectionSummary
         do {
             packets = try await reader.readBatch()
             var processor = PacketProcessor(configuration: configuration)
             results = processor.process(packets)
-            proxyConnectCount = try await connectProxyResults(results)
+            proxyConnectionSummary = try await connectProxyResults(results)
+            let writableResults = results.enumerated().map { index, result in
+                guard let responseBytes = proxyConnectionSummary.responseBytesByResultIndex[index] else {
+                    return result
+                }
+                return result.withResponsePacketBytes(responseBytes)
+            }
 
-            try await writer.write(results)
+            try await writer.write(writableResults)
         } catch {
             let message = failureMessage(for: error)
             publish(.failed, message: message)
@@ -70,23 +76,32 @@ public struct PacketTunnelRuntime<Reader: PacketReader, Writer: PacketWriter>: S
                 }
                 return false
             }.count,
-            proxyConnectCount: proxyConnectCount
+            proxyConnectCount: proxyConnectionSummary.connectCount
         )
     }
 
-    private func connectProxyResults(_ results: [PacketProcessingResult]) async throws -> Int {
+    private struct ProxyConnectionSummary {
+        let connectCount: Int
+        let responseBytesByResultIndex: [Int: [UInt8]]
+    }
+
+    private func connectProxyResults(_ results: [PacketProcessingResult]) async throws -> ProxyConnectionSummary {
         let outbound = ProxyOutbound(node: configuration.snapshot.selectedNode, registry: configuration.proxyAdapterRegistry)
         var connectedFlows: Set<FlowKey> = []
         var connectCount = 0
-        for result in results {
+        var responseBytesByResultIndex: [Int: [UInt8]] = [:]
+        for (index, result) in results.enumerated() {
             guard let flowKey = result.flowKey, connectedFlows.insert(flowKey).inserted else {
                 continue
             }
-            if try await outbound.connect(result: result) != nil {
+            if let connection = try await outbound.connect(result: result) {
                 connectCount += 1
+                if let responseBytes = connection.initialResponseBytes, !responseBytes.isEmpty {
+                    responseBytesByResultIndex[index] = responseBytes
+                }
             }
         }
-        return connectCount
+        return ProxyConnectionSummary(connectCount: connectCount, responseBytesByResultIndex: responseBytesByResultIndex)
     }
 
     private func failureMessage(for error: Error) -> String {

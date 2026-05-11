@@ -67,14 +67,27 @@ struct NEPacketTunnelFlowPacketFlowIO: PacketFlowIO {
 
     func writePackets(_ results: [PacketProcessingResult]) async throws {
         let packets = results.compactMap { result -> NEPacket? in
-            switch result.action {
-            case .direct, .proxy:
-                return NEPacket(data: Data(result.packet.bytes), protocolFamily: sa_family_t(AF_INET))
-            case .reject, .drop:
+            guard let responsePacketBytes = result.responsePacketBytes, !responsePacketBytes.isEmpty else {
                 return nil
             }
+            guard let family = protocolFamily(for: responsePacketBytes) else {
+                return nil
+            }
+            return NEPacket(data: Data(responsePacketBytes), protocolFamily: family)
         }
         guard !packets.isEmpty else { return }
         await packetFlow.writePacketObjects(packets)
+    }
+
+    private func protocolFamily(for packetBytes: [UInt8]) -> sa_family_t? {
+        guard let firstByte = packetBytes.first else { return nil }
+        switch firstByte >> 4 {
+        case 4:
+            return sa_family_t(AF_INET)
+        case 6:
+            return sa_family_t(AF_INET6)
+        default:
+            return nil
+        }
     }
 }
