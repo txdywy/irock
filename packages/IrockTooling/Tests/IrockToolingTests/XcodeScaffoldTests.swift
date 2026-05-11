@@ -69,6 +69,7 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(project.contains("PacketTunnelAppGroupStoreResolver.swift in Sources"))
         XCTAssertTrue(project.contains("IOSPacketTunnelSmokeRunner.swift in Sources"))
         XCTAssertTrue(project.contains("IOSPacketTunnelLoopRunner.swift in Sources"))
+        XCTAssertTrue(project.contains("IOSPlatformTCPDialer.swift in Sources"))
         XCTAssertTrue(project.contains("PacketTunnelRuntimeSettingsConfiguration.swift in Sources"))
         XCTAssertTrue(project.contains("PacketTunnelRuntimeSettingsFactory.swift in Sources"))
         XCTAssertTrue(project.contains("PacketTunnelRuntimeSettingsApplicator.swift in Sources"))
@@ -104,7 +105,8 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(smokeRunner.contains("validateStartup"))
         XCTAssertTrue(smokeRunner.contains("TunnelRuntimeControllerError.missingRuntimeSnapshot"))
         XCTAssertTrue(smokeRunner.contains("TunnelRuntimeController.runShadowsocksTCPBatch"))
-        XCTAssertTrue(smokeRunner.contains("UnsupportedTransportAdapter"))
+        XCTAssertTrue(smokeRunner.contains("TCPTransportAdapter(dialer: IOSPlatformTCPDialer())"))
+        XCTAssertTrue(smokeRunner.contains("tls: UnsupportedTransportAdapter(transport: .tcp)"))
     }
 
     func testPacketTunnelLoopRunnerDeclaresCancellableLongRunningBoundary() throws {
@@ -123,16 +125,51 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertFalse(provider.contains("IOSPacketTunnelSmokeRunner().runOnce"))
     }
 
-    func testNetworkExtensionImportsStayInsideTunnelExtension() throws {
+    func testPlatformTCPDialerDeclaresNetworkConnectionBoundary() throws {
+        let dialer = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/IOSPlatformTCPDialer.swift"))
+
+        XCTAssertTrue(dialer.contains("import " + "IrockTransport"))
+        XCTAssertTrue(dialer.contains("import " + "Network"))
+        XCTAssertTrue(dialer.contains("struct IOSPlatformTCPDialer: TCPDialer"))
+        XCTAssertTrue(dialer.contains("NWConnection"))
+        XCTAssertTrue(dialer.contains("NWEndpoint.Host"))
+        XCTAssertTrue(dialer.contains("NWEndpoint.Port"))
+        XCTAssertTrue(dialer.contains("connection.start"))
+        XCTAssertTrue(dialer.contains("withTaskCancellationHandler"))
+        XCTAssertTrue(dialer.contains("private static let queue"))
+        XCTAssertTrue(dialer.contains("waiter.cancel()"))
+        XCTAssertTrue(dialer.contains("let timeoutTask = Task"))
+        XCTAssertTrue(dialer.contains("resume(with: .failure(TransportError.tcpConnectFailed(\"tcp dial timed out\")))"))
+        XCTAssertTrue(dialer.contains("missing tcp host"))
+        XCTAssertTrue(dialer.contains("Task.sleep"))
+        XCTAssertFalse(dialer.contains("withThrowingTaskGroup"))
+        XCTAssertTrue(dialer.contains("case .ready"))
+        XCTAssertTrue(dialer.contains("case .failed"))
+        XCTAssertTrue(dialer.contains("case .waiting"))
+        XCTAssertTrue(dialer.contains("case .waiting:\n            break"))
+        XCTAssertTrue(dialer.contains("TCPDialResult"))
+        XCTAssertTrue(dialer.contains("TransportError.tcpConnectFailed"))
+    }
+
+    func testPlatformImportsStayInsideTunnelExtension() throws {
         let forbiddenRoots = [
             repositoryRoot.appendingPathComponent("packages"),
             repositoryRoot.appendingPathComponent("apps/irock-iOS/irockApp")
+        ]
+        let forbiddenImports = [
+            "import " + "NetworkExtension",
+            "import " + "Network",
+            "import " + "Security",
+            "import " + "UIKit",
+            "import " + "AppKit"
         ]
 
         for root in forbiddenRoots {
             for file in try swiftFiles(under: root) {
                 let contents = try String(contentsOf: file)
-                XCTAssertFalse(contents.contains("import " + "NetworkExtension"), "NetworkExtension leaked into \(file.path)")
+                for forbiddenImport in forbiddenImports {
+                    XCTAssertFalse(contents.contains(forbiddenImport), "\(forbiddenImport) leaked into \(file.path)")
+                }
             }
         }
     }
@@ -184,6 +221,7 @@ final class XcodeScaffoldTests: XCTestCase {
             "apps/irock-iOS/irockTunnelExtension/PacketTunnelAppGroupStoreResolver.swift",
             "apps/irock-iOS/irockTunnelExtension/IOSPacketTunnelSmokeRunner.swift",
             "apps/irock-iOS/irockTunnelExtension/IOSPacketTunnelLoopRunner.swift",
+            "apps/irock-iOS/irockTunnelExtension/IOSPlatformTCPDialer.swift",
             "apps/irock-iOS/irockTunnelExtension/PacketTunnelRuntimeSettingsConfiguration.swift",
             "apps/irock-iOS/irockTunnelExtension/PacketTunnelRuntimeSettingsFactory.swift",
             "apps/irock-iOS/irockTunnelExtension/PacketTunnelRuntimeSettingsApplicator.swift",

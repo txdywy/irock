@@ -1,0 +1,133 @@
+import Foundation
+import IrockTransport
+import Network
+
+struct IOSPlatformTCPDialer: TCPDialer {
+    private static let queue = DispatchQueue(label: "dev.irock.tcp-dialer")
+    private let timeoutNanoseconds: UInt64
+
+    init(timeoutNanoseconds: UInt64 = 5_000_000_000) {
+        self.timeoutNanoseconds = timeoutNanoseconds
+    }
+
+    func open(host: String, port: Int) async throws -> TCPDialResult {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedHost.isEmpty else {
+            throw TransportError.invalidConfiguration("missing tcp host")
+        }
+        guard (1...65_535).contains(port), let endpointPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
+            throw TransportError.invalidConfiguration("invalid tcp port")
+        }
+
+        let connection = NWConnection(host: NWEndpoint.Host(normalizedHost), port: endpointPort, using: .tcp)
+        let waiter = IOSPlatformTCPDialWaiter(
+            connection: connection,
+            host: normalizedHost,
+            port: port,
+            timeoutNanoseconds: timeoutNanoseconds
+        )
+
+        return try await withTaskCancellationHandler {
+            try await waiter.open(on: Self.queue)
+        } onCancel: {
+            waiter.cancel()
+        }
+    }
+}
+
+private final class IOSPlatformTCPDialWaiter: @unchecked Sendable {
+    private let connection: NWConnection
+    private let host: String
+    private let port: Int
+    private let timeoutNanoseconds: UInt64
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<TCPDialResult, Error>?
+    private var terminalResult: Result<TCPDialResult, Error>?
+
+    init(connection: NWConnection, host: String, port: Int, timeoutNanoseconds: UInt64) {
+        self.connection = connection
+        self.host = host
+        self.port = port
+        self.timeoutNanoseconds = timeoutNanoseconds
+    }
+
+    func open(on queue: DispatchQueue) async throws -> TCPDialResult {
+        let timeoutTask = Task { [weak self] in
+            guard let self else { return }
+            try await Task.sleep(nanoseconds: timeoutNanoseconds)
+            resume(with: .failure(TransportError.tcpConnectFailed("tcp dial timed out")))
+        }
+
+        defer {
+            timeoutTask.cancel()
+            connection.cancel()
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            guard install(continuation) else { return }
+            connection.stateUpdateHandler = { [weak self] state in
+                self?.handle(state)
+            }
+            connection.start(queue: queue)
+        }
+    }
+
+    func cancel() {
+        resume(with: .failure(CancellationError()))
+        connection.cancel()
+    }
+
+    private func install(_ continuation: CheckedContinuation<TCPDialResult, Error>) -> Bool {
+        lock.lock()
+        if let terminalResult {
+            lock.unlock()
+            complete(continuation, with: terminalResult)
+            return false
+        }
+        self.continuation = continuation
+        lock.unlock()
+        return true
+    }
+
+    private func handle(_ state: NWConnection.State) {
+        switch state {
+        case .ready:
+            resume(with: .success(TCPDialResult(host: host, port: port)))
+        case .failed(let error):
+            resume(with: .failure(TransportError.tcpConnectFailed(error.localizedDescription)))
+        case .waiting:
+            break
+        case .cancelled:
+            resume(with: .failure(CancellationError()))
+        case .setup, .preparing:
+            break
+        @unknown default:
+            resume(with: .failure(TransportError.tcpConnectFailed("unknown tcp connection state")))
+        }
+    }
+
+    private func resume(with result: Result<TCPDialResult, Error>) {
+        lock.lock()
+        guard terminalResult == nil else {
+            lock.unlock()
+            return
+        }
+        terminalResult = result
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+
+        if let continuation {
+            complete(continuation, with: result)
+        }
+    }
+
+    private func complete(_ continuation: CheckedContinuation<TCPDialResult, Error>, with result: Result<TCPDialResult, Error>) {
+        switch result {
+        case .success(let value):
+            continuation.resume(returning: value)
+        case .failure(let error):
+            continuation.resume(throwing: error)
+        }
+    }
+}

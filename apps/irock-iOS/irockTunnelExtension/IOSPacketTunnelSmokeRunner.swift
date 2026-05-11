@@ -32,7 +32,7 @@ struct IOSPacketTunnelSmokeRunner: Sendable {
             flow: NEPacketTunnelFlowPacketFlowIO(packetFlow: packetFlow),
             statusStore: stores.statusStore,
             logStore: stores.logStore,
-            plain: UnsupportedTransportAdapter(transport: .tcp),
+            plain: TCPTransportAdapter(dialer: IOSPlatformTCPDialer()),
             tls: UnsupportedTransportAdapter(transport: .tcp),
             batchLimit: batchLimit,
             flowLimit: flowLimit
