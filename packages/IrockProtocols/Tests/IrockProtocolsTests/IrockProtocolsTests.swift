@@ -370,7 +370,7 @@ final class IrockProtocolsTests: XCTestCase {
             (makeNode(protocolType: .vmess, transport: .tcp, serverHost: "   ", credentialAccount: "00000000-0000-0000-0000-000000000001"), .invalidConfiguration("missing vmess server host")),
             (makeNode(protocolType: .vmess, transport: .tcp, serverPort: 0, credentialAccount: "00000000-0000-0000-0000-000000000001"), .invalidConfiguration("invalid vmess server port")),
             (makeNode(protocolType: .vmess, transport: .tcp, credentialAccount: "not-a-uuid"), .invalidConfiguration("invalid vmess user id")),
-            (makeNode(protocolType: .vmess, transport: .grpc, credentialAccount: "00000000-0000-0000-0000-000000000001"), .unsupportedTransport(.grpc))
+            (makeNode(protocolType: .vmess, transport: .quic, credentialAccount: "00000000-0000-0000-0000-000000000001"), .unsupportedTransport(.quic))
         ]
 
         for (node, expectedError) in cases {
@@ -432,7 +432,7 @@ final class IrockProtocolsTests: XCTestCase {
             (makeNode(protocolType: .vless, transport: .tcp, serverHost: "   ", credentialAccount: "00000000-0000-0000-0000-000000000002"), .invalidConfiguration("missing vless server host")),
             (makeNode(protocolType: .vless, transport: .tcp, serverPort: 0, credentialAccount: "00000000-0000-0000-0000-000000000002"), .invalidConfiguration("invalid vless server port")),
             (makeNode(protocolType: .vless, transport: .tcp, credentialAccount: "not-a-uuid"), .invalidConfiguration("invalid vless user id")),
-            (makeNode(protocolType: .vless, transport: .grpc, credentialAccount: "00000000-0000-0000-0000-000000000002"), .unsupportedTransport(.grpc))
+            (makeNode(protocolType: .vless, transport: .quic, credentialAccount: "00000000-0000-0000-0000-000000000002"), .unsupportedTransport(.quic))
         ]
 
         for (node, expectedError) in cases {
@@ -497,7 +497,7 @@ final class IrockProtocolsTests: XCTestCase {
             (makeNode(protocolType: .trojan, transport: .tcp, serverHost: "   ", credentialAccount: "secret-password"), .invalidConfiguration("missing trojan server host")),
             (makeNode(protocolType: .trojan, transport: .tcp, serverPort: 0, credentialAccount: "secret-password"), .invalidConfiguration("invalid trojan server port")),
             (makeNode(protocolType: .trojan, transport: .tcp, credentialAccount: "   "), .invalidConfiguration("missing trojan password")),
-            (makeNode(protocolType: .trojan, transport: .grpc, credentialAccount: "secret-password"), .unsupportedTransport(.grpc))
+            (makeNode(protocolType: .trojan, transport: .quic, credentialAccount: "secret-password"), .unsupportedTransport(.quic))
         ]
 
         for (node, expectedError) in cases {
@@ -521,6 +521,10 @@ final class IrockProtocolsTests: XCTestCase {
 
     func testProtocolFoundationAdaptersOpenHTTP2Transport() async throws {
         try await assertProtocolFoundationAdaptersOpen(transport: .http2)
+    }
+
+    func testProtocolFoundationAdaptersOpenGRPCTransport() async throws {
+        try await assertProtocolFoundationAdaptersOpen(transport: .grpc)
     }
 
     private func assertProtocolFoundationAdaptersOpen(transport transportType: TransportType) async throws {

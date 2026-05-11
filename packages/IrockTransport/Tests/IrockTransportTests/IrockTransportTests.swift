@@ -507,6 +507,74 @@ final class IrockTransportTests: XCTestCase {
         }
     }
 
+    func testGRPCTransportAdapterOpensUnderlyingTCPWithMetadataAndPayload() async throws {
+        let underlying = RecordingTransportAdapter(transport: .tcp, connectionHost: "connected.example.com")
+        let adapter = GRPCTransportAdapter(underlying: underlying)
+        let payload = Data("protocol-open".utf8)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil)
+        let request = TransportRequest(
+            host: " example.com ",
+            port: 443,
+            transport: .grpc,
+            tls: tls,
+            metadata: ["grpcService": "/TunnelService/Connect", "grpcProtocol": "vmess"],
+            initialPayload: payload
+        )
+
+        let connection = try await adapter.open(request: request)
+
+        XCTAssertEqual(connection.host, "connected.example.com")
+        XCTAssertEqual(connection.port, 443)
+        XCTAssertEqual(connection.transport, .grpc)
+        XCTAssertEqual(underlying.requests.count, 1)
+        XCTAssertEqual(underlying.requests.first?.host, "example.com")
+        XCTAssertEqual(underlying.requests.first?.port, 443)
+        XCTAssertEqual(underlying.requests.first?.transport, .tcp)
+        XCTAssertEqual(underlying.requests.first?.tls, tls)
+        XCTAssertEqual(underlying.requests.first?.metadata["grpcAuthority"], "example.com")
+        XCTAssertEqual(underlying.requests.first?.metadata["grpcService"], "/TunnelService/Connect")
+        XCTAssertEqual(underlying.requests.first?.metadata["grpcProtocol"], "vmess")
+        XCTAssertEqual(underlying.requests.first?.metadata["grpcUpgrade"], "true")
+        XCTAssertEqual(String(data: underlying.requests.first?.initialPayload ?? Data(), encoding: .utf8), "grpc-foundation:example.com:/TunnelService/Connect:vmess\nprotocol-open")
+    }
+
+    func testGRPCTransportAdapterDefaultsServiceAndAuthorityMetadata() async throws {
+        let underlying = RecordingTransportAdapter(transport: .tcp)
+        let adapter = GRPCTransportAdapter(underlying: underlying)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .grpc)
+
+        _ = try await adapter.open(request: request)
+
+        XCTAssertEqual(underlying.requests.first?.metadata["grpcAuthority"], "example.com")
+        XCTAssertEqual(underlying.requests.first?.metadata["grpcService"], "/TunService/Connect")
+        XCTAssertNil(underlying.requests.first?.metadata["grpcProtocol"])
+        XCTAssertEqual(String(data: underlying.requests.first?.initialPayload ?? Data(), encoding: .utf8), "grpc-foundation:example.com:/TunService/Connect:\n")
+    }
+
+    func testGRPCTransportAdapterRejectsInvalidConfigurationBeforeOpeningUnderlying() async {
+        let cases: [(TransportRequest, TransportError)] = [
+            (TransportRequest(host: "example.com", port: 443, transport: .tcp), .unsupportedTransport(.tcp)),
+            (TransportRequest(host: "   ", port: 443, transport: .grpc), .invalidConfiguration("missing grpc host")),
+            (TransportRequest(host: "example.com", port: 0, transport: .grpc), .invalidConfiguration("invalid grpc port")),
+            (TransportRequest(host: "example.com", port: 443, transport: .grpc, metadata: ["grpcService": "TunnelService/Connect"]), .invalidConfiguration("invalid grpc service")),
+            (TransportRequest(host: "example.com", port: 443, transport: .grpc, metadata: ["grpcAuthority": "   "]), .invalidConfiguration("invalid grpc authority"))
+        ]
+
+        for (request, expectedError) in cases {
+            let underlying = RecordingTransportAdapter(transport: .tcp)
+            let adapter = GRPCTransportAdapter(underlying: underlying)
+            do {
+                _ = try await adapter.open(request: request)
+                XCTFail("Expected gRPC validation failure")
+            } catch let error as TransportError {
+                XCTAssertEqual(error, expectedError)
+                XCTAssertEqual(underlying.requests, [])
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
     func testTLSTransportAdapterPropagatesUnderlyingTransportError() async {
         let adapter = TLSTransportAdapter(underlying: FailingTransportAdapter(transport: .tcp, error: .tlsHandshakeFailed("handshake failed")))
         let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)

@@ -363,3 +363,76 @@ private struct HTTP2OpenDescriptor {
         return data
     }
 }
+
+public struct GRPCTransportAdapter<Underlying: TransportAdapter>: TransportAdapter {
+    public let supportedTransport: TransportType = .grpc
+    private let underlying: Underlying
+
+    public init(underlying: Underlying) {
+        self.underlying = underlying
+    }
+
+    public func open(request: TransportRequest) async throws -> any TransportConnection {
+        let descriptor = try descriptor(for: request)
+        let underlyingRequest = TransportRequest(
+            host: descriptor.host,
+            port: request.port,
+            transport: .tcp,
+            tls: request.tls,
+            metadata: descriptor.metadata,
+            initialPayload: descriptor.initialPayload(appending: request.initialPayload)
+        )
+        let connection = try await underlying.open(request: underlyingRequest)
+        return EstablishedTransportConnection(host: connection.host, port: connection.port, transport: .grpc)
+    }
+
+    private func descriptor(for request: TransportRequest) throws -> GRPCOpenDescriptor {
+        guard request.transport == .grpc else {
+            throw TransportError.unsupportedTransport(request.transport)
+        }
+        let host = request.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else {
+            throw TransportError.invalidConfiguration("missing grpc host")
+        }
+        guard (1...65_535).contains(request.port) else {
+            throw TransportError.invalidConfiguration("invalid grpc port")
+        }
+        let service = request.metadata["grpcService", default: "/TunService/Connect"].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard service.hasPrefix("/") else {
+            throw TransportError.invalidConfiguration("invalid grpc service")
+        }
+        let authority = request.metadata["grpcAuthority", default: host].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !authority.isEmpty else {
+            throw TransportError.invalidConfiguration("invalid grpc authority")
+        }
+        let protocolName = request.metadata["grpcProtocol"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return GRPCOpenDescriptor(host: host, authority: authority, service: service, protocolName: protocolName)
+    }
+}
+
+private struct GRPCOpenDescriptor {
+    let host: String
+    let authority: String
+    let service: String
+    let protocolName: String
+
+    var metadata: [String: String] {
+        var metadata = [
+            "grpcAuthority": authority,
+            "grpcService": service,
+            "grpcUpgrade": "true"
+        ]
+        if !protocolName.isEmpty {
+            metadata["grpcProtocol"] = protocolName
+        }
+        return metadata
+    }
+
+    func initialPayload(appending payload: Data?) -> Data {
+        var data = Data("grpc-foundation:\(authority):\(service):\(protocolName)\n".utf8)
+        if let payload {
+            data.append(payload)
+        }
+        return data
+    }
+}
