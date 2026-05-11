@@ -6,6 +6,66 @@ import IrockTransport
 @testable import IrockTunnelCore
 
 final class PacketFlowRuntimeIOTests: XCTestCase {
+    func testBootstrappedRuntimePublishesFailureWhenPacketFlowReadFails() async throws {
+        let io = PacketFlowRuntimeIO(flow: FailingReadPacketFlowIO(error: PacketFlowTestError.readFailed), batchLimit: 16)
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+        let runtime = try TunnelRuntimeBootstrap.shadowsocksTCP(
+            snapshot: packetFlowSnapshot(tls: .disabled),
+            reader: io,
+            writer: io,
+            statusStore: statusStore,
+            logStore: logStore,
+            plain: PacketFlowRecordingTransportAdapter(transport: .tcp),
+            tls: PacketFlowRecordingTransportAdapter(transport: .tcp),
+            batchLimit: 16,
+            flowLimit: 32
+        )
+
+        do {
+            _ = try await runtime.runOnce()
+            XCTFail("Expected packet flow read failure")
+        } catch PacketFlowTestError.readFailed {
+            let status = try XCTUnwrap(statusStore.load())
+            XCTAssertEqual(status.phase, .failed)
+            XCTAssertEqual(status.message, "Packet batch failed")
+            XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Packet batch failed"])
+        } catch {
+            XCTFail("Expected packet flow read failure, got \(error)")
+        }
+    }
+
+    func testBootstrappedRuntimePublishesFailureWhenPacketFlowWriteFails() async throws {
+        let packet = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let flow = FailingWritePacketFlowIO(packets: [packet], error: PacketFlowTestError.writeFailed)
+        let io = PacketFlowRuntimeIO(flow: flow, batchLimit: 16)
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+        let runtime = try TunnelRuntimeBootstrap.shadowsocksTCP(
+            snapshot: packetFlowSnapshot(tls: .disabled),
+            reader: io,
+            writer: io,
+            statusStore: statusStore,
+            logStore: logStore,
+            plain: PacketFlowRecordingTransportAdapter(transport: .tcp),
+            tls: PacketFlowRecordingTransportAdapter(transport: .tcp),
+            batchLimit: 16,
+            flowLimit: 32
+        )
+
+        do {
+            _ = try await runtime.runOnce()
+            XCTFail("Expected packet flow write failure")
+        } catch PacketFlowTestError.writeFailed {
+            let status = try XCTUnwrap(statusStore.load())
+            XCTAssertEqual(status.phase, .failed)
+            XCTAssertEqual(status.message, "Packet batch failed")
+            XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Packet batch failed"])
+        } catch {
+            XCTFail("Expected packet flow write failure, got \(error)")
+        }
+    }
+
     func testBootstrappedRuntimeUsesPacketFlowIOForReadAndWrite() async throws {
         let plain = PacketFlowRecordingTransportAdapter(transport: .tcp)
         let tlsChild = PacketFlowRecordingTransportAdapter(transport: .tcp)
@@ -135,6 +195,34 @@ private final class PacketFlowRecordingTransportAdapter: TransportAdapter, @unch
         defer { lock.unlock() }
         storedRequests.append(request)
         return EstablishedTransportConnection(host: request.host, port: request.port, transport: request.transport)
+    }
+}
+
+private enum PacketFlowTestError: Error {
+    case readFailed
+    case writeFailed
+}
+
+private struct FailingReadPacketFlowIO: PacketFlowIO {
+    let error: PacketFlowTestError
+
+    func readPackets(limit: Int) async throws -> [Packet] {
+        throw error
+    }
+
+    func writePackets(_ results: [PacketProcessingResult]) async throws {}
+}
+
+private struct FailingWritePacketFlowIO: PacketFlowIO {
+    let packets: [Packet]
+    let error: PacketFlowTestError
+
+    func readPackets(limit: Int) async throws -> [Packet] {
+        Array(packets.prefix(limit))
+    }
+
+    func writePackets(_ results: [PacketProcessingResult]) async throws {
+        throw error
     }
 }
 
