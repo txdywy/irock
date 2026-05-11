@@ -117,6 +117,25 @@ final class IrockTransportTests: XCTestCase {
 
         XCTAssertEqual(connection.host, "second.example.com")
     }
+
+    func testTCPTransportAdapterReportsSupportedTransport() {
+        let adapter = TCPTransportAdapter(dialer: RecordingTCPDialer())
+
+        XCTAssertEqual(adapter.supportedTransport, .tcp)
+    }
+
+    func testTCPTransportAdapterDialsHostAndPortAndReturnsConnection() async throws {
+        let dialer = RecordingTCPDialer()
+        let adapter = TCPTransportAdapter(dialer: dialer)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .tcp)
+
+        let connection = try await adapter.open(request: request)
+
+        XCTAssertEqual(connection.host, "example.com")
+        XCTAssertEqual(connection.port, 443)
+        XCTAssertEqual(connection.transport, .tcp)
+        XCTAssertEqual(dialer.requests, [TCPDialRequest(host: "example.com", port: 443)])
+    }
 }
 
 private struct RecordingTransportAdapter: TransportAdapter {
@@ -130,5 +149,32 @@ private struct RecordingTransportAdapter: TransportAdapter {
 
     func open(request: TransportRequest) async throws -> any TransportConnection {
         EstablishedTransportConnection(host: connectionHost, port: request.port, transport: request.transport)
+    }
+}
+
+private struct TCPDialRequest: Equatable {
+    let host: String
+    let port: Int
+}
+
+private final class RecordingTCPDialer: TCPDialer, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedRequests: [TCPDialRequest] = []
+
+    var requests: [TCPDialRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedRequests
+    }
+
+    func open(host: String, port: Int) async throws -> TCPDialResult {
+        record(host: host, port: port)
+        return TCPDialResult(host: host, port: port)
+    }
+
+    private func record(host: String, port: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        storedRequests.append(TCPDialRequest(host: host, port: port))
     }
 }

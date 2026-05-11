@@ -110,3 +110,31 @@ public struct TransportAdapterRegistry: Sendable {
         adapters[transport] ?? UnsupportedTransportAdapter(transport: transport)
     }
 }
+
+public struct TCPDialResult: Equatable, Sendable {
+    public let host: String
+    public let port: Int
+
+    public init(host: String, port: Int) {
+        self.host = host
+        self.port = port
+    }
+}
+
+public protocol TCPDialer: Sendable {
+    func open(host: String, port: Int) async throws -> TCPDialResult
+}
+
+public struct TCPTransportAdapter<Dialer: TCPDialer>: TransportAdapter {
+    public let supportedTransport: TransportType = .tcp
+    private let dialer: Dialer
+
+    public init(dialer: Dialer) {
+        self.dialer = dialer
+    }
+
+    public func open(request: TransportRequest) async throws -> any TransportConnection {
+        let result = try await dialer.open(host: request.host, port: request.port)
+        return EstablishedTransportConnection(host: result.host, port: result.port, transport: .tcp)
+    }
+}
