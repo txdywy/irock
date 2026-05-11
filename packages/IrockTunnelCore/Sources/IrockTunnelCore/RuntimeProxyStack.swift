@@ -34,6 +34,16 @@ public struct RuntimeProxyStack: Sendable {
         let vless = VLESSProxyAdapter(transportRegistry: transportRegistry)
         return ProxyAdapterRegistry(adapters: [vless])
     }
+
+    public static func trojanTCP<Plain: TransportAdapter, TLS: TransportAdapter>(
+        plain: Plain,
+        tls: TLS
+    ) -> ProxyAdapterRegistry {
+        let selector = TCPTLSTransportAdapter(plain: plain, tls: tls)
+        let transportRegistry = TransportAdapterRegistry(adapters: [selector])
+        let trojan = TrojanProxyAdapter(transportRegistry: transportRegistry)
+        return ProxyAdapterRegistry(adapters: [trojan])
+    }
 }
 
 public extension TunnelRuntimeConfiguration {
@@ -96,6 +106,38 @@ public extension TunnelRuntimeConfiguration {
         try TunnelRuntimeConfiguration(
             snapshot: snapshot,
             proxyAdapterRegistry: RuntimeProxyStack.vlessTCP(plain: plain, tls: tls),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func trojanTCP<Plain: TransportAdapter, TLS: TransportAdapter>(
+        snapshot: RuntimeSnapshot,
+        routingEngine: RoutingEngine,
+        plain: Plain,
+        tls: TLS,
+        batchLimit: Int,
+        flowLimit: Int
+    ) -> TunnelRuntimeConfiguration {
+        TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            routingEngine: routingEngine,
+            proxyAdapterRegistry: RuntimeProxyStack.trojanTCP(plain: plain, tls: tls),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func trojanTCP<Plain: TransportAdapter, TLS: TransportAdapter>(
+        snapshot: RuntimeSnapshot,
+        plain: Plain,
+        tls: TLS,
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> TunnelRuntimeConfiguration {
+        try TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            proxyAdapterRegistry: RuntimeProxyStack.trojanTCP(plain: plain, tls: tls),
             batchLimit: batchLimit,
             flowLimit: flowLimit
         )

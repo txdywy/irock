@@ -145,6 +145,29 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testTrojanOpenRequestBuildsCredentialSafeMetadataAndPayload() throws {
+        let request = try TrojanOpenRequest(
+            password: "secret-password",
+            destination: .host("apple.com", port: 443),
+            serverName: "trojan.example.com"
+        )
+
+        XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
+        XCTAssertEqual(request.serverName, "trojan.example.com")
+        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "trojan-foundation:host:apple.com:443:trojan.example.com")
+        XCTAssertEqual(request.metadata["trojanPasswordPresent"], "true")
+        XCTAssertNil(request.metadata["trojanPassword"])
+        XCTAssertEqual(request.metadata["trojanDestination"], "host:apple.com:443")
+        XCTAssertEqual(request.metadata["trojanServerName"], "trojan.example.com")
+        XCTAssertFalse(request.openBytes.contains(Data("secret-password".utf8)))
+    }
+
+    func testTrojanOpenRequestRejectsEmptyPassword() {
+        XCTAssertThrowsError(try TrojanOpenRequest(password: "   ", destination: .host("apple.com", port: 443))) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("missing trojan password"))
+        }
+    }
+
     func testEstablishedProxyConnectionStoresNodeIDAndDestination() {
         let connection = EstablishedProxyConnection(
             nodeID: NodeID(rawValue: "node-1"),
@@ -418,6 +441,71 @@ final class IrockProtocolsTests: XCTestCase {
             do {
                 _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
                 XCTFail("Expected VLESS validation failure")
+            } catch let error as ProxyProtocolError {
+                XCTAssertEqual(error, expectedError)
+                XCTAssertEqual(transport.requests, [])
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testTrojanProxyAdapterOpensTCPTransportAndReturnsProxyConnection() async throws {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = TrojanProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let tls = TLSOptions(enabled: true, serverName: "trojan.example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let node = makeNode(protocolType: .trojan, transport: .tcp, tls: tls, credentialAccount: "secret-password")
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, ProxyDestination.host("apple.com", port: 443))
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests.first?.host, "example.com")
+        XCTAssertEqual(transport.requests.first?.port, 443)
+        XCTAssertEqual(transport.requests.first?.transport, .tcp)
+        XCTAssertEqual(transport.requests.first?.tls, tls)
+        XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "trojan")
+        XCTAssertEqual(transport.requests.first?.metadata["trojanPasswordPresent"], "true")
+        XCTAssertNil(transport.requests.first?.metadata["trojanPassword"])
+        XCTAssertEqual(transport.requests.first?.metadata["trojanDestination"], "host:apple.com:443")
+        XCTAssertEqual(transport.requests.first?.metadata["trojanServerName"], "trojan.example.com")
+        XCTAssertEqual(String(data: transport.requests.first?.initialPayload ?? Data(), encoding: .utf8), "trojan-foundation:host:apple.com:443:trojan.example.com")
+        XCTAssertFalse((transport.requests.first?.initialPayload ?? Data()).contains(Data("secret-password".utf8)))
+    }
+
+    func testTrojanProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = TrojanProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .vmess, transport: .tcp), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected unsupported protocol")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .unsupportedProtocol(.vmess))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testTrojanProxyAdapterRejectsInvalidConfigurationBeforeTransportOpen() async {
+        let cases: [(ProxyNode, ProxyProtocolError)] = [
+            (makeNode(protocolType: .trojan, transport: .tcp, serverHost: "   ", credentialAccount: "secret-password"), .invalidConfiguration("missing trojan server host")),
+            (makeNode(protocolType: .trojan, transport: .tcp, serverPort: 0, credentialAccount: "secret-password"), .invalidConfiguration("invalid trojan server port")),
+            (makeNode(protocolType: .trojan, transport: .tcp, credentialAccount: "   "), .invalidConfiguration("missing trojan password")),
+            (makeNode(protocolType: .trojan, transport: .grpc, credentialAccount: "secret-password"), .unsupportedTransport(.grpc))
+        ]
+
+        for (node, expectedError) in cases {
+            let transport = RecordingTransportAdapter(transport: .tcp)
+            let adapter = TrojanProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+            do {
+                _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
+                XCTFail("Expected Trojan validation failure")
             } catch let error as ProxyProtocolError {
                 XCTAssertEqual(error, expectedError)
                 XCTAssertEqual(transport.requests, [])

@@ -228,6 +228,42 @@ public struct VLESSOpenRequest: Equatable, Sendable {
     }
 }
 
+public struct TrojanOpenRequest: Equatable, Sendable {
+    public let destinationDescription: String
+    public let serverName: String
+    public let openBytes: Data
+
+    public var metadata: [String: String] {
+        [
+            "trojanPasswordPresent": "true",
+            "trojanDestination": destinationDescription,
+            "trojanServerName": serverName
+        ]
+    }
+
+    public init(password: String, destination: ProxyDestination, serverName: String = "") throws {
+        guard !password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing trojan password")
+        }
+
+        let destinationDescription = Self.destinationDescription(destination)
+        self.destinationDescription = destinationDescription
+        self.serverName = serverName.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.openBytes = Data("trojan-foundation:\(destinationDescription):\(self.serverName)".utf8)
+    }
+
+    private static func destinationDescription(_ destination: ProxyDestination) -> String {
+        switch destination {
+        case let .host(host, port):
+            return "host:\(host):\(port)"
+        case let .ipv4(address, port):
+            return "ipv4:\(address):\(port)"
+        case let .ipv6(address, port):
+            return "ipv6:\(address):\(port)"
+        }
+    }
+}
+
 private extension Data {
     static func random(count: Int) -> Data {
         var generator = SystemRandomNumberGenerator()
@@ -545,6 +581,84 @@ public struct VLESSProxyAdapter: ProxyAdapter {
     }
 
     private func transportMetadata(for request: ProxyRequest, openRequest: VLESSOpenRequest) -> [String: String] {
+        var metadata = request.metadata
+        metadata["proxyProtocol"] = request.node.protocolType.rawValue
+        for (key, value) in openRequest.metadata {
+            metadata[key] = value
+        }
+        return metadata
+    }
+
+    private func proxyProtocolError(for error: TransportError) -> ProxyProtocolError {
+        switch error {
+        case .invalidConfiguration:
+            return .invalidConfiguration("transport invalid")
+        case .dnsFailed:
+            return .dnsFailed("transport dns failed")
+        case .tcpConnectFailed:
+            return .tcpConnectFailed("transport tcp connect failed")
+        case .tlsHandshakeFailed:
+            return .tlsHandshakeFailed("transport tls handshake failed")
+        case let .unsupportedTransport(transport):
+            return .unsupportedTransport(transport)
+        case .quicHandshakeFailed:
+            return .quicHandshakeFailed("transport quic handshake failed")
+        case .remoteClosed:
+            return .remoteClosed
+        case .timeout:
+            return .timeout
+        }
+    }
+}
+
+public struct TrojanProxyAdapter: ProxyAdapter {
+    public let supportedProtocol: ProxyProtocolType = .trojan
+    private let transportRegistry: TransportAdapterRegistry
+
+    public init(transportRegistry: TransportAdapterRegistry) {
+        self.transportRegistry = transportRegistry
+    }
+
+    public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
+        try validate(request.node)
+        let openRequest = try TrojanOpenRequest(
+            password: request.node.credentialReference.account,
+            destination: request.destination,
+            serverName: request.node.tls.serverName ?? ""
+        )
+        let transportRequest = TransportRequest(
+            host: request.node.serverHost,
+            port: request.node.serverPort,
+            transport: request.node.transport,
+            tls: request.node.tls.enabled ? request.node.tls : nil,
+            metadata: transportMetadata(for: request, openRequest: openRequest),
+            initialPayload: openRequest.openBytes
+        )
+        do {
+            _ = try await transportRegistry.adapter(for: request.node.transport).open(request: transportRequest)
+        } catch let error as TransportError {
+            throw proxyProtocolError(for: error)
+        }
+        return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination)
+    }
+
+    private func validate(_ node: ProxyNode) throws {
+        guard node.protocolType == .trojan else {
+            throw ProxyProtocolError.unsupportedProtocol(node.protocolType)
+        }
+        guard !node.serverHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing trojan server host")
+        }
+        guard (1...65_535).contains(node.serverPort) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid trojan server port")
+        }
+        guard node.transport == .tcp else {
+            throw ProxyProtocolError.unsupportedTransport(node.transport)
+        }
+        _ = try TrojanOpenRequest(password: node.credentialReference.account, destination: .host("validation.local", port: 1), serverName: node.tls.serverName ?? "")
+    }
+
+    private func transportMetadata(for request: ProxyRequest, openRequest: TrojanOpenRequest) -> [String: String] {
         var metadata = request.metadata
         metadata["proxyProtocol"] = request.node.protocolType.rawValue
         for (key, value) in openRequest.metadata {
