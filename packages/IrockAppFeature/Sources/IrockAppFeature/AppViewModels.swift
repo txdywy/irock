@@ -1,5 +1,7 @@
 import Foundation
 import IrockCore
+import IrockDiagnostics
+import IrockRouting
 import IrockStorage
 
 public enum RuntimeFeedbackRefreshResult: Equatable, Sendable {
@@ -65,9 +67,14 @@ public final class AppViewModel: ObservableObject {
         let routingRuleManifest: RuntimeRoutingRuleManifest
         do {
             routingRuleManifest = try RoutingRuleManifestBuilder.buildManifest(from: routingRuleText)
+        } catch let error as RoutingRuleParseError {
+            let message = UserFacingDiagnostics.message(for: .routingFailure(error))
+            appendLog(message)
+            return .storageFailed(message)
         } catch {
-            appendLog("Routing rules invalid: \(error)")
-            return .storageFailed(String(describing: error))
+            let message = UserFacingDiagnostics.message(for: .snapshotPublishFailed)
+            appendLog(message)
+            return .storageFailed(message)
         }
 
         let result = runtimeSnapshotPublisher.publish(selectedNode: overviewState.selectedNode, routeMode: overviewState.routeMode, logLevel: logLevel, routingRuleManifest: routingRuleManifest)
@@ -90,7 +97,7 @@ public final class AppViewModel: ObservableObject {
         do {
             status = try runtimeStatusStore.load() ?? .disconnected()
         } catch {
-            return .statusLoadFailed(String(describing: error))
+            return .statusLoadFailed(UserFacingDiagnostics.message(for: .statusLoadFailed))
         }
 
         runtimeConnectionStatus = status
@@ -105,7 +112,7 @@ public final class AppViewModel: ObservableObject {
         do {
             logs = try runtimeLogStore.loadRecent()
         } catch {
-            return .logLoadFailed(String(describing: error))
+            return .logLoadFailed(UserFacingDiagnostics.message(for: .logLoadFailed))
         }
 
         runtimeLogs = logs

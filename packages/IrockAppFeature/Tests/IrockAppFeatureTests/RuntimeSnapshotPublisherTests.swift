@@ -47,7 +47,8 @@ final class RuntimeSnapshotPublisherTests: XCTestCase {
         guard case let .storageFailed(message) = result else {
             return XCTFail("Expected storageFailed result")
         }
-        XCTAssertTrue(message.contains("write failed"))
+        XCTAssertEqual(message, "Runtime snapshot publish failed")
+        XCTAssertFalse(message.contains("write failed"))
     }
 
     func testPublisherSavesRoutingRuleManifest() throws {

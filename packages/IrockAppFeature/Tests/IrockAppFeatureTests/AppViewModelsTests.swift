@@ -106,15 +106,17 @@ final class AppViewModelsTests: XCTestCase {
         let node = makeNode(id: "node-1", name: "Demo")
         let model = AppViewModel(nodes: [node], runtimeSnapshotStore: store)
         model.selectNode(id: node.id)
-        model.setRoutingRuleText("DOMAIN,example.com,DROP")
+        model.setRoutingRuleText("DOMAIN,example.com,SECRET_TOKEN")
 
         let result = model.publishRuntimeSnapshot()
 
-        guard case .storageFailed = result else {
+        guard case let .storageFailed(message) = result else {
             return XCTFail("Expected storageFailed result")
         }
+        XCTAssertEqual(message, "Routing rules invalid at line 1: unsupported action")
+        XCTAssertFalse(message.contains("SECRET_TOKEN"))
         XCTAssertNil(try store.load())
-        XCTAssertTrue(model.overviewState.recentLogMessages.contains { $0.contains("Routing rules invalid") })
+        XCTAssertTrue(model.overviewState.recentLogMessages.contains("Routing rules invalid at line 1: unsupported action"))
     }
 
     @MainActor
@@ -180,9 +182,21 @@ final class AppViewModelsTests: XCTestCase {
         guard case .logLoadFailed(let message) = result else {
             return XCTFail("Expected logLoadFailed result")
         }
-        XCTAssertTrue(message.contains("loadFailed"))
+        XCTAssertEqual(message, "Runtime logs unavailable")
         XCTAssertEqual(model.runtimeConnectionStatus, status)
         XCTAssertEqual(model.overviewState.connectionStatus, .connected)
+    }
+
+    @MainActor
+    func testAppViewModelRefreshReturnsStableStatusFailureMessage() {
+        let model = AppViewModel(nodes: [], runtimeStatusStore: ThrowingRuntimeStatusStore())
+
+        let result = model.refreshRuntimeFeedback()
+
+        guard case .statusLoadFailed(let message) = result else {
+            return XCTFail("Expected statusLoadFailed result")
+        }
+        XCTAssertEqual(message, "Runtime status unavailable")
     }
 
     private struct ThrowingRuntimeLogStore: RuntimeLogStore {
@@ -193,6 +207,14 @@ final class AppViewModelsTests: XCTestCase {
         }
 
         func clear() throws {}
+    }
+
+    private struct ThrowingRuntimeStatusStore: RuntimeStatusStore {
+        func save(_ status: RuntimeConnectionStatus) throws {}
+
+        func load() throws -> RuntimeConnectionStatus? {
+            throw TestError.loadFailed
+        }
     }
 
     private enum TestError: Error {

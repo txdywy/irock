@@ -71,12 +71,12 @@ let package = Package(
         ),
         .target(
             name: "IrockDiagnostics",
-            dependencies: ["IrockCore"],
+            dependencies: ["IrockCore", "IrockProtocols", "IrockRouting", "IrockTransport"],
             path: "packages/IrockDiagnostics/Sources/IrockDiagnostics"
         ),
         .testTarget(
             name: "IrockDiagnosticsTests",
-            dependencies: ["IrockDiagnostics"],
+            dependencies: ["IrockDiagnostics", "IrockProtocols", "IrockRouting", "IrockTransport"],
             path: "packages/IrockDiagnostics/Tests/IrockDiagnosticsTests"
         ),
         .target(

@@ -1,5 +1,6 @@
 import Foundation
 import IrockCore
+import IrockDiagnostics
 import IrockStorage
 
 public enum RuntimeSnapshotPublishResult: Equatable, Sendable {
@@ -37,7 +38,7 @@ public struct RuntimeSnapshotPublisher: Sendable {
             try store.save(snapshot)
             return .published(snapshot.id)
         } catch {
-            return .storageFailed(String(describing: error))
+            return .storageFailed(UserFacingDiagnostics.message(for: .snapshotPublishFailed))
         }
     }
 }
