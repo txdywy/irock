@@ -349,6 +349,52 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testShadowsocksProxyAdapterRoutesEnabledTLSThroughSelectorTLSChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let selector = TCPTLSTransportAdapter(plain: plain, tls: tlsChild)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [selector]))
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil)
+        let node = makeNode(protocolType: .shadowsocks, transport: .tcp, tls: tls)
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
+        XCTAssertEqual(plain.requests, [])
+        XCTAssertEqual(tlsChild.requests.count, 1)
+        XCTAssertEqual(tlsChild.requests.first?.host, "example.com")
+        XCTAssertEqual(tlsChild.requests.first?.port, 443)
+        XCTAssertEqual(tlsChild.requests.first?.transport, .tcp)
+        XCTAssertEqual(tlsChild.requests.first?.tls, tls)
+        XCTAssertEqual(tlsChild.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(tlsChild.requests.first?.metadata["proxyProtocol"], "shadowsocks")
+        XCTAssertEqual(tlsChild.requests.first?.metadata["destination"], "host:apple.com:443")
+    }
+
+    func testShadowsocksProxyAdapterRoutesDisabledTLSThroughSelectorPlainChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let selector = TCPTLSTransportAdapter(plain: plain, tls: tlsChild)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [selector]))
+        let node = makeNode(protocolType: .shadowsocks, transport: .tcp, tls: .disabled)
+        let request = ProxyRequest(node: node, destination: .ipv4("93.184.216.34", port: 443))
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, .ipv4("93.184.216.34", port: 443))
+        XCTAssertEqual(plain.requests.count, 1)
+        XCTAssertEqual(plain.requests.first?.host, "example.com")
+        XCTAssertEqual(plain.requests.first?.port, 443)
+        XCTAssertEqual(plain.requests.first?.transport, .tcp)
+        XCTAssertNil(plain.requests.first?.tls)
+        XCTAssertEqual(plain.requests.first?.metadata["proxyProtocol"], "shadowsocks")
+        XCTAssertEqual(plain.requests.first?.metadata["destination"], "ipv4:93.184.216.34:443")
+        XCTAssertEqual(tlsChild.requests, [])
+    }
+
     private func makeNode(
         protocolType: ProxyProtocolType,
         transport: TransportType,
