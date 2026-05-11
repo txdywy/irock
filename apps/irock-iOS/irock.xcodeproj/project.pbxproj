@@ -13,6 +13,7 @@
 		IROCKFLOWIOBUILD000001 /* NEPacketTunnelFlowPacketFlowIO.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKFLOWIOFILEREF00001 /* NEPacketTunnelFlowPacketFlowIO.swift */;};
 		IROCKSTORERESBUILD0001 /* PacketTunnelAppGroupStoreResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKSTORERESFILEREF001 /* PacketTunnelAppGroupStoreResolver.swift */;};
 		IROCKSMOKERUNBUILD0001 /* IOSPacketTunnelSmokeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKSMOKERUNFILEREF001 /* IOSPacketTunnelSmokeRunner.swift */;};
+		IROCKLOOPRUNBUILD001 /* IOSPacketTunnelLoopRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKLOOPRUNFILEREF01 /* IOSPacketTunnelLoopRunner.swift */;};
 		IROCKSETCFGDBUILD001 /* PacketTunnelRuntimeSettingsConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKSETCFGDFILEREF1 /* PacketTunnelRuntimeSettingsConfiguration.swift */;};
 		IROCKSETFACTBUILD01 /* PacketTunnelRuntimeSettingsFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKSETFACTFILEREF01 /* PacketTunnelRuntimeSettingsFactory.swift */;};
 		IROCKSETAPPBUILD001 /* PacketTunnelRuntimeSettingsApplicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKSETAPPFILEREF001 /* PacketTunnelRuntimeSettingsApplicator.swift */;};
@@ -119,6 +120,7 @@
 				IROCKFLOWIOFILEREF00001 /* NEPacketTunnelFlowPacketFlowIO.swift */,
 				IROCKSTORERESFILEREF001 /* PacketTunnelAppGroupStoreResolver.swift */,
 				IROCKSMOKERUNFILEREF001 /* IOSPacketTunnelSmokeRunner.swift */,
+				IROCKLOOPRUNFILEREF01 /* IOSPacketTunnelLoopRunner.swift */,
 				IROCKSETCFGDFILEREF1 /* PacketTunnelRuntimeSettingsConfiguration.swift */,
 				IROCKSETFACTFILEREF01 /* PacketTunnelRuntimeSettingsFactory.swift */,
 				IROCKSETAPPFILEREF001 /* PacketTunnelRuntimeSettingsApplicator.swift */,
@@ -148,6 +150,7 @@
 		IROCKFLOWIOFILEREF00001 /* NEPacketTunnelFlowPacketFlowIO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NEPacketTunnelFlowPacketFlowIO.swift; sourceTree = "<group>";};
 		IROCKSTORERESFILEREF001 /* PacketTunnelAppGroupStoreResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelAppGroupStoreResolver.swift; sourceTree = "<group>";};
 		IROCKSMOKERUNFILEREF001 /* IOSPacketTunnelSmokeRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSPacketTunnelSmokeRunner.swift; sourceTree = "<group>";};
+		IROCKLOOPRUNFILEREF01 /* IOSPacketTunnelLoopRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSPacketTunnelLoopRunner.swift; sourceTree = "<group>";};
 		IROCKSETCFGDFILEREF1 /* PacketTunnelRuntimeSettingsConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelRuntimeSettingsConfiguration.swift; sourceTree = "<group>";};
 		IROCKSETFACTFILEREF01 /* PacketTunnelRuntimeSettingsFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelRuntimeSettingsFactory.swift; sourceTree = "<group>";};
 		IROCKSETAPPFILEREF001 /* PacketTunnelRuntimeSettingsApplicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelRuntimeSettingsApplicator.swift; sourceTree = "<group>";};
@@ -159,7 +162,7 @@
 
 /* Begin PBXSourcesBuildPhase section */
 		IROCKAPPSOURCES0000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (IROCKAPPFILEBUILD000001 /* IrockApp.swift in Sources */, IROCKCONTENTBUILD000001 /* ContentView.swift in Sources */); runOnlyForDeploymentPostprocessing = 0;};
-		IROCKTUNNELSOURCES000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (IROCKPROVIDERBUILD00001 /* PacketTunnelProvider.swift in Sources */, IROCKFLOWIOBUILD000001 /* NEPacketTunnelFlowPacketFlowIO.swift in Sources */, IROCKSTORERESBUILD0001 /* PacketTunnelAppGroupStoreResolver.swift in Sources */, IROCKSMOKERUNBUILD0001 /* IOSPacketTunnelSmokeRunner.swift in Sources */, IROCKSETCFGDBUILD001 /* PacketTunnelRuntimeSettingsConfiguration.swift in Sources */, IROCKSETFACTBUILD01 /* PacketTunnelRuntimeSettingsFactory.swift in Sources */, IROCKSETAPPBUILD001 /* PacketTunnelRuntimeSettingsApplicator.swift in Sources */); runOnlyForDeploymentPostprocessing = 0;};
+		IROCKTUNNELSOURCES000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (IROCKPROVIDERBUILD00001 /* PacketTunnelProvider.swift in Sources */, IROCKFLOWIOBUILD000001 /* NEPacketTunnelFlowPacketFlowIO.swift in Sources */, IROCKSTORERESBUILD0001 /* PacketTunnelAppGroupStoreResolver.swift in Sources */, IROCKSMOKERUNBUILD0001 /* IOSPacketTunnelSmokeRunner.swift in Sources */, IROCKLOOPRUNBUILD001 /* IOSPacketTunnelLoopRunner.swift in Sources */, IROCKSETCFGDBUILD001 /* PacketTunnelRuntimeSettingsConfiguration.swift in Sources */, IROCKSETFACTBUILD01 /* PacketTunnelRuntimeSettingsFactory.swift in Sources */, IROCKSETAPPBUILD001 /* PacketTunnelRuntimeSettingsApplicator.swift in Sources */); runOnlyForDeploymentPostprocessing = 0;};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
