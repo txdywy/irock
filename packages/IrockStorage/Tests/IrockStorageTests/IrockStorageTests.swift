@@ -70,6 +70,43 @@ final class IrockStorageTests: XCTestCase {
         XCTAssertEqual(try store.load(), snapshot)
     }
 
+    func testRuntimeStoreBundlePreservesInjectedStores() throws {
+        let snapshotStore = InMemoryRuntimeSnapshotStore()
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore(limit: 2)
+        let bundle = RuntimeStoreBundle(snapshotStore: snapshotStore, statusStore: statusStore, logStore: logStore)
+        let snapshot = makeSnapshot(id: "snapshot-1", nodeID: "node-1", nodeName: "Demo SS", routeMode: .globalProxy)
+        let status = makeStatus(phase: .connected, message: "Connected")
+        let log = makeLog(id: "1", message: "connected")
+
+        try bundle.snapshotStore.save(snapshot)
+        try bundle.statusStore.save(status)
+        try bundle.logStore.append(log)
+
+        XCTAssertEqual(try snapshotStore.load(), snapshot)
+        XCTAssertEqual(try statusStore.load(), status)
+        XCTAssertEqual(try logStore.loadRecent(), [log])
+    }
+
+    func testFileBackedRuntimeStoreBundleRoundTripsRuntimeState() throws {
+        let directoryURL = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directoryURL) }
+        let bundle = RuntimeStoreBundle.fileBacked(directoryURL: directoryURL, logLimit: 3)
+        let snapshot = makeSnapshot(id: "snapshot-1", nodeID: "node-1", nodeName: "Demo SS", routeMode: .ruleBased)
+        let status = makeStatus(phase: .preparing, message: "Preparing")
+        let firstLog = makeLog(id: "1", message: "first")
+        let secondLog = makeLog(id: "2", message: "second")
+
+        try bundle.snapshotStore.save(snapshot)
+        try bundle.statusStore.save(status)
+        try bundle.logStore.append(firstLog)
+        try bundle.logStore.append(secondLog)
+
+        XCTAssertEqual(try bundle.snapshotStore.load(), snapshot)
+        XCTAssertEqual(try bundle.statusStore.load(), status)
+        XCTAssertEqual(try bundle.logStore.loadRecent(), [firstLog, secondLog])
+    }
+
     func testInMemoryRuntimeStatusStoreRoundTripsStatus() throws {
         let store = InMemoryRuntimeStatusStore()
         let status = makeStatus(phase: .connected, message: "Connected")
