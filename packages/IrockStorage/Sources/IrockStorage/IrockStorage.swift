@@ -68,6 +68,53 @@ public protocol RuntimeLogStore: Sendable {
     func clear() throws
 }
 
+public struct RuntimeStoreBundle: Sendable {
+    public let snapshotStore: any RuntimeSnapshotStore
+    public let statusStore: any RuntimeStatusStore
+    public let logStore: any RuntimeLogStore
+
+    public init(
+        snapshotStore: any RuntimeSnapshotStore,
+        statusStore: any RuntimeStatusStore,
+        logStore: any RuntimeLogStore
+    ) {
+        self.snapshotStore = snapshotStore
+        self.statusStore = statusStore
+        self.logStore = logStore
+    }
+
+    public static func fileBacked(
+        directoryURL: URL,
+        logLimit: Int = 200,
+        fileManager: FileManager = .default
+    ) -> RuntimeStoreBundle {
+        RuntimeStoreBundle(
+            snapshotStore: FileRuntimeSnapshotStore(directoryURL: directoryURL, fileManager: fileManager),
+            statusStore: FileRuntimeStatusStore(directoryURL: directoryURL, fileManager: fileManager),
+            logStore: FileRuntimeLogStore(directoryURL: directoryURL, limit: logLimit, fileManager: fileManager)
+        )
+    }
+}
+
+public struct AppGroupRuntimeStoreDirectory: Equatable, Sendable {
+    public let containerURL: URL
+
+    public var runtimeDirectoryURL: URL {
+        containerURL.appendingPathComponent("Runtime", isDirectory: true)
+    }
+
+    public init(containerURL: URL) {
+        self.containerURL = containerURL
+    }
+
+    public func makeRuntimeStoreBundle(
+        logLimit: Int = 200,
+        fileManager: FileManager = .default
+    ) -> RuntimeStoreBundle {
+        RuntimeStoreBundle.fileBacked(directoryURL: runtimeDirectoryURL, logLimit: logLimit, fileManager: fileManager)
+    }
+}
+
 public final class InMemoryRuntimeStatusStore: RuntimeStatusStore, @unchecked Sendable {
     private let lock = NSLock()
     private var status: RuntimeConnectionStatus?
