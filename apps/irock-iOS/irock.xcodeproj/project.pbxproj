@@ -6,6 +6,13 @@
 	objectVersion = 60;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		IROCKAPPFILEBUILD000001 /* IrockApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKAPPFILEREF000001 /* IrockApp.swift */;};
+		IROCKCONTENTBUILD000001 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKCONTENTFILEREF0001 /* ContentView.swift */;};
+		IROCKPROVIDERBUILD00001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKPROVIDERFILEREF001 /* PacketTunnelProvider.swift */;};
+		IROCKTUNNELEMBEDBUILD01 /* irockTunnelExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = IROCKTUNNELPRODUCT000001 /* irockTunnelExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, );};};
+/* End PBXBuildFile section */
+
 /* Begin PBXProject section */
 		IROCKPROJECT0000000000000001 /* Project object */ = {
 			isa = PBXProject;
@@ -13,27 +20,18 @@
 				LastSwiftUpdateCheck = 1600;
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
-					IROCKAPP000000000000000001 = {
-						CreatedOnToolsVersion = 16.0;
-					};
-					IROCKTUNNEL000000000000001 = {
-						CreatedOnToolsVersion = 16.0;
-					};
+					IROCKAPP000000000000000001 = {CreatedOnToolsVersion = 16.0;};
+					IROCKTUNNEL000000000000001 = {CreatedOnToolsVersion = 16.0;};
 				};
 			};
 			buildConfigurationList = IROCKPROJECTCONFIGLIST0001 /* Build configuration list for PBXProject */;
 			compatibilityVersion = "Xcode 15.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
-			knownRegions = (
-				en,
-				Base,
-			);
+			knownRegions = (en, Base);
 			mainGroup = IROCKMAINGROUP000000000001;
-			packageReferences = (
-				IROCKSWIFTPACKAGE000000001,
-			);
-			productRefGroup = IROCKPRODUCTGROUP000000001;
+			packageReferences = (IROCKSWIFTPACKAGE000000001 /* irock */);
+			productRefGroup = IROCKPRODUCTGROUP000000001 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -52,11 +50,8 @@
 				IROCKAPPFRAMEWORKS0000001 /* Frameworks */,
 				IROCKAPPEMBED00000000001 /* Embed App Extensions */,
 			);
-			buildRules = (
-			);
-			dependencies = (
-				IROCKAPPDEPENDSTUNNEL0001 /* PBXTargetDependency */,
-			);
+			buildRules = ();
+			dependencies = (IROCKAPPDEPENDSTUNNEL0001 /* PBXTargetDependency */);
 			name = irockApp;
 			packageProductDependencies = (
 				IROCKPKGAPPFEATURE0000001 /* IrockAppFeature */,
@@ -74,10 +69,8 @@
 				IROCKTUNNELSOURCES000001 /* Sources */,
 				IROCKTUNNELFRAMEWORKS0001 /* Frameworks */,
 			);
-			buildRules = (
-			);
-			dependencies = (
-			);
+			buildRules = ();
+			dependencies = ();
 			name = irockTunnelExtension;
 			packageProductDependencies = (
 				IROCKPKGTUNNELCORE000001 /* IrockTunnelCore */,
@@ -104,11 +97,22 @@
 		};
 		IROCKAPPGROUP00000000001 /* irockApp */ = {
 			isa = PBXGroup;
+			children = (
+				IROCKAPPFILEREF000001 /* IrockApp.swift */,
+				IROCKCONTENTFILEREF0001 /* ContentView.swift */,
+				IROCKAPPINFOFILEREF001 /* Info.plist */,
+				IROCKAPPENTITLEFILEREF1 /* irockApp.entitlements */,
+			);
 			path = irockApp;
 			sourceTree = "<group>";
 		};
 		IROCKTUNNELGROUP0000001 /* irockTunnelExtension */ = {
 			isa = PBXGroup;
+			children = (
+				IROCKPROVIDERFILEREF001 /* PacketTunnelProvider.swift */,
+				IROCKTUNNELINFOFILEREF1 /* Info.plist */,
+				IROCKTUNNELENTITLEFILEREF /* irockTunnelExtension.entitlements */,
+			);
 			path = irockTunnelExtension;
 			sourceTree = "<group>";
 		};
@@ -124,13 +128,20 @@
 /* End PBXGroup section */
 
 /* Begin PBXFileReference section */
+		IROCKAPPFILEREF000001 /* IrockApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrockApp.swift; sourceTree = "<group>";};
+		IROCKCONTENTFILEREF0001 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>";};
+		IROCKAPPINFOFILEREF001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>";};
+		IROCKAPPENTITLEFILEREF1 /* irockApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = irockApp.entitlements; sourceTree = "<group>";};
+		IROCKPROVIDERFILEREF001 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>";};
+		IROCKTUNNELINFOFILEREF1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>";};
+		IROCKTUNNELENTITLEFILEREF /* irockTunnelExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = irockTunnelExtension.entitlements; sourceTree = "<group>";};
 		IROCKAPPPRODUCT000000001 /* irockApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = irockApp.app; sourceTree = BUILT_PRODUCTS_DIR;};
 		IROCKTUNNELPRODUCT000001 /* irockTunnelExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = irockTunnelExtension.appex; sourceTree = BUILT_PRODUCTS_DIR;};
 /* End PBXFileReference section */
 
 /* Begin PBXSourcesBuildPhase section */
-		IROCKAPPSOURCES0000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
-		IROCKTUNNELSOURCES000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+		IROCKAPPSOURCES0000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (IROCKAPPFILEBUILD000001 /* IrockApp.swift in Sources */, IROCKCONTENTBUILD000001 /* ContentView.swift in Sources */); runOnlyForDeploymentPostprocessing = 0;};
+		IROCKTUNNELSOURCES000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (IROCKPROVIDERBUILD00001 /* PacketTunnelProvider.swift in Sources */); runOnlyForDeploymentPostprocessing = 0;};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -139,7 +150,7 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		IROCKAPPEMBED00000000001 /* Embed App Extensions */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0;};
+		IROCKAPPEMBED00000000001 /* Embed App Extensions */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (IROCKTUNNELEMBEDBUILD01 /* irockTunnelExtension.appex in Embed App Extensions */); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0;};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -147,10 +158,7 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		IROCKSWIFTPACKAGE000000001 /* XCRemoteSwiftPackageReference \"irock\" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = ../..;
-		};
+		IROCKSWIFTPACKAGE000000001 /* irock */ = {isa = XCLocalSwiftPackageReference; relativePath = ../..;};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -163,12 +171,12 @@
 /* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
-		IROCKPROJECTDEBUG00000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0;}; name = Debug;};
-		IROCKPROJECTRELEASE000001 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0;}; name = Release;};
-		IROCKAPPDEBUG00000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = irockApp/irockApp.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = ""; INFOPLIST_FILE = irockApp/Info.plist; PRODUCT_BUNDLE_IDENTIFIER = dev.irock.app; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0;}; name = Debug;};
-		IROCKAPPRELEASE000000001 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = irockApp/irockApp.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = ""; INFOPLIST_FILE = irockApp/Info.plist; PRODUCT_BUNDLE_IDENTIFIER = dev.irock.app; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0;}; name = Release;};
-		IROCKTUNNELDEBUG0000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = irockTunnelExtension/irockTunnelExtension.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = ""; INFOPLIST_FILE = irockTunnelExtension/Info.plist; PRODUCT_BUNDLE_IDENTIFIER = dev.irock.app.tunnel; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0;}; name = Debug;};
-		IROCKTUNNELRELEASE000001 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = irockTunnelExtension/irockTunnelExtension.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = ""; INFOPLIST_FILE = irockTunnelExtension/Info.plist; PRODUCT_BUNDLE_IDENTIFIER = dev.irock.app.tunnel; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0;}; name = Release;};
+		IROCKPROJECTDEBUG00000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0;}; name = Debug;};
+		IROCKPROJECTRELEASE000001 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0;}; name = Release;};
+		IROCKAPPDEBUG00000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = irockApp/irockApp.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = ""; INFOPLIST_FILE = irockApp/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = dev.irock.app; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Debug;};
+		IROCKAPPRELEASE000000001 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = irockApp/irockApp.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = ""; INFOPLIST_FILE = irockApp/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = dev.irock.app; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Release;};
+		IROCKTUNNELDEBUG0000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = irockTunnelExtension/irockTunnelExtension.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = ""; INFOPLIST_FILE = irockTunnelExtension/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = dev.irock.app.tunnel; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Debug;};
+		IROCKTUNNELRELEASE000001 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = irockTunnelExtension/irockTunnelExtension.entitlements; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = ""; INFOPLIST_FILE = irockTunnelExtension/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = dev.irock.app.tunnel; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";}; name = Release;};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */

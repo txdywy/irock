@@ -52,6 +52,22 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(contentView.contains("import " + "SwiftUI"))
     }
 
+    func testXcodeProjectDeclaresIOSAppAndTunnelTargetShape() throws {
+        let project = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irock.xcodeproj/project.pbxproj"))
+
+        XCTAssertTrue(project.contains("com.apple.product-type.application"))
+        XCTAssertTrue(project.contains("com.apple.product-type.app-extension"))
+        XCTAssertTrue(project.contains("SDKROOT = iphoneos"))
+        XCTAssertTrue(project.contains("SUPPORTED_PLATFORMS = \"iphoneos iphonesimulator\""))
+        XCTAssertTrue(project.contains("TARGETED_DEVICE_FAMILY = \"1,2\""))
+        XCTAssertTrue(project.contains("APPLICATION_EXTENSION_API_ONLY = YES"))
+        XCTAssertTrue(project.contains("IrockApp.swift in Sources"))
+        XCTAssertTrue(project.contains("ContentView.swift in Sources"))
+        XCTAssertTrue(project.contains("PacketTunnelProvider.swift in Sources"))
+        XCTAssertTrue(project.contains("irockTunnelExtension.appex in Embed App Extensions"))
+        XCTAssertTrue(project.contains("relativePath = ../.."))
+    }
+
     private var repositoryRoot: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
