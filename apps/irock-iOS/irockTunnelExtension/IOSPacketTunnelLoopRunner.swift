@@ -13,6 +13,10 @@ struct IOSPacketTunnelLoopRunner: Sendable {
         self.loopDelayNanoseconds = loopDelayNanoseconds
     }
 
+    func runStartupBatch(packetFlow: NEPacketTunnelFlow) async throws {
+        _ = try await smokeRunner.runOnce(packetFlow: packetFlow)
+    }
+
     func run(packetFlow: NEPacketTunnelFlow) async throws {
         while !Task.isCancelled {
             _ = try await smokeRunner.runOnce(packetFlow: packetFlow)

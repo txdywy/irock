@@ -110,7 +110,9 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(loopRunner.contains("Task.isCancelled"))
         XCTAssertTrue(loopRunner.contains("Task.sleep"))
         XCTAssertTrue(loopRunner.contains("while !Task.isCancelled"))
+        XCTAssertTrue(loopRunner.contains("runStartupBatch"))
         XCTAssertTrue(provider.contains("IOSPacketTunnelLoopRunner"))
+        XCTAssertTrue(provider.contains("try await loopRunner.runStartupBatch"))
         XCTAssertFalse(provider.contains("IOSPacketTunnelSmokeRunner().runOnce"))
     }
 
