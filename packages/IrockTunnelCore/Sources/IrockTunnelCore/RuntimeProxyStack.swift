@@ -53,6 +53,14 @@ public struct RuntimeProxyStack: Sendable {
         let trojan = TrojanProxyAdapter(transportRegistry: transportRegistry)
         return ProxyAdapterRegistry(adapters: [trojan])
     }
+
+    public static func hysteria2QUIC<QUIC: TransportAdapter>(
+        quic: QUIC
+    ) -> ProxyAdapterRegistry {
+        let transportRegistry = TransportAdapterRegistry(adapters: [quic])
+        let hysteria2 = Hysteria2ProxyAdapter(transportRegistry: transportRegistry)
+        return ProxyAdapterRegistry(adapters: [hysteria2])
+    }
 }
 
 public extension TunnelRuntimeConfiguration {
@@ -145,6 +153,36 @@ public extension TunnelRuntimeConfiguration {
         try TunnelRuntimeConfiguration(
             snapshot: snapshot,
             proxyAdapterRegistry: RuntimeProxyStack.vlessRealityTCP(plain: plain),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func hysteria2QUIC<QUIC: TransportAdapter>(
+        snapshot: RuntimeSnapshot,
+        routingEngine: RoutingEngine,
+        quic: QUIC,
+        batchLimit: Int,
+        flowLimit: Int
+    ) -> TunnelRuntimeConfiguration {
+        TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            routingEngine: routingEngine,
+            proxyAdapterRegistry: RuntimeProxyStack.hysteria2QUIC(quic: quic),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func hysteria2QUIC<QUIC: TransportAdapter>(
+        snapshot: RuntimeSnapshot,
+        quic: QUIC,
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> TunnelRuntimeConfiguration {
+        try TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            proxyAdapterRegistry: RuntimeProxyStack.hysteria2QUIC(quic: quic),
             batchLimit: batchLimit,
             flowLimit: flowLimit
         )

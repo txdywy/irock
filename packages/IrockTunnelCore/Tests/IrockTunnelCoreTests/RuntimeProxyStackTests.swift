@@ -216,6 +216,24 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000002".utf8)))
     }
 
+    func testHysteria2QUICStackRoutesThroughQUICTransport() async throws {
+        let quic = RecordingTransportAdapter(transport: .quic)
+        let registry = RuntimeProxyStack.hysteria2QUIC(quic: quic)
+        let outbound = ProxyOutbound(node: makeHysteria2Node(), registry: registry)
+        let result = proxyResult(packetID: "tcp-1")
+
+        let connection = try await outbound.connect(result: result)
+
+        XCTAssertEqual(connection?.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(quic.requests.count, 1)
+        XCTAssertEqual(quic.requests.first?.transport, .quic)
+        XCTAssertEqual(quic.requests.first?.metadata["proxyProtocol"], "hysteria2")
+        XCTAssertEqual(quic.requests.first?.metadata["hysteria2AuthPresent"], "true")
+        XCTAssertEqual(quic.requests.first?.metadata["hysteria2Destination"], "ipv4:93.184.216.34:443")
+        let payload = quic.requests.first?.initialPayload ?? Data()
+        XCTAssertFalse(payload.contains(Data("hysteria-secret".utf8)))
+    }
+
     func testTrojanTCPStackRoutesDisabledTLSToPlainChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
@@ -319,4 +337,9 @@ private func makeVLESSNode(tls: TLSOptions) -> ProxyNode {
 
 private func makeTrojanNode(tls: TLSOptions) -> ProxyNode {
     ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .trojan, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "secret-password"), transport: .tcp, tls: tls, udpPolicy: .disabled)
+}
+
+private func makeHysteria2Node() -> ProxyNode {
+    let tls = TLSOptions(enabled: true, serverName: "hysteria.example.com", allowInsecure: false, alpn: ["h3"], fingerprint: nil, reality: nil)
+    return ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .hysteria2, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "hysteria-secret"), transport: .quic, tls: tls, udpPolicy: .disabled)
 }

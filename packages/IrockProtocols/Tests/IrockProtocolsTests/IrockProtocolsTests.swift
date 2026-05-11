@@ -168,6 +168,32 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testHysteria2OpenRequestBuildsCredentialSafeMetadataAndPayload() throws {
+        let request = try Hysteria2OpenRequest(
+            authentication: "hysteria-secret",
+            destination: .host("apple.com", port: 443),
+            sni: " hysteria.example.com ",
+            obfuscation: "obfs-secret"
+        )
+
+        XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
+        XCTAssertEqual(request.sni, "hysteria.example.com")
+        XCTAssertTrue(request.obfuscationPresent)
+        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "hysteria2-foundation:host:apple.com:443:hysteria.example.com:auth-present:true")
+        XCTAssertEqual(request.metadata["hysteria2AuthPresent"], "true")
+        XCTAssertEqual(request.metadata["hysteria2Destination"], "host:apple.com:443")
+        XCTAssertEqual(request.metadata["hysteria2SNI"], "hysteria.example.com")
+        XCTAssertEqual(request.metadata["hysteria2ObfsPresent"], "true")
+        XCTAssertFalse(request.openBytes.contains(Data("hysteria-secret".utf8)))
+        XCTAssertFalse(request.openBytes.contains(Data("obfs-secret".utf8)))
+    }
+
+    func testHysteria2OpenRequestRejectsEmptyAuthenticationSecret() {
+        XCTAssertThrowsError(try Hysteria2OpenRequest(authentication: "   ", destination: .host("apple.com", port: 443))) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("missing hysteria2 authentication"))
+        }
+    }
+
     func testEstablishedProxyConnectionStoresNodeIDAndDestination() {
         let connection = EstablishedProxyConnection(
             nodeID: NodeID(rawValue: "node-1"),
@@ -190,6 +216,53 @@ final class IrockProtocolsTests: XCTestCase {
             XCTAssertEqual(error, .unsupportedProtocol(.tuic))
         } catch {
             XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testHysteria2ProxyAdapterOpensQUICTransportAndReturnsProxyConnection() async throws {
+        let transport = RecordingTransportAdapter(transport: .quic)
+        let adapter = Hysteria2ProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let node = makeNode(protocolType: .hysteria2, transport: .quic, credentialAccount: "hysteria-secret")
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, ProxyDestination.host("apple.com", port: 443))
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests.first?.host, "example.com")
+        XCTAssertEqual(transport.requests.first?.port, 443)
+        XCTAssertEqual(transport.requests.first?.transport, .quic)
+        XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "hysteria2")
+        XCTAssertEqual(transport.requests.first?.metadata["hysteria2AuthPresent"], "true")
+        XCTAssertEqual(transport.requests.first?.metadata["hysteria2Destination"], "host:apple.com:443")
+        let payload = transport.requests.first?.initialPayload ?? Data()
+        XCTAssertEqual(String(data: payload, encoding: .utf8), "hysteria2-foundation:host:apple.com:443:example.com:auth-present:false")
+        XCTAssertFalse(payload.contains(Data("hysteria-secret".utf8)))
+    }
+
+    func testHysteria2ProxyAdapterRejectsInvalidConfigurationBeforeTransportOpen() async {
+        let cases: [(ProxyNode, ProxyProtocolError)] = [
+            (makeNode(protocolType: .vmess, transport: .quic, credentialAccount: "hysteria-secret"), .unsupportedProtocol(.vmess)),
+            (makeNode(protocolType: .hysteria2, transport: .tcp, credentialAccount: "hysteria-secret"), .unsupportedTransport(.tcp)),
+            (makeNode(protocolType: .hysteria2, transport: .quic, serverHost: "   ", credentialAccount: "hysteria-secret"), .invalidConfiguration("missing hysteria2 server host")),
+            (makeNode(protocolType: .hysteria2, transport: .quic, serverPort: 0, credentialAccount: "hysteria-secret"), .invalidConfiguration("invalid hysteria2 server port")),
+            (makeNode(protocolType: .hysteria2, transport: .quic, credentialAccount: "   "), .invalidConfiguration("missing hysteria2 authentication"))
+        ]
+
+        for (node, expectedError) in cases {
+            let transport = RecordingTransportAdapter(transport: .quic)
+            let adapter = Hysteria2ProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+            do {
+                _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
+                XCTFail("Expected Hysteria2 validation failure")
+            } catch let error as ProxyProtocolError {
+                XCTAssertEqual(error, expectedError)
+                XCTAssertEqual(transport.requests, [])
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
         }
     }
 
