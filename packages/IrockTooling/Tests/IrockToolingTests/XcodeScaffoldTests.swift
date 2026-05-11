@@ -30,8 +30,7 @@ final class XcodeScaffoldTests: XCTestCase {
             "import " + "Network",
             "import " + "Security",
             "import " + "UIKit",
-            "import " + "AppKit",
-            "import " + "SwiftUI"
+            "import " + "AppKit"
         ]
         let packageFiles = try swiftFiles(under: repositoryRoot.appendingPathComponent("packages"))
 

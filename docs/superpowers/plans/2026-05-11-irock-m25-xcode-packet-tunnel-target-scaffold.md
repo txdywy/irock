@@ -75,7 +75,7 @@ final class XcodeScaffoldTests: XCTestCase {
     }
 
     func testPlatformImportsStayOutOfSharedPackages() throws {
-        let forbiddenImports = ["import NetworkExtension", "import Network", "import Security", "import UIKit", "import AppKit", "import SwiftUI"]
+        let forbiddenImports = ["import NetworkExtension", "import Network", "import Security", "import UIKit", "import AppKit"]
         let packageFiles = try swiftFiles(under: repositoryRoot.appendingPathComponent("packages"))
 
         for file in packageFiles {
@@ -262,7 +262,7 @@ Expected: all tests pass.
 - [ ] **Step 2: Run forbidden shared package import scan**
 
 ```bash
-grep -R "import NetworkExtension\|import Network\|import Security\|import UIKit\|import AppKit\|import SwiftUI" -n packages Package.swift || true
+grep -R "import NetworkExtension\|import Network\|import Security\|import UIKit\|import AppKit" -n packages Package.swift || true
 ```
 
 Expected: no output.

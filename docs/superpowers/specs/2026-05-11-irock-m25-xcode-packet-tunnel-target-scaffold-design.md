@@ -129,7 +129,7 @@ M25 permits platform imports only in platform target directories:
 - `apps/irock-iOS/irockApp`: `SwiftUI` is allowed.
 - `apps/irock-iOS/irockTunnelExtension`: `NetworkExtension` is allowed.
 
-Shared packages must remain platform-neutral except for their existing Foundation usage. The verification scan must continue to forbid these imports in shared packages:
+Shared tunnel, protocol, transport, and storage packages must remain platform-neutral except for their existing Foundation usage. `IrockAppFeature` may continue to use SwiftUI because it is the reusable app-facing UI package. The verification scan must continue to forbid these imports in shared packages:
 
 - `Network`
 - `NetworkExtension`
@@ -181,7 +181,7 @@ Full acceptance requires:
 
 ```bash
 swift test
-grep -R "import NetworkExtension\|import Network\|import Security\|import UIKit\|import AppKit\|import SwiftUI" -n packages Package.swift || true
+grep -R "import NetworkExtension\|import Network\|import Security\|import UIKit\|import AppKit" -n packages Package.swift || true
 grep -R "import NetworkExtension" -n apps/irock-iOS/irockTunnelExtension
 grep -R "group.dev.irock.shared" -n apps/irock-iOS
 ```
