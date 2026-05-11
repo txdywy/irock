@@ -1,3 +1,5 @@
+import Foundation
+import IrockCore
 import IrockProtocols
 import IrockStorage
 import IrockTransport
@@ -22,6 +24,7 @@ struct IOSPacketTunnelSmokeRunner: Sendable {
     func validateStartup() throws {
         let stores = try storeResolver.makeRuntimeStoreBundle()
         guard try stores.snapshotStore.load() != nil else {
+            reportMissingSnapshot(stores: stores)
             throw TunnelRuntimeControllerError.missingRuntimeSnapshot
         }
     }
@@ -39,5 +42,24 @@ struct IOSPacketTunnelSmokeRunner: Sendable {
             batchLimit: batchLimit,
             flowLimit: flowLimit
         )
+    }
+
+    private func reportMissingSnapshot(stores: RuntimeStoreBundle) {
+        let message = "Runtime snapshot unavailable"
+        try? stores.statusStore.save(RuntimeConnectionStatus(
+            phase: .failed,
+            selectedNodeID: nil,
+            selectedNodeName: nil,
+            updatedAt: Date(),
+            message: message
+        ))
+        try? stores.logStore.append(RuntimeLogEntry(
+            id: "log-\(UUID().uuidString)",
+            timestamp: Date(),
+            level: .user,
+            message: message,
+            nodeID: nil,
+            phase: .failed
+        ))
     }
 }

@@ -106,6 +106,21 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(project.contains("IOSVPNManager.swift in Sources"))
     }
 
+    func testContainerAppDeclaresAppGroupRuntimeStoreResolver() throws {
+        let resolver = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockApp/IOSAppGroupRuntimeStoreResolver.swift"))
+        let extensionResolver = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/PacketTunnelAppGroupStoreResolver.swift"))
+        let project = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irock.xcodeproj/project.pbxproj"))
+
+        XCTAssertTrue(resolver.contains("struct IOSAppGroupRuntimeStoreResolver"))
+        XCTAssertTrue(resolver.contains("group.dev.irock.shared"))
+        XCTAssertTrue(resolver.contains("containerURL(forSecurityApplicationGroupIdentifier:"))
+        XCTAssertTrue(resolver.contains("AppGroupRuntimeStoreDirectory"))
+        XCTAssertTrue(resolver.contains("makeRuntimeStoreBundle"))
+        XCTAssertTrue(extensionResolver.contains("group.dev.irock.shared"))
+        XCTAssertTrue(extensionResolver.contains("AppGroupRuntimeStoreDirectory"))
+        XCTAssertTrue(project.contains("IOSAppGroupRuntimeStoreResolver.swift in Sources"))
+    }
+
     func testContainerAppHostsSharedRootView() throws {
         let contentView = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockApp/ContentView.swift"))
 
@@ -114,6 +129,17 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(contentView.contains("AppViewModel"))
         XCTAssertTrue(contentView.contains("IrockRootView(viewModel: viewModel)"))
         XCTAssertFalse(contentView.contains("Text(\"irock\")"))
+    }
+
+    func testContentViewInjectsAppGroupRuntimeStoresWithFallback() throws {
+        let contentView = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockApp/ContentView.swift"))
+
+        XCTAssertTrue(contentView.contains("IOSAppGroupRuntimeStoreResolver"))
+        XCTAssertTrue(contentView.contains("makeRuntimeStoreBundle"))
+        XCTAssertTrue(contentView.contains("runtimeSnapshotStore: stores.snapshotStore"))
+        XCTAssertTrue(contentView.contains("runtimeStatusStore: stores.statusStore"))
+        XCTAssertTrue(contentView.contains("runtimeLogStore: stores.logStore"))
+        XCTAssertTrue(contentView.contains("AppViewModel(nodes: [])"))
     }
 
     func testNEPacketTunnelFlowAdapterWritesOnlyExplicitResponseBytes() throws {
@@ -146,7 +172,14 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(storeResolver.contains("AppGroupRuntimeStoreDirectory"))
         XCTAssertTrue(storeResolver.contains("group.dev.irock.shared"))
         XCTAssertTrue(smokeRunner.contains("validateStartup"))
+        XCTAssertTrue(smokeRunner.contains("stores.snapshotStore"))
+        XCTAssertTrue(smokeRunner.contains("stores.statusStore"))
+        XCTAssertTrue(smokeRunner.contains("stores.logStore"))
+        XCTAssertTrue(smokeRunner.contains("reportMissingSnapshot(stores: stores)"))
+        XCTAssertTrue(smokeRunner.contains("RuntimeConnectionStatus("))
+        XCTAssertTrue(smokeRunner.contains("RuntimeLogEntry("))
         XCTAssertTrue(smokeRunner.contains("TunnelRuntimeControllerError.missingRuntimeSnapshot"))
+        XCTAssertTrue(smokeRunner.contains("missingRuntimeSnapshot"))
         XCTAssertTrue(smokeRunner.contains("TunnelRuntimeController.runShadowsocksTCPBatch"))
         XCTAssertTrue(smokeRunner.contains("TCPTransportAdapter(dialer: IOSPlatformTCPDialer())"))
         XCTAssertTrue(smokeRunner.contains("tls: UnsupportedTransportAdapter(transport: .tcp)"))
@@ -250,6 +283,7 @@ final class XcodeScaffoldTests: XCTestCase {
             "apps/irock-iOS/irockApp/ContentView.swift",
             "apps/irock-iOS/irockApp/IOSVPNManagerConfiguration.swift",
             "apps/irock-iOS/irockApp/IOSVPNManager.swift",
+            "apps/irock-iOS/irockApp/IOSAppGroupRuntimeStoreResolver.swift",
             "apps/irock-iOS/irockApp/Info.plist",
             "apps/irock-iOS/irockApp/irockApp.entitlements",
             "apps/irock-iOS/irockTunnelExtension/PacketTunnelProvider.swift",
