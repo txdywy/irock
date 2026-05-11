@@ -436,6 +436,37 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(plain.requests, [])
         XCTAssertEqual(tlsChild.requests, [TransportAdapterRequest(host: "example.com", port: 443, transport: .tcp, tls: tls, metadata: ["mode": "tls"])])
     }
+
+    func testTCPTLSTransportAdapterRoutesDisabledTLSToPlainChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp, connectionHost: "plain.example.com")
+        let tlsChild = RecordingTransportAdapter(transport: .tcp, connectionHost: "tls.example.com")
+        let adapter = TCPTLSTransportAdapter(plain: plain, tls: tlsChild)
+        let request = TransportRequest(host: "example.com", port: 80, transport: .tcp, tls: .disabled)
+
+        let connection = try await adapter.open(request: request)
+
+        XCTAssertEqual(connection.host, "plain.example.com")
+        XCTAssertEqual(plain.requests, [TransportAdapterRequest(host: "example.com", port: 80, transport: .tcp, tls: .disabled, metadata: [:])])
+        XCTAssertEqual(tlsChild.requests, [])
+    }
+
+    func testTCPTLSTransportAdapterRejectsNonTCPBeforeOpeningChildren() async {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let adapter = TCPTLSTransportAdapter(plain: plain, tls: tlsChild)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .grpc)
+
+        do {
+            _ = try await adapter.open(request: request)
+            XCTFail("Expected unsupported transport")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .unsupportedTransport(.grpc))
+            XCTAssertEqual(plain.requests, [])
+            XCTAssertEqual(tlsChild.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
 }
 
 private struct TransportAdapterRequest: Equatable {

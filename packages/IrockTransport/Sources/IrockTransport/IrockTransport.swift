@@ -206,6 +206,9 @@ public struct TCPTLSTransportAdapter<Plain: TransportAdapter, TLS: TransportAdap
     }
 
     public func open(request: TransportRequest) async throws -> any TransportConnection {
+        guard request.transport == .tcp else {
+            throw TransportError.unsupportedTransport(request.transport)
+        }
         if request.tls?.enabled == true {
             return try await tls.open(request: request)
         }
