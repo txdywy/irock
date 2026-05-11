@@ -467,6 +467,58 @@ final class IrockTransportTests: XCTestCase {
             XCTFail("Unexpected error: \(error)")
         }
     }
+
+    func testTCPTLSTransportAdapterPropagatesPlainChildError() async {
+        let adapter = TCPTLSTransportAdapter(
+            plain: FailingTransportAdapter(transport: .tcp, error: .tcpConnectFailed("plain refused")),
+            tls: RecordingTransportAdapter(transport: .tcp)
+        )
+        let request = TransportRequest(host: "example.com", port: 80, transport: .tcp)
+
+        do {
+            _ = try await adapter.open(request: request)
+            XCTFail("Expected plain child failure")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .tcpConnectFailed("plain refused"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testTCPTLSTransportAdapterPropagatesTLSChildError() async {
+        let adapter = TCPTLSTransportAdapter(
+            plain: RecordingTransportAdapter(transport: .tcp),
+            tls: FailingTransportAdapter(transport: .tcp, error: .tlsHandshakeFailed("tls refused"))
+        )
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .tcp, tls: tls)
+
+        do {
+            _ = try await adapter.open(request: request)
+            XCTFail("Expected TLS child failure")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .tlsHandshakeFailed("tls refused"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testTransportAdapterRegistryCanSelectTCPTLSTransportAdapter() async throws {
+        let adapter = TCPTLSTransportAdapter(
+            plain: RecordingTransportAdapter(transport: .tcp, connectionHost: "plain.example.com"),
+            tls: RecordingTransportAdapter(transport: .tcp, connectionHost: "tls.example.com")
+        )
+        let registry = TransportAdapterRegistry(adapters: [adapter])
+        let selected = registry.adapter(for: .tcp)
+        let request = TransportRequest(host: "example.com", port: 80, transport: .tcp)
+
+        let connection = try await selected.open(request: request)
+
+        XCTAssertEqual(selected.supportedTransport, .tcp)
+        XCTAssertEqual(connection.host, "plain.example.com")
+        XCTAssertEqual(connection.port, 80)
+        XCTAssertEqual(connection.transport, .tcp)
+    }
 }
 
 private struct TransportAdapterRequest: Equatable {
