@@ -5,6 +5,112 @@ import IrockTransport
 @testable import IrockTunnelCore
 
 final class TunnelRuntimeControllerTests: XCTestCase {
+    func testRunShadowsocksTCPBatchIgnoresReporterFailuresWhenSnapshotIsMissing() async throws {
+        do {
+            _ = try await TunnelRuntimeController.runShadowsocksTCPBatch(
+                snapshotStore: InMemoryRuntimeSnapshotStore(),
+                flow: ControllerRecordingPacketFlowIO(packets: []),
+                statusStore: ControllerFailingRuntimeStatusStore(),
+                logStore: ControllerFailingRuntimeLogStore(),
+                plain: ControllerRecordingTransportAdapter(transport: .tcp),
+                tls: ControllerRecordingTransportAdapter(transport: .tcp),
+                batchLimit: 16,
+                flowLimit: 32
+            )
+            XCTFail("Expected missing runtime snapshot")
+        } catch TunnelRuntimeControllerError.missingRuntimeSnapshot {
+        } catch {
+            XCTFail("Expected missing runtime snapshot, got \(error)")
+        }
+    }
+
+    func testRunShadowsocksTCPBatchPropagatesInvalidRoutingManifest() async throws {
+        let snapshotStore = InMemoryRuntimeSnapshotStore()
+        let manifest = RuntimeRoutingRuleManifest(
+            version: 1,
+            rules: [RuntimeRoutingRule(kind: .domainSuffix, value: nil, action: .direct)]
+        )
+        try snapshotStore.save(controllerSnapshot(tls: .disabled, routingRuleManifest: manifest))
+        let flow = ControllerRecordingPacketFlowIO(packets: [])
+
+        do {
+            _ = try await TunnelRuntimeController.runShadowsocksTCPBatch(
+                snapshotStore: snapshotStore,
+                flow: flow,
+                statusStore: InMemoryRuntimeStatusStore(),
+                logStore: InMemoryRuntimeLogStore(),
+                plain: ControllerRecordingTransportAdapter(transport: .tcp),
+                tls: ControllerRecordingTransportAdapter(transport: .tcp),
+                batchLimit: 16,
+                flowLimit: 32
+            )
+            XCTFail("Expected invalid routing manifest")
+        } catch let error as RuntimeRoutingRuleAdapterError {
+            XCTAssertEqual(error, .missingValue(kind: .domainSuffix))
+            XCTAssertEqual(flow.readLimits, [])
+            XCTAssertEqual(flow.writtenResults, [])
+        } catch {
+            XCTFail("Expected invalid routing manifest, got \(error)")
+        }
+    }
+
+    func testRunShadowsocksTCPBatchPropagatesPacketFlowReadFailure() async throws {
+        let snapshotStore = InMemoryRuntimeSnapshotStore()
+        try snapshotStore.save(controllerSnapshot(tls: .disabled))
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+
+        do {
+            _ = try await TunnelRuntimeController.runShadowsocksTCPBatch(
+                snapshotStore: snapshotStore,
+                flow: ControllerFailingReadPacketFlowIO(error: ControllerPacketFlowTestError.readFailed),
+                statusStore: statusStore,
+                logStore: logStore,
+                plain: ControllerRecordingTransportAdapter(transport: .tcp),
+                tls: ControllerRecordingTransportAdapter(transport: .tcp),
+                batchLimit: 16,
+                flowLimit: 32
+            )
+            XCTFail("Expected packet flow read failure")
+        } catch ControllerPacketFlowTestError.readFailed {
+            let status = try XCTUnwrap(statusStore.load())
+            XCTAssertEqual(status.phase, .failed)
+            XCTAssertEqual(status.message, "Packet batch failed")
+            XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Packet batch failed"])
+        } catch {
+            XCTFail("Expected packet flow read failure, got \(error)")
+        }
+    }
+
+    func testRunShadowsocksTCPBatchPropagatesPacketFlowWriteFailure() async throws {
+        let snapshotStore = InMemoryRuntimeSnapshotStore()
+        try snapshotStore.save(controllerSnapshot(tls: .disabled))
+        let packet = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+
+        do {
+            _ = try await TunnelRuntimeController.runShadowsocksTCPBatch(
+                snapshotStore: snapshotStore,
+                flow: ControllerFailingWritePacketFlowIO(packets: [packet], error: ControllerPacketFlowTestError.writeFailed),
+                statusStore: statusStore,
+                logStore: logStore,
+                plain: ControllerRecordingTransportAdapter(transport: .tcp),
+                tls: ControllerRecordingTransportAdapter(transport: .tcp),
+                batchLimit: 16,
+                flowLimit: 32
+            )
+            XCTFail("Expected packet flow write failure")
+        } catch ControllerPacketFlowTestError.writeFailed {
+            let status = try XCTUnwrap(statusStore.load())
+            XCTAssertEqual(status.phase, .failed)
+            XCTAssertEqual(status.message, "Packet batch failed")
+            XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Packet batch failed"])
+        } catch {
+            XCTFail("Expected packet flow write failure, got \(error)")
+        }
+    }
+
     func testRunShadowsocksTCPBatchReportsMissingSnapshot() async throws {
         let statusStore = InMemoryRuntimeStatusStore()
         let logStore = InMemoryRuntimeLogStore()
@@ -144,6 +250,60 @@ private final class ControllerRecordingTransportAdapter: TransportAdapter, @unch
         storedRequests.append(request)
         return EstablishedTransportConnection(host: request.host, port: request.port, transport: request.transport)
     }
+}
+
+private enum ControllerPacketFlowTestError: Error {
+    case readFailed
+    case writeFailed
+}
+
+private enum ControllerRuntimeStoreError: Error {
+    case failed
+}
+
+private struct ControllerFailingReadPacketFlowIO: PacketFlowIO {
+    let error: ControllerPacketFlowTestError
+
+    func readPackets(limit: Int) async throws -> [Packet] {
+        throw error
+    }
+
+    func writePackets(_ results: [PacketProcessingResult]) async throws {}
+}
+
+private struct ControllerFailingWritePacketFlowIO: PacketFlowIO {
+    let packets: [Packet]
+    let error: ControllerPacketFlowTestError
+
+    func readPackets(limit: Int) async throws -> [Packet] {
+        Array(packets.prefix(limit))
+    }
+
+    func writePackets(_ results: [PacketProcessingResult]) async throws {
+        throw error
+    }
+}
+
+private final class ControllerFailingRuntimeStatusStore: RuntimeStatusStore, @unchecked Sendable {
+    func save(_ status: RuntimeConnectionStatus) throws {
+        throw ControllerRuntimeStoreError.failed
+    }
+
+    func load() throws -> RuntimeConnectionStatus? {
+        nil
+    }
+}
+
+private final class ControllerFailingRuntimeLogStore: RuntimeLogStore, @unchecked Sendable {
+    func append(_ entry: RuntimeLogEntry) throws {
+        throw ControllerRuntimeStoreError.failed
+    }
+
+    func loadRecent() throws -> [RuntimeLogEntry] {
+        []
+    }
+
+    func clear() throws {}
 }
 
 private func controllerSnapshot(tls: TLSOptions, routingRuleManifest: RuntimeRoutingRuleManifest = RuntimeRoutingRuleManifest(version: 1, rules: [RuntimeRoutingRule(kind: .finalRule, value: nil, action: .proxy)])) -> RuntimeSnapshot {
