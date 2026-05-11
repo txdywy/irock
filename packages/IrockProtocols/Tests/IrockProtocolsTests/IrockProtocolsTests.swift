@@ -395,6 +395,43 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(tlsChild.requests, [])
     }
 
+    func testShadowsocksProxyAdapterMapsSelectorTLSChildFailure() async {
+        let selector = TCPTLSTransportAdapter(
+            plain: RecordingTransportAdapter(transport: .tcp),
+            tls: FailingTransportAdapter(transport: .tcp, error: .tlsHandshakeFailed("tls refused"))
+        )
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [selector]))
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp, tls: tls), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected mapped TLS failure")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .tlsHandshakeFailed("transport tls handshake failed"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testShadowsocksProxyAdapterMapsSelectorPlainChildFailure() async {
+        let selector = TCPTLSTransportAdapter(
+            plain: FailingTransportAdapter(transport: .tcp, error: .tcpConnectFailed("plain refused")),
+            tls: RecordingTransportAdapter(transport: .tcp)
+        )
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [selector]))
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp, tls: .disabled), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected mapped plain failure")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .tcpConnectFailed("transport tcp connect failed"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     private func makeNode(
         protocolType: ProxyProtocolType,
         transport: TransportType,
