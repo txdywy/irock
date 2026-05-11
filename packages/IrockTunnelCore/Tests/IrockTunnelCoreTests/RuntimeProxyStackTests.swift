@@ -33,6 +33,41 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(writer.writtenResults.count, 1)
     }
 
+    func testShadowsocksTCPConfigurationPublishesFailureWhenTLSChildFails() async throws {
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+        let reporter = TunnelRuntimeReporter(statusStore: statusStore, logStore: logStore)
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = FailingTransportAdapter(transport: .tcp, error: .tlsHandshakeFailed("secret tls refused"))
+        let reader = InMemoryPacketReader(packets: [Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)])
+        let writer = InMemoryPacketWriter()
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let configuration = TunnelRuntimeConfiguration.shadowsocksTCP(
+            snapshot: snapshot(tls: tls),
+            routingEngine: RoutingEngine(rules: [.final(.proxy)]),
+            plain: plain,
+            tls: tlsChild,
+            batchLimit: 16,
+            flowLimit: 32
+        )
+        let runtime = PacketTunnelRuntime(reader: reader, writer: writer, configuration: configuration, reporter: reporter)
+
+        do {
+            _ = try await runtime.runOnce()
+            XCTFail("Expected mapped TLS failure")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .tlsHandshakeFailed("transport tls handshake failed"))
+            XCTAssertEqual(plain.requests, [])
+            let status = try XCTUnwrap(statusStore.load())
+            XCTAssertEqual(status.phase, .failed)
+            XCTAssertEqual(status.message, "Proxy adapter failed: TLS handshake failed")
+            XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Proxy adapter failed: TLS handshake failed"])
+            XCTAssertEqual(writer.writtenResults, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testShadowsocksTCPStackRoutesEnabledTLSToTLSChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
@@ -105,6 +140,20 @@ private final class RecordingTransportAdapter: TransportAdapter, @unchecked Send
         lock.lock()
         defer { lock.unlock() }
         storedRequests.append(request)
+    }
+}
+
+private struct FailingTransportAdapter: TransportAdapter {
+    let supportedTransport: TransportType
+    let error: TransportError
+
+    init(transport: TransportType, error: TransportError) {
+        self.supportedTransport = transport
+        self.error = error
+    }
+
+    func open(request: TransportRequest) async throws -> any TransportConnection {
+        throw error
     }
 }
 
