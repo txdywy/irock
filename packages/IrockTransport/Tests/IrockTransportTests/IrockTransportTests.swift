@@ -366,6 +366,36 @@ final class IrockTransportTests: XCTestCase {
             XCTFail("Unexpected error: \(error)")
         }
     }
+
+    func testTLSTransportAdapterPropagatesUnderlyingTransportError() async {
+        let adapter = TLSTransportAdapter(underlying: FailingTransportAdapter(transport: .tcp, error: .tlsHandshakeFailed("handshake failed")))
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .tcp, tls: tls)
+
+        do {
+            _ = try await adapter.open(request: request)
+            XCTFail("Expected underlying failure")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .tlsHandshakeFailed("handshake failed"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testTransportAdapterRegistryCanSelectTLSTransportAdapter() async throws {
+        let adapter = TLSTransportAdapter(underlying: RecordingTransportAdapter(transport: .tcp))
+        let registry = TransportAdapterRegistry(adapters: [adapter])
+        let selected = registry.adapter(for: .tcp)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .tcp, tls: tls)
+
+        let connection = try await selected.open(request: request)
+
+        XCTAssertEqual(selected.supportedTransport, .tcp)
+        XCTAssertEqual(connection.host, "example.com")
+        XCTAssertEqual(connection.port, 443)
+        XCTAssertEqual(connection.transport, .tcp)
+    }
 }
 
 private struct TransportAdapterRequest: Equatable {
@@ -402,6 +432,20 @@ private final class RecordingTransportAdapter: TransportAdapter, @unchecked Send
         lock.lock()
         defer { lock.unlock() }
         storedRequests.append(TransportAdapterRequest(host: request.host, port: request.port, transport: request.transport, tls: request.tls, metadata: request.metadata))
+    }
+}
+
+private struct FailingTransportAdapter: TransportAdapter {
+    let supportedTransport: TransportType
+    let error: TransportError
+
+    init(transport: TransportType, error: TransportError) {
+        self.supportedTransport = transport
+        self.error = error
+    }
+
+    func open(request: TransportRequest) async throws -> any TransportConnection {
+        throw error
     }
 }
 
