@@ -5,6 +5,38 @@ import IrockTransport
 @testable import IrockTunnelCore
 
 final class TunnelRuntimeControllerTests: XCTestCase {
+    func testRunShadowsocksTCPBatchReportsMissingSnapshot() async throws {
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+
+        do {
+            _ = try await TunnelRuntimeController.runShadowsocksTCPBatch(
+                snapshotStore: InMemoryRuntimeSnapshotStore(),
+                flow: ControllerRecordingPacketFlowIO(packets: []),
+                statusStore: statusStore,
+                logStore: logStore,
+                plain: ControllerRecordingTransportAdapter(transport: .tcp),
+                tls: ControllerRecordingTransportAdapter(transport: .tcp),
+                batchLimit: 16,
+                flowLimit: 32
+            )
+            XCTFail("Expected missing runtime snapshot")
+        } catch TunnelRuntimeControllerError.missingRuntimeSnapshot {
+            let status = try XCTUnwrap(statusStore.load())
+            XCTAssertEqual(status.phase, .failed)
+            XCTAssertNil(status.selectedNodeID)
+            XCTAssertNil(status.selectedNodeName)
+            XCTAssertEqual(status.message, "Runtime snapshot unavailable")
+            let logs = try logStore.loadRecent()
+            XCTAssertEqual(logs.map(\.message), ["Runtime snapshot unavailable"])
+            XCTAssertEqual(logs.map(\.level), [.user])
+            XCTAssertEqual(logs.map(\.nodeID), [nil])
+            XCTAssertEqual(logs.map(\.phase), [.failed])
+        } catch {
+            XCTFail("Expected missing runtime snapshot, got \(error)")
+        }
+    }
+
     func testRunShadowsocksTCPBatchLoadsSnapshotAndRunsPacketFlowBatch() async throws {
         let snapshotStore = InMemoryRuntimeSnapshotStore()
         try snapshotStore.save(controllerSnapshot(tls: .disabled))
