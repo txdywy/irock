@@ -1,14 +1,24 @@
 import Foundation
 import IrockCore
+import IrockProtocols
 import IrockStorage
+import IrockTransport
 import IrockTunnelCore
 import NetworkExtension
 
 struct MacOSPacketTunnelSmokeRunner: Sendable {
     private let storeResolver: PacketTunnelAppGroupStoreResolver
+    private let batchLimit: Int
+    private let flowLimit: Int
 
-    init(storeResolver: PacketTunnelAppGroupStoreResolver = PacketTunnelAppGroupStoreResolver()) {
+    init(
+        storeResolver: PacketTunnelAppGroupStoreResolver = PacketTunnelAppGroupStoreResolver(),
+        batchLimit: Int = 8,
+        flowLimit: Int = 64
+    ) {
         self.storeResolver = storeResolver
+        self.batchLimit = batchLimit
+        self.flowLimit = flowLimit
     }
 
     func validateStartup() throws {
@@ -29,21 +39,23 @@ struct MacOSPacketTunnelSmokeRunner: Sendable {
 
     func runOnce(packetFlow: NEPacketTunnelFlow) async throws -> PacketTunnelRuntimeSummary {
         let stores = try storeResolver.makeRuntimeStoreBundle()
-        reportScaffoldReady(stores: stores)
-        return PacketTunnelRuntimeSummary(readCount: 0, writtenCount: 0, dropCount: 0)
+        return try await TunnelRuntimeController.runShadowsocksTCPBatch(
+            snapshotStore: stores.snapshotStore,
+            flow: NEPacketTunnelFlowPacketFlowIO(packetFlow: packetFlow),
+            statusStore: stores.statusStore,
+            logStore: stores.logStore,
+            plain: TCPTransportAdapter(dialer: MacOSPlatformTCPDialer()),
+            tls: UnsupportedTransportAdapter(transport: .tcp),
+            credentialResolver: MissingShadowsocksCredentialResolver(),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
     }
 
     private func reportMissingSnapshot(stores: RuntimeStoreBundle) {
-        report(message: "Runtime snapshot unavailable", phase: .failed, stores: stores)
-    }
-
-    private func reportScaffoldReady(stores: RuntimeStoreBundle) {
-        report(message: "macOS Packet Tunnel scaffold ready", phase: .preparing, stores: stores)
-    }
-
-    private func report(message: String, phase: RuntimeConnectionPhase, stores: RuntimeStoreBundle) {
+        let message = "Runtime snapshot unavailable"
         try? stores.statusStore.save(RuntimeConnectionStatus(
-            phase: phase,
+            phase: .failed,
             selectedNodeID: nil,
             selectedNodeName: nil,
             updatedAt: Date(),
@@ -55,7 +67,7 @@ struct MacOSPacketTunnelSmokeRunner: Sendable {
             level: .user,
             message: message,
             nodeID: nil,
-            phase: phase
+            phase: .failed
         ))
     }
 }

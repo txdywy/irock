@@ -177,15 +177,22 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(project.contains("relativePath = ../.."))
     }
 
-    func testMacOSPacketTunnelScaffoldDefersRuntimeExecutionAndTCPDialing() throws {
+    func testMacOSPacketTunnelRuntimeIntegrationUsesSharedRuntimeAndPlatformTCPDialer() throws {
         let smokeRunner = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irockMacTunnelExtension/MacOSPacketTunnelSmokeRunner.swift"))
         let dialer = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irockMacTunnelExtension/MacOSPlatformTCPDialer.swift"))
 
-        XCTAssertFalse(smokeRunner.contains("TunnelRuntimeController.runShadowsocksTCPBatch"))
-        XCTAssertFalse(smokeRunner.contains("TCPTransportAdapter(dialer: MacOSPlatformTCPDialer())"))
-        XCTAssertFalse(smokeRunner.contains("MissingShadowsocksCredentialResolver"))
-        XCTAssertFalse(dialer.contains("import " + "Network"))
-        XCTAssertFalse(dialer.contains("NWConnection"))
+        XCTAssertTrue(smokeRunner.contains("TunnelRuntimeController.runShadowsocksTCPBatch"))
+        XCTAssertTrue(smokeRunner.contains("NEPacketTunnelFlowPacketFlowIO(packetFlow: packetFlow)"))
+        XCTAssertTrue(smokeRunner.contains("TCPTransportAdapter(dialer: MacOSPlatformTCPDialer())"))
+        XCTAssertTrue(smokeRunner.contains("UnsupportedTransportAdapter(transport: .tcp)"))
+        XCTAssertTrue(smokeRunner.contains("MissingShadowsocksCredentialResolver"))
+        XCTAssertTrue(dialer.contains("import " + "Network"))
+        XCTAssertTrue(dialer.contains("NWConnection"))
+        XCTAssertTrue(dialer.contains("withTaskCancellationHandler"))
+        XCTAssertTrue(dialer.contains("Task.sleep(nanoseconds: timeoutNanoseconds)"))
+        XCTAssertTrue(dialer.contains("connection.send(content: initialPayload"))
+        XCTAssertTrue(dialer.contains("TCPDialResult"))
+        XCTAssertTrue(dialer.contains("TransportError"))
     }
 
     func testPacketTunnelProviderWiresLoopRunner() throws {
