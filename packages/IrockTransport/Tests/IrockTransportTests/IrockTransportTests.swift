@@ -439,6 +439,74 @@ final class IrockTransportTests: XCTestCase {
         }
     }
 
+    func testHTTP2TransportAdapterOpensUnderlyingTCPWithMetadataAndPayload() async throws {
+        let underlying = RecordingTransportAdapter(transport: .tcp, connectionHost: "connected.example.com")
+        let adapter = HTTP2TransportAdapter(underlying: underlying)
+        let payload = Data("protocol-open".utf8)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil)
+        let request = TransportRequest(
+            host: " example.com ",
+            port: 443,
+            transport: .http2,
+            tls: tls,
+            metadata: ["http2Path": "/proxy", "http2Protocol": "vmess"],
+            initialPayload: payload
+        )
+
+        let connection = try await adapter.open(request: request)
+
+        XCTAssertEqual(connection.host, "connected.example.com")
+        XCTAssertEqual(connection.port, 443)
+        XCTAssertEqual(connection.transport, .http2)
+        XCTAssertEqual(underlying.requests.count, 1)
+        XCTAssertEqual(underlying.requests.first?.host, "example.com")
+        XCTAssertEqual(underlying.requests.first?.port, 443)
+        XCTAssertEqual(underlying.requests.first?.transport, .tcp)
+        XCTAssertEqual(underlying.requests.first?.tls, tls)
+        XCTAssertEqual(underlying.requests.first?.metadata["http2Authority"], "example.com")
+        XCTAssertEqual(underlying.requests.first?.metadata["http2Path"], "/proxy")
+        XCTAssertEqual(underlying.requests.first?.metadata["http2Protocol"], "vmess")
+        XCTAssertEqual(underlying.requests.first?.metadata["http2Upgrade"], "true")
+        XCTAssertEqual(String(data: underlying.requests.first?.initialPayload ?? Data(), encoding: .utf8), "http2-foundation:example.com:/proxy:vmess\nprotocol-open")
+    }
+
+    func testHTTP2TransportAdapterDefaultsPathAndAuthorityMetadata() async throws {
+        let underlying = RecordingTransportAdapter(transport: .tcp)
+        let adapter = HTTP2TransportAdapter(underlying: underlying)
+        let request = TransportRequest(host: "example.com", port: 80, transport: .http2)
+
+        _ = try await adapter.open(request: request)
+
+        XCTAssertEqual(underlying.requests.first?.metadata["http2Authority"], "example.com")
+        XCTAssertEqual(underlying.requests.first?.metadata["http2Path"], "/")
+        XCTAssertNil(underlying.requests.first?.metadata["http2Protocol"])
+        XCTAssertEqual(String(data: underlying.requests.first?.initialPayload ?? Data(), encoding: .utf8), "http2-foundation:example.com:/:\n")
+    }
+
+    func testHTTP2TransportAdapterRejectsInvalidConfigurationBeforeOpeningUnderlying() async {
+        let cases: [(TransportRequest, TransportError)] = [
+            (TransportRequest(host: "example.com", port: 443, transport: .tcp), .unsupportedTransport(.tcp)),
+            (TransportRequest(host: "   ", port: 443, transport: .http2), .invalidConfiguration("missing http2 host")),
+            (TransportRequest(host: "example.com", port: 0, transport: .http2), .invalidConfiguration("invalid http2 port")),
+            (TransportRequest(host: "example.com", port: 443, transport: .http2, metadata: ["http2Path": "proxy"]), .invalidConfiguration("invalid http2 path")),
+            (TransportRequest(host: "example.com", port: 443, transport: .http2, metadata: ["http2Authority": "   "]), .invalidConfiguration("invalid http2 authority"))
+        ]
+
+        for (request, expectedError) in cases {
+            let underlying = RecordingTransportAdapter(transport: .tcp)
+            let adapter = HTTP2TransportAdapter(underlying: underlying)
+            do {
+                _ = try await adapter.open(request: request)
+                XCTFail("Expected HTTP/2 validation failure")
+            } catch let error as TransportError {
+                XCTAssertEqual(error, expectedError)
+                XCTAssertEqual(underlying.requests, [])
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
     func testTLSTransportAdapterPropagatesUnderlyingTransportError() async {
         let adapter = TLSTransportAdapter(underlying: FailingTransportAdapter(transport: .tcp, error: .tlsHandshakeFailed("handshake failed")))
         let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)

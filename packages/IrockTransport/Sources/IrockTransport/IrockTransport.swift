@@ -290,3 +290,76 @@ private struct WebSocketOpenDescriptor {
         return data
     }
 }
+
+public struct HTTP2TransportAdapter<Underlying: TransportAdapter>: TransportAdapter {
+    public let supportedTransport: TransportType = .http2
+    private let underlying: Underlying
+
+    public init(underlying: Underlying) {
+        self.underlying = underlying
+    }
+
+    public func open(request: TransportRequest) async throws -> any TransportConnection {
+        let descriptor = try descriptor(for: request)
+        let underlyingRequest = TransportRequest(
+            host: descriptor.host,
+            port: request.port,
+            transport: .tcp,
+            tls: request.tls,
+            metadata: descriptor.metadata,
+            initialPayload: descriptor.initialPayload(appending: request.initialPayload)
+        )
+        let connection = try await underlying.open(request: underlyingRequest)
+        return EstablishedTransportConnection(host: connection.host, port: connection.port, transport: .http2)
+    }
+
+    private func descriptor(for request: TransportRequest) throws -> HTTP2OpenDescriptor {
+        guard request.transport == .http2 else {
+            throw TransportError.unsupportedTransport(request.transport)
+        }
+        let host = request.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else {
+            throw TransportError.invalidConfiguration("missing http2 host")
+        }
+        guard (1...65_535).contains(request.port) else {
+            throw TransportError.invalidConfiguration("invalid http2 port")
+        }
+        let path = request.metadata["http2Path", default: "/"].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard path.hasPrefix("/") else {
+            throw TransportError.invalidConfiguration("invalid http2 path")
+        }
+        let authority = request.metadata["http2Authority", default: host].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !authority.isEmpty else {
+            throw TransportError.invalidConfiguration("invalid http2 authority")
+        }
+        let protocolName = request.metadata["http2Protocol"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return HTTP2OpenDescriptor(host: host, authority: authority, path: path, protocolName: protocolName)
+    }
+}
+
+private struct HTTP2OpenDescriptor {
+    let host: String
+    let authority: String
+    let path: String
+    let protocolName: String
+
+    var metadata: [String: String] {
+        var metadata = [
+            "http2Authority": authority,
+            "http2Path": path,
+            "http2Upgrade": "true"
+        ]
+        if !protocolName.isEmpty {
+            metadata["http2Protocol"] = protocolName
+        }
+        return metadata
+    }
+
+    func initialPayload(appending payload: Data?) -> Data {
+        var data = Data("http2-foundation:\(authority):\(path):\(protocolName)\n".utf8)
+        if let payload {
+            data.append(payload)
+        }
+        return data
+    }
+}

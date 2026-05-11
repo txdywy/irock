@@ -516,6 +516,14 @@ final class IrockProtocolsTests: XCTestCase {
     }
 
     func testProtocolFoundationAdaptersOpenWebSocketTransport() async throws {
+        try await assertProtocolFoundationAdaptersOpen(transport: .webSocket)
+    }
+
+    func testProtocolFoundationAdaptersOpenHTTP2Transport() async throws {
+        try await assertProtocolFoundationAdaptersOpen(transport: .http2)
+    }
+
+    private func assertProtocolFoundationAdaptersOpen(transport transportType: TransportType) async throws {
         let cases: [(ProxyProtocolType, String)] = [
             (.vmess, "00000000-0000-0000-0000-000000000001"),
             (.vless, "00000000-0000-0000-0000-000000000002"),
@@ -523,7 +531,7 @@ final class IrockProtocolsTests: XCTestCase {
         ]
 
         for (protocolType, credentialAccount) in cases {
-            let transport = RecordingTransportAdapter(transport: .webSocket)
+            let transport = RecordingTransportAdapter(transport: transportType)
             let registry = TransportAdapterRegistry(adapters: [transport])
             let adapter: any ProxyAdapter
             switch protocolType {
@@ -537,12 +545,12 @@ final class IrockProtocolsTests: XCTestCase {
                 XCTFail("Unexpected protocol type")
                 return
             }
-            let node = makeNode(protocolType: protocolType, transport: .webSocket, credentialAccount: credentialAccount)
+            let node = makeNode(protocolType: protocolType, transport: transportType, credentialAccount: credentialAccount)
 
             _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
 
             XCTAssertEqual(transport.requests.count, 1)
-            XCTAssertEqual(transport.requests.first?.transport, .webSocket)
+            XCTAssertEqual(transport.requests.first?.transport, transportType)
             XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], protocolType.rawValue)
         }
     }
