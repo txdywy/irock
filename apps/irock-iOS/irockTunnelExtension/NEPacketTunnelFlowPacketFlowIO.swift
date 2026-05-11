@@ -2,6 +2,39 @@ import Foundation
 import IrockTunnelCore
 import NetworkExtension
 
+private final class CancellationResumeGate<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Never>?
+    private var value: Value?
+    private var didResume = false
+
+    func setContinuation(_ continuation: CheckedContinuation<Value, Never>) {
+        lock.lock()
+        if didResume {
+            let value = self.value
+            lock.unlock()
+            continuation.resume(returning: value!)
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func resume(with value: Value) {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return
+        }
+        didResume = true
+        self.value = value
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(returning: value)
+    }
+}
+
 struct NEPacketTunnelFlowPacketFlowIO: PacketFlowIO {
     private let packetFlow: NEPacketTunnelFlow
 
@@ -10,9 +43,25 @@ struct NEPacketTunnelFlowPacketFlowIO: PacketFlowIO {
     }
 
     func readPackets(limit: Int) async throws -> [Packet] {
-        let packets = await packetFlow.readPacketObjects()
+        guard !Task.isCancelled else { return [] }
+        let packets = await readPacketObjects()
+        guard !Task.isCancelled else { return [] }
         return packets.prefix(max(0, limit)).enumerated().map { index, packet in
             Packet(id: "ne-packet-\(index)", bytes: Array(packet.data))
+        }
+    }
+
+    private func readPacketObjects() async -> [NEPacket] {
+        let gate = CancellationResumeGate<[NEPacket]>()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                gate.setContinuation(continuation)
+                packetFlow.readPacketObjects { packets in
+                    gate.resume(with: packets)
+                }
+            }
+        } onCancel: {
+            gate.resume(with: [])
         }
     }
 

@@ -18,6 +18,13 @@ struct IOSPacketTunnelSmokeRunner: Sendable {
         self.flowLimit = flowLimit
     }
 
+    func validateStartup() throws {
+        let stores = try storeResolver.makeRuntimeStoreBundle()
+        guard try stores.snapshotStore.load() != nil else {
+            throw TunnelRuntimeControllerError.missingRuntimeSnapshot
+        }
+    }
+
     func runOnce(packetFlow: NEPacketTunnelFlow) async throws -> PacketTunnelRuntimeSummary {
         let stores = try storeResolver.makeRuntimeStoreBundle()
         return try await TunnelRuntimeController.runShadowsocksTCPBatch(
