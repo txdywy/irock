@@ -411,6 +411,29 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertFalse((transport.requests.first?.initialPayload ?? Data()).contains(Data("00000000-0000-0000-0000-000000000002".utf8)))
     }
 
+    func testVLESSProxyAdapterOpensRealityTCPTransportWithCredentialSafePayload() async throws {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = VLESSProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let reality = RealityOptions(publicKey: "reality-public-key", shortID: "abc123", spiderX: "/")
+        let tls = TLSOptions(enabled: true, serverName: "reality.example.com", allowInsecure: false, alpn: ["h2"], fingerprint: "chrome", reality: reality)
+        let node = makeNode(protocolType: .vless, transport: .tcp, tls: tls, credentialAccount: "00000000-0000-0000-0000-000000000002")
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests.first?.transport, .tcp)
+        XCTAssertEqual(transport.requests.first?.tls, tls)
+        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "vless")
+        XCTAssertEqual(transport.requests.first?.metadata["vlessUserIDPresent"], "true")
+        XCTAssertNil(transport.requests.first?.metadata["vlessUserID"])
+        let payload = transport.requests.first?.initialPayload ?? Data()
+        XCTAssertEqual(String(data: payload, encoding: .utf8), "vless-foundation:host:apple.com:443:none:")
+        XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000002".utf8)))
+        XCTAssertFalse(payload.contains(Data("reality-public-key".utf8)))
+    }
+
     func testVLESSProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {
         let transport = RecordingTransportAdapter(transport: .tcp)
         let adapter = VLESSProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))

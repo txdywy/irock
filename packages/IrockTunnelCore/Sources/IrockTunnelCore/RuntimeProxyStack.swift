@@ -35,6 +35,15 @@ public struct RuntimeProxyStack: Sendable {
         return ProxyAdapterRegistry(adapters: [vless])
     }
 
+    public static func vlessRealityTCP<Plain: TransportAdapter>(
+        plain: Plain
+    ) -> ProxyAdapterRegistry {
+        let reality = RealityTransportAdapter(underlying: plain)
+        let transportRegistry = TransportAdapterRegistry(adapters: [reality])
+        let vless = VLESSProxyAdapter(transportRegistry: transportRegistry)
+        return ProxyAdapterRegistry(adapters: [vless])
+    }
+
     public static func trojanTCP<Plain: TransportAdapter, TLS: TransportAdapter>(
         plain: Plain,
         tls: TLS
@@ -106,6 +115,36 @@ public extension TunnelRuntimeConfiguration {
         try TunnelRuntimeConfiguration(
             snapshot: snapshot,
             proxyAdapterRegistry: RuntimeProxyStack.vlessTCP(plain: plain, tls: tls),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func vlessRealityTCP<Plain: TransportAdapter>(
+        snapshot: RuntimeSnapshot,
+        routingEngine: RoutingEngine,
+        plain: Plain,
+        batchLimit: Int,
+        flowLimit: Int
+    ) -> TunnelRuntimeConfiguration {
+        TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            routingEngine: routingEngine,
+            proxyAdapterRegistry: RuntimeProxyStack.vlessRealityTCP(plain: plain),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func vlessRealityTCP<Plain: TransportAdapter>(
+        snapshot: RuntimeSnapshot,
+        plain: Plain,
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> TunnelRuntimeConfiguration {
+        try TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            proxyAdapterRegistry: RuntimeProxyStack.vlessRealityTCP(plain: plain),
             batchLimit: batchLimit,
             flowLimit: flowLimit
         )

@@ -371,6 +371,67 @@ final class IrockTransportTests: XCTestCase {
         }
     }
 
+    func testRealityTransportAdapterOpensUnderlyingTCPWithCredentialSafeMetadataAndPayload() async throws {
+        let underlying = RecordingTransportAdapter(transport: .tcp, connectionHost: "connected.example.com")
+        let adapter = RealityTransportAdapter(underlying: underlying)
+        let payload = Data("vless-open".utf8)
+        let reality = RealityOptions(publicKey: "reality-public-key", shortID: "abc123", spiderX: "/")
+        let tls = TLSOptions(enabled: true, serverName: " reality.example.com ", allowInsecure: false, alpn: ["h2"], fingerprint: "chrome", reality: reality)
+        let request = TransportRequest(host: " example.com ", port: 443, transport: .tcp, tls: tls, metadata: ["proxyProtocol": "vless"], initialPayload: payload)
+
+        let connection = try await adapter.open(request: request)
+
+        XCTAssertEqual(connection.host, "connected.example.com")
+        XCTAssertEqual(connection.port, 443)
+        XCTAssertEqual(connection.transport, .tcp)
+        XCTAssertEqual(underlying.requests.count, 1)
+        XCTAssertEqual(underlying.requests.first?.host, "example.com")
+        XCTAssertEqual(underlying.requests.first?.port, 443)
+        XCTAssertEqual(underlying.requests.first?.transport, .tcp)
+        XCTAssertNil(underlying.requests.first?.tls)
+        XCTAssertEqual(underlying.requests.first?.metadata["proxyProtocol"], "vless")
+        XCTAssertEqual(underlying.requests.first?.metadata["realityServerName"], "reality.example.com")
+        XCTAssertEqual(underlying.requests.first?.metadata["realityPublicKeyPresent"], "true")
+        XCTAssertEqual(underlying.requests.first?.metadata["realityShortIDPresent"], "true")
+        XCTAssertEqual(underlying.requests.first?.metadata["realitySpiderX"], "/")
+        XCTAssertEqual(underlying.requests.first?.metadata["realityFingerprint"], "chrome")
+        XCTAssertEqual(underlying.requests.first?.metadata["realityALPN"], "h2")
+        let opened = underlying.requests.first?.initialPayload ?? Data()
+        XCTAssertEqual(String(data: opened, encoding: .utf8), "reality-foundation:reality.example.com:public-key-present:true:/\nvless-open")
+        XCTAssertFalse(opened.contains(Data("reality-public-key".utf8)))
+        XCTAssertFalse(opened.contains(Data("abc123".utf8)))
+    }
+
+    func testRealityTransportAdapterRejectsInvalidConfigurationBeforeOpeningUnderlying() async {
+        let reality = RealityOptions(publicKey: "public", shortID: nil, spiderX: nil)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: reality)
+        let cases: [(TransportRequest, TransportError)] = [
+            (TransportRequest(host: "example.com", port: 443, transport: .grpc, tls: tls), .unsupportedTransport(.grpc)),
+            (TransportRequest(host: "   ", port: 443, transport: .tcp, tls: tls), .invalidConfiguration("missing reality host")),
+            (TransportRequest(host: "example.com", port: 0, transport: .tcp, tls: tls), .invalidConfiguration("invalid reality port")),
+            (TransportRequest(host: "example.com", port: 443, transport: .tcp), .invalidConfiguration("missing reality tls options")),
+            (TransportRequest(host: "example.com", port: 443, transport: .tcp, tls: .disabled), .invalidConfiguration("missing reality tls options")),
+            (TransportRequest(host: "example.com", port: 443, transport: .tcp, tls: TLSOptions(enabled: true, serverName: "   ", allowInsecure: false, alpn: [], fingerprint: nil, reality: reality)), .invalidConfiguration("invalid reality server name")),
+            (TransportRequest(host: "example.com", port: 443, transport: .tcp, tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: RealityOptions(publicKey: "   ", shortID: nil, spiderX: nil))), .invalidConfiguration("invalid reality public key")),
+            (TransportRequest(host: "example.com", port: 443, transport: .tcp, tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: RealityOptions(publicKey: "public", shortID: "   ", spiderX: nil))), .invalidConfiguration("invalid reality short id")),
+            (TransportRequest(host: "example.com", port: 443, transport: .tcp, tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: RealityOptions(publicKey: "public", shortID: nil, spiderX: "   "))), .invalidConfiguration("invalid reality spider x"))
+        ]
+
+        for (request, expectedError) in cases {
+            let underlying = RecordingTransportAdapter(transport: .tcp)
+            let adapter = RealityTransportAdapter(underlying: underlying)
+            do {
+                _ = try await adapter.open(request: request)
+                XCTFail("Expected Reality validation failure")
+            } catch let error as TransportError {
+                XCTAssertEqual(error, expectedError)
+                XCTAssertEqual(underlying.requests, [])
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
     func testWebSocketTransportAdapterOpensUnderlyingTCPWithMetadataAndPayload() async throws {
         let underlying = RecordingTransportAdapter(transport: .tcp, connectionHost: "connected.example.com")
         let adapter = WebSocketTransportAdapter(underlying: underlying)

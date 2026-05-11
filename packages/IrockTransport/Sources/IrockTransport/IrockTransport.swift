@@ -218,6 +218,96 @@ public struct TCPTLSTransportAdapter<Plain: TransportAdapter, TLS: TransportAdap
     }
 }
 
+public struct RealityTransportAdapter<Underlying: TransportAdapter>: TransportAdapter {
+    public let supportedTransport: TransportType = .tcp
+    private let underlying: Underlying
+
+    public init(underlying: Underlying) {
+        self.underlying = underlying
+    }
+
+    public func open(request: TransportRequest) async throws -> any TransportConnection {
+        let descriptor = try descriptor(for: request)
+        let underlyingRequest = TransportRequest(
+            host: descriptor.host,
+            port: request.port,
+            transport: .tcp,
+            tls: nil,
+            metadata: descriptor.metadata(merging: request.metadata),
+            initialPayload: descriptor.initialPayload(appending: request.initialPayload)
+        )
+        let connection = try await underlying.open(request: underlyingRequest)
+        return EstablishedTransportConnection(host: connection.host, port: connection.port, transport: .tcp)
+    }
+
+    private func descriptor(for request: TransportRequest) throws -> RealityOpenDescriptor {
+        guard request.transport == .tcp else {
+            throw TransportError.unsupportedTransport(request.transport)
+        }
+        let host = request.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else {
+            throw TransportError.invalidConfiguration("missing reality host")
+        }
+        guard (1...65_535).contains(request.port) else {
+            throw TransportError.invalidConfiguration("invalid reality port")
+        }
+        guard let tls = request.tls, tls.enabled, let reality = tls.reality else {
+            throw TransportError.invalidConfiguration("missing reality tls options")
+        }
+        let serverName = tls.serverName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !serverName.isEmpty else {
+            throw TransportError.invalidConfiguration("invalid reality server name")
+        }
+        let publicKey = reality.publicKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !publicKey.isEmpty else {
+            throw TransportError.invalidConfiguration("invalid reality public key")
+        }
+        let shortID = reality.shortID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let shortID, shortID.isEmpty {
+            throw TransportError.invalidConfiguration("invalid reality short id")
+        }
+        let spiderX = reality.spiderX?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let spiderX, spiderX.isEmpty {
+            throw TransportError.invalidConfiguration("invalid reality spider x")
+        }
+        return RealityOpenDescriptor(serverName: serverName, shortIDPresent: shortID != nil, spiderX: spiderX ?? "", fingerprint: tls.fingerprint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "", alpn: tls.alpn, host: host)
+    }
+}
+
+private struct RealityOpenDescriptor {
+    let serverName: String
+    let shortIDPresent: Bool
+    let spiderX: String
+    let fingerprint: String
+    let alpn: [String]
+    let host: String
+
+    func metadata(merging input: [String: String]) -> [String: String] {
+        var metadata = input
+        metadata["realityServerName"] = serverName
+        metadata["realityPublicKeyPresent"] = "true"
+        metadata["realityShortIDPresent"] = shortIDPresent ? "true" : "false"
+        if !spiderX.isEmpty {
+            metadata["realitySpiderX"] = spiderX
+        }
+        if !fingerprint.isEmpty {
+            metadata["realityFingerprint"] = fingerprint
+        }
+        if !alpn.isEmpty {
+            metadata["realityALPN"] = alpn.joined(separator: ",")
+        }
+        return metadata
+    }
+
+    func initialPayload(appending payload: Data?) -> Data {
+        var data = Data("reality-foundation:\(serverName):public-key-present:\(shortIDPresent ? "true" : "false"):\(spiderX)\n".utf8)
+        if let payload {
+            data.append(payload)
+        }
+        return data
+    }
+}
+
 public struct WebSocketTransportAdapter<Underlying: TransportAdapter>: TransportAdapter {
     public let supportedTransport: TransportType = .webSocket
     private let underlying: Underlying
