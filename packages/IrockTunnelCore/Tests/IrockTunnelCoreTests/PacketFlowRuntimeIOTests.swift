@@ -6,6 +6,42 @@ import IrockTransport
 @testable import IrockTunnelCore
 
 final class PacketFlowRuntimeIOTests: XCTestCase {
+    func testBootstrappedRuntimeUsesPacketFlowIOForReadAndWrite() async throws {
+        let plain = PacketFlowRecordingTransportAdapter(transport: .tcp)
+        let tlsChild = PacketFlowRecordingTransportAdapter(transport: .tcp)
+        let packet = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let flow = RecordingPacketFlowIO(packets: [packet])
+        let io = PacketFlowRuntimeIO(flow: flow, batchLimit: 16)
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+        let runtime = try TunnelRuntimeBootstrap.shadowsocksTCP(
+            snapshot: packetFlowSnapshot(tls: .disabled),
+            reader: io,
+            writer: io,
+            statusStore: statusStore,
+            logStore: logStore,
+            plain: plain,
+            tls: tlsChild,
+            batchLimit: 16,
+            flowLimit: 32
+        )
+
+        let summary = try await runtime.runOnce()
+
+        XCTAssertEqual(summary.readCount, 1)
+        XCTAssertEqual(summary.writtenCount, 1)
+        XCTAssertEqual(summary.dropCount, 0)
+        XCTAssertEqual(summary.proxyConnectCount, 1)
+        XCTAssertEqual(flow.readLimits, [16])
+        XCTAssertEqual(flow.writtenResults.count, 1)
+        XCTAssertEqual(plain.requests.count, 1)
+        XCTAssertEqual(tlsChild.requests, [])
+        let status = try XCTUnwrap(statusStore.load())
+        XCTAssertEqual(status.phase, .connected)
+        XCTAssertEqual(status.message, "Packet batch processed")
+        XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Tunnel runtime connected"])
+    }
+
     func testReadBatchDelegatesToFlowWithConfiguredLimit() async throws {
         let packet = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
         let flow = RecordingPacketFlowIO(packets: [packet])
@@ -72,6 +108,33 @@ private final class RecordingPacketFlowIO: PacketFlowIO, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         storedWrittenResults.append(contentsOf: results)
+    }
+}
+
+private final class PacketFlowRecordingTransportAdapter: TransportAdapter, @unchecked Sendable {
+    let supportedTransport: TransportType
+    private let lock = NSLock()
+    private var storedRequests: [TransportRequest] = []
+
+    var requests: [TransportRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedRequests
+    }
+
+    init(transport: TransportType) {
+        self.supportedTransport = transport
+    }
+
+    func open(request: TransportRequest) async throws -> any TransportConnection {
+        record(request)
+    }
+
+    private func record(_ request: TransportRequest) -> any TransportConnection {
+        lock.lock()
+        defer { lock.unlock() }
+        storedRequests.append(request)
+        return EstablishedTransportConnection(host: request.host, port: request.port, transport: request.transport)
     }
 }
 
