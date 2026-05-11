@@ -7,6 +7,32 @@ import IrockTransport
 @testable import IrockTunnelCore
 
 final class RuntimeProxyStackTests: XCTestCase {
+    func testShadowsocksTCPConfigurationWiresStackIntoPacketTunnelRuntime() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let reader = InMemoryPacketReader(packets: [Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)])
+        let writer = InMemoryPacketWriter()
+        let configuration = TunnelRuntimeConfiguration.shadowsocksTCP(
+            snapshot: snapshot(tls: .disabled),
+            routingEngine: RoutingEngine(rules: [.final(.proxy)]),
+            plain: plain,
+            tls: tlsChild,
+            batchLimit: 16,
+            flowLimit: 32
+        )
+        let runtime = PacketTunnelRuntime(reader: reader, writer: writer, configuration: configuration)
+
+        let summary = try await runtime.runOnce()
+
+        XCTAssertEqual(summary.readCount, 1)
+        XCTAssertEqual(summary.writtenCount, 1)
+        XCTAssertEqual(summary.dropCount, 0)
+        XCTAssertEqual(summary.proxyConnectCount, 1)
+        XCTAssertEqual(plain.requests.count, 1)
+        XCTAssertEqual(tlsChild.requests, [])
+        XCTAssertEqual(writer.writtenResults.count, 1)
+    }
+
     func testShadowsocksTCPStackRoutesEnabledTLSToTLSChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
