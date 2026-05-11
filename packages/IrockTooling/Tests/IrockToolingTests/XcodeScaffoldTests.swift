@@ -24,6 +24,36 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertEqual(extensionEntitlements["com.apple.developer.networking.networkextension"] as? [String], ["packet-tunnel-provider"])
     }
 
+    func testSigningTemplateAndDeviceSmokeRunbookArePlaceholderSafe() throws {
+        let signingTemplate = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/Signing/LocalSigning.xcconfig.example"))
+        let smokeRunbook = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/Signing/DEVICE-SMOKE.md"))
+
+        XCTAssertTrue(signingTemplate.contains("IROCK_DEVELOPMENT_TEAM = YOUR_TEAM_ID"))
+        XCTAssertTrue(signingTemplate.contains("IROCK_APP_BUNDLE_ID = com.example.irock"))
+        XCTAssertTrue(signingTemplate.contains("IROCK_TUNNEL_BUNDLE_ID = com.example.irock.tunnel"))
+        XCTAssertTrue(signingTemplate.contains("IROCK_APP_GROUP = group.com.example.irock"))
+        XCTAssertFalse(signingTemplate.contains("DEVELOPMENT_TEAM = [A-Z0-9]"))
+
+        XCTAssertTrue(smokeRunbook.contains("Apple Developer account"))
+        XCTAssertTrue(smokeRunbook.contains("Network Extension"))
+        XCTAssertTrue(smokeRunbook.contains("App Groups"))
+        XCTAssertTrue(smokeRunbook.contains("Packet Tunnel"))
+        XCTAssertTrue(smokeRunbook.contains("Expected result"))
+        XCTAssertTrue(smokeRunbook.contains("Do not commit"))
+    }
+
+    func testSigningSecretsAndProvisioningArtifactsAreNotCommitted() throws {
+        let project = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irock.xcodeproj/project.pbxproj"))
+        XCTAssertTrue(project.contains("DEVELOPMENT_TEAM = \"\""))
+        XCTAssertFalse(project.contains("PROVISIONING_PROFILE_SPECIFIER ="))
+        XCTAssertFalse(project.contains("CODE_SIGN_IDENTITY = Apple Development"))
+
+        let forbiddenExtensions = Set(["mobileprovision", "p12", "cer"])
+        let appRoot = repositoryRoot.appendingPathComponent("apps/irock-iOS")
+        let forbiddenFiles = try allFiles(under: appRoot).filter { forbiddenExtensions.contains($0.pathExtension) }
+        XCTAssertEqual(forbiddenFiles, [])
+    }
+
     func testPlatformImportsStayOutOfSharedPackages() throws {
         let forbiddenImports = [
             "import " + "NetworkExtension",
@@ -279,6 +309,8 @@ final class XcodeScaffoldTests: XCTestCase {
     private var requiredScaffoldPaths: [String] {
         [
             "apps/irock-iOS/irock.xcodeproj/project.pbxproj",
+            "apps/irock-iOS/Signing/LocalSigning.xcconfig.example",
+            "apps/irock-iOS/Signing/DEVICE-SMOKE.md",
             "apps/irock-iOS/irockApp/IrockApp.swift",
             "apps/irock-iOS/irockApp/ContentView.swift",
             "apps/irock-iOS/irockApp/IOSVPNManagerConfiguration.swift",
@@ -305,14 +337,15 @@ final class XcodeScaffoldTests: XCTestCase {
         return try XCTUnwrap(PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any])
     }
 
-    private func swiftFiles(under directory: URL) throws -> [URL] {
+    private func allFiles(under directory: URL) throws -> [URL] {
         guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil) else {
             return []
         }
-        return enumerator.compactMap { item in
-            guard let url = item as? URL, url.pathExtension == "swift" else { return nil }
-            return url
-        }
+        return enumerator.compactMap { $0 as? URL }
+    }
+
+    private func swiftFiles(under directory: URL) throws -> [URL] {
+        try allFiles(under: directory).filter { $0.pathExtension == "swift" }
     }
 
     private func importedModules(in file: URL) throws -> Set<String> {

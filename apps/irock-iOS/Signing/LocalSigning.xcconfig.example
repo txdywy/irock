@@ -1,0 +1,12 @@
+// Copy this file to LocalSigning.xcconfig outside version control or keep local edits uncommitted.
+// Do not commit real Apple Developer Team IDs, profile UUIDs, signing identities, or App Group IDs.
+
+IROCK_DEVELOPMENT_TEAM = YOUR_TEAM_ID
+IROCK_APP_BUNDLE_ID = com.example.irock
+IROCK_TUNNEL_BUNDLE_ID = com.example.irock.tunnel
+IROCK_APP_GROUP = group.com.example.irock
+
+// Optional local values for manual device smoke builds.
+// CODE_SIGN_STYLE = Automatic
+// PROVISIONING_PROFILE_SPECIFIER =
+// CODE_SIGN_IDENTITY = Apple Development
