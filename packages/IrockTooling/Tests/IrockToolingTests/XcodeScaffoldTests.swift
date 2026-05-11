@@ -68,6 +68,9 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(project.contains("NEPacketTunnelFlowPacketFlowIO.swift in Sources"))
         XCTAssertTrue(project.contains("PacketTunnelAppGroupStoreResolver.swift in Sources"))
         XCTAssertTrue(project.contains("IOSPacketTunnelSmokeRunner.swift in Sources"))
+        XCTAssertTrue(project.contains("PacketTunnelRuntimeSettingsConfiguration.swift in Sources"))
+        XCTAssertTrue(project.contains("PacketTunnelRuntimeSettingsFactory.swift in Sources"))
+        XCTAssertTrue(project.contains("PacketTunnelRuntimeSettingsApplicator.swift in Sources"))
         XCTAssertTrue(project.contains("irockTunnelExtension.appex in Embed App Extensions"))
         XCTAssertTrue(project.contains("relativePath = ../.."))
     }
@@ -111,6 +114,32 @@ final class XcodeScaffoldTests: XCTestCase {
         }
     }
 
+    func testPacketTunnelRuntimeSettingsFilesDeclareExpectedDefaults() throws {
+        let configuration = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/PacketTunnelRuntimeSettingsConfiguration.swift"))
+        let factory = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/PacketTunnelRuntimeSettingsFactory.swift"))
+        let applicator = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/PacketTunnelRuntimeSettingsApplicator.swift"))
+
+        XCTAssertTrue(configuration.contains("10.255.0.2"))
+        XCTAssertTrue(configuration.contains("255.255.255.0"))
+        XCTAssertTrue(configuration.contains("1.1.1.1"))
+        XCTAssertTrue(configuration.contains("8.8.8.8"))
+        XCTAssertTrue(configuration.contains("1500"))
+        XCTAssertTrue(factory.contains("NEPacketTunnelNetworkSettings"))
+        XCTAssertTrue(factory.contains("NEIPv4Settings"))
+        XCTAssertTrue(factory.contains("NEDNSSettings"))
+        XCTAssertTrue(factory.contains(".default()"))
+        XCTAssertTrue(applicator.contains("setTunnelNetworkSettings"))
+    }
+
+    func testPacketTunnelProviderAppliesSettingsBeforeSmokeRunner() throws {
+        let provider = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/PacketTunnelProvider.swift"))
+        let settingsRange = try XCTUnwrap(provider.range(of: "PacketTunnelRuntimeSettingsApplicator"))
+        let smokeRange = try XCTUnwrap(provider.range(of: "IOSPacketTunnelSmokeRunner"))
+
+        XCTAssertLessThan(settingsRange.lowerBound, smokeRange.lowerBound)
+        XCTAssertTrue(provider.contains("apply(to: self)"))
+    }
+
     private var repositoryRoot: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -131,6 +160,9 @@ final class XcodeScaffoldTests: XCTestCase {
             "apps/irock-iOS/irockTunnelExtension/NEPacketTunnelFlowPacketFlowIO.swift",
             "apps/irock-iOS/irockTunnelExtension/PacketTunnelAppGroupStoreResolver.swift",
             "apps/irock-iOS/irockTunnelExtension/IOSPacketTunnelSmokeRunner.swift",
+            "apps/irock-iOS/irockTunnelExtension/PacketTunnelRuntimeSettingsConfiguration.swift",
+            "apps/irock-iOS/irockTunnelExtension/PacketTunnelRuntimeSettingsFactory.swift",
+            "apps/irock-iOS/irockTunnelExtension/PacketTunnelRuntimeSettingsApplicator.swift",
             "apps/irock-iOS/irockTunnelExtension/Info.plist",
             "apps/irock-iOS/irockTunnelExtension/irockTunnelExtension.entitlements"
         ]
