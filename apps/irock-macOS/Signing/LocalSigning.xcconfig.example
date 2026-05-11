@@ -1,0 +1,7 @@
+// Copy this file to a local, ignored xcconfig before signing the macOS targets.
+// Do not commit real Team IDs, bundle identifiers, provisioning profile names, certificates, or secrets.
+
+IROCK_DEVELOPMENT_TEAM = YOUR_TEAM_ID
+IROCK_MAC_APP_BUNDLE_ID = com.example.irock.macos
+IROCK_MAC_TUNNEL_BUNDLE_ID = com.example.irock.macos.tunnel
+IROCK_APP_GROUP = group.com.example.irock
