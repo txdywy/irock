@@ -153,6 +153,43 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(tlsChild.requests.first?.metadata["vmessUserIDPresent"], "true")
         XCTAssertNil(tlsChild.requests.first?.metadata["vmessUserID"])
     }
+
+    func testVLESSTCPStackRoutesDisabledTLSToPlainChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let registry = RuntimeProxyStack.vlessTCP(plain: plain, tls: tlsChild)
+        let outbound = ProxyOutbound(node: makeVLESSNode(tls: .disabled), registry: registry)
+        let result = proxyResult(packetID: "tcp-1")
+
+        let connection = try await outbound.connect(result: result)
+
+        XCTAssertEqual(connection?.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(plain.requests.count, 1)
+        XCTAssertNil(plain.requests.first?.tls)
+        XCTAssertEqual(plain.requests.first?.metadata["proxyProtocol"], "vless")
+        XCTAssertEqual(plain.requests.first?.metadata["vlessUserIDPresent"], "true")
+        XCTAssertNil(plain.requests.first?.metadata["vlessUserID"])
+        XCTAssertEqual(tlsChild.requests, [])
+    }
+
+    func testVLESSTCPStackRoutesEnabledTLSToTLSChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let registry = RuntimeProxyStack.vlessTCP(plain: plain, tls: tlsChild)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let outbound = ProxyOutbound(node: makeVLESSNode(tls: tls), registry: registry)
+        let result = proxyResult(packetID: "tcp-1")
+
+        let connection = try await outbound.connect(result: result)
+
+        XCTAssertEqual(connection?.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(plain.requests, [])
+        XCTAssertEqual(tlsChild.requests.count, 1)
+        XCTAssertEqual(tlsChild.requests.first?.tls, tls)
+        XCTAssertEqual(tlsChild.requests.first?.metadata["proxyProtocol"], "vless")
+        XCTAssertEqual(tlsChild.requests.first?.metadata["vlessUserIDPresent"], "true")
+        XCTAssertNil(tlsChild.requests.first?.metadata["vlessUserID"])
+    }
 }
 
 private final class RecordingTransportAdapter: TransportAdapter, @unchecked Sendable {
@@ -212,4 +249,8 @@ private func makeNode(tls: TLSOptions) -> ProxyNode {
 
 private func makeVMessNode(tls: TLSOptions) -> ProxyNode {
     ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .vmess, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "00000000-0000-0000-0000-000000000001"), transport: .tcp, tls: tls, udpPolicy: .disabled)
+}
+
+private func makeVLESSNode(tls: TLSOptions) -> ProxyNode {
+    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .vless, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "00000000-0000-0000-0000-000000000002"), transport: .tcp, tls: tls, udpPolicy: .disabled)
 }

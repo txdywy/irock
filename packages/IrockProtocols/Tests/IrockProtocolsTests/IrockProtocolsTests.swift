@@ -121,6 +121,30 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testVLESSOpenRequestBuildsCredentialSafeMetadataAndPayload() throws {
+        let request = try VLESSOpenRequest(
+            userID: "00000000-0000-0000-0000-000000000002",
+            destination: .host("apple.com", port: 443)
+        )
+
+        XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
+        XCTAssertEqual(request.security, "none")
+        XCTAssertEqual(request.flow, "")
+        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "vless-foundation:host:apple.com:443:none:")
+        XCTAssertEqual(request.metadata["vlessUserIDPresent"], "true")
+        XCTAssertNil(request.metadata["vlessUserID"])
+        XCTAssertEqual(request.metadata["vlessDestination"], "host:apple.com:443")
+        XCTAssertEqual(request.metadata["vlessSecurity"], "none")
+        XCTAssertEqual(request.metadata["vlessFlow"], "")
+        XCTAssertFalse(request.openBytes.contains(Data("00000000-0000-0000-0000-000000000002".utf8)))
+    }
+
+    func testVLESSOpenRequestRejectsInvalidUserID() {
+        XCTAssertThrowsError(try VLESSOpenRequest(userID: "not-a-uuid", destination: .host("apple.com", port: 443))) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("invalid vless user id"))
+        }
+    }
+
     func testEstablishedProxyConnectionStoresNodeIDAndDestination() {
         let connection = EstablishedProxyConnection(
             nodeID: NodeID(rawValue: "node-1"),
@@ -332,6 +356,68 @@ final class IrockProtocolsTests: XCTestCase {
             do {
                 _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
                 XCTFail("Expected VMess validation failure")
+            } catch let error as ProxyProtocolError {
+                XCTAssertEqual(error, expectedError)
+                XCTAssertEqual(transport.requests, [])
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testVLESSProxyAdapterOpensTCPTransportAndReturnsProxyConnection() async throws {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = VLESSProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let node = makeNode(protocolType: .vless, transport: .tcp, credentialAccount: "00000000-0000-0000-0000-000000000002")
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, ProxyDestination.host("apple.com", port: 443))
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests.first?.host, "example.com")
+        XCTAssertEqual(transport.requests.first?.port, 443)
+        XCTAssertEqual(transport.requests.first?.transport, .tcp)
+        XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "vless")
+        XCTAssertEqual(transport.requests.first?.metadata["vlessUserIDPresent"], "true")
+        XCTAssertNil(transport.requests.first?.metadata["vlessUserID"])
+        XCTAssertEqual(transport.requests.first?.metadata["vlessDestination"], "host:apple.com:443")
+        XCTAssertEqual(String(data: transport.requests.first?.initialPayload ?? Data(), encoding: .utf8), "vless-foundation:host:apple.com:443:none:")
+        XCTAssertFalse((transport.requests.first?.initialPayload ?? Data()).contains(Data("00000000-0000-0000-0000-000000000002".utf8)))
+    }
+
+    func testVLESSProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = VLESSProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .trojan, transport: .tcp), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected unsupported protocol")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .unsupportedProtocol(.trojan))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testVLESSProxyAdapterRejectsInvalidConfigurationBeforeTransportOpen() async {
+        let cases: [(ProxyNode, ProxyProtocolError)] = [
+            (makeNode(protocolType: .vless, transport: .tcp, serverHost: "   ", credentialAccount: "00000000-0000-0000-0000-000000000002"), .invalidConfiguration("missing vless server host")),
+            (makeNode(protocolType: .vless, transport: .tcp, serverPort: 0, credentialAccount: "00000000-0000-0000-0000-000000000002"), .invalidConfiguration("invalid vless server port")),
+            (makeNode(protocolType: .vless, transport: .tcp, credentialAccount: "not-a-uuid"), .invalidConfiguration("invalid vless user id")),
+            (makeNode(protocolType: .vless, transport: .grpc, credentialAccount: "00000000-0000-0000-0000-000000000002"), .unsupportedTransport(.grpc))
+        ]
+
+        for (node, expectedError) in cases {
+            let transport = RecordingTransportAdapter(transport: .tcp)
+            let adapter = VLESSProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+            do {
+                _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
+                XCTFail("Expected VLESS validation failure")
             } catch let error as ProxyProtocolError {
                 XCTAssertEqual(error, expectedError)
                 XCTAssertEqual(transport.requests, [])
