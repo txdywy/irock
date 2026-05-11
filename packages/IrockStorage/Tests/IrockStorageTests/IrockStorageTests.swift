@@ -134,6 +134,28 @@ final class IrockStorageTests: XCTestCase {
         XCTAssertEqual(try appBundle.logStore.loadRecent(), [log])
     }
 
+    func testAppGroupRuntimeStoreBundleReturnsEmptyStateWhenFilesAreMissing() throws {
+        let containerURL = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(containerURL) }
+        let bundle = AppGroupRuntimeStoreDirectory(containerURL: containerURL).makeRuntimeStoreBundle()
+
+        XCTAssertNil(try bundle.snapshotStore.load())
+        XCTAssertNil(try bundle.statusStore.load())
+        XCTAssertEqual(try bundle.logStore.loadRecent(), [])
+    }
+
+    func testAppGroupRuntimeStoreBundleRespectsLogLimit() throws {
+        let containerURL = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(containerURL) }
+        let bundle = AppGroupRuntimeStoreDirectory(containerURL: containerURL).makeRuntimeStoreBundle(logLimit: 2)
+
+        try bundle.logStore.append(makeLog(id: "1", message: "first"))
+        try bundle.logStore.append(makeLog(id: "2", message: "second"))
+        try bundle.logStore.append(makeLog(id: "3", message: "third"))
+
+        XCTAssertEqual(try bundle.logStore.loadRecent().map(\.message), ["second", "third"])
+    }
+
     func testInMemoryRuntimeStatusStoreRoundTripsStatus() throws {
         let store = InMemoryRuntimeStatusStore()
         let status = makeStatus(phase: .connected, message: "Connected")
