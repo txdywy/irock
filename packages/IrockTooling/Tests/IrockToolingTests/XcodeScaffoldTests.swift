@@ -68,6 +68,7 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(project.contains("NEPacketTunnelFlowPacketFlowIO.swift in Sources"))
         XCTAssertTrue(project.contains("PacketTunnelAppGroupStoreResolver.swift in Sources"))
         XCTAssertTrue(project.contains("IOSPacketTunnelSmokeRunner.swift in Sources"))
+        XCTAssertTrue(project.contains("IOSPacketTunnelLoopRunner.swift in Sources"))
         XCTAssertTrue(project.contains("PacketTunnelRuntimeSettingsConfiguration.swift in Sources"))
         XCTAssertTrue(project.contains("PacketTunnelRuntimeSettingsFactory.swift in Sources"))
         XCTAssertTrue(project.contains("PacketTunnelRuntimeSettingsApplicator.swift in Sources"))
@@ -75,10 +76,10 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(project.contains("relativePath = ../.."))
     }
 
-    func testPacketTunnelProviderWiresSmokeRunner() throws {
+    func testPacketTunnelProviderWiresLoopRunner() throws {
         let provider = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/PacketTunnelProvider.swift"))
 
-        XCTAssertTrue(provider.contains("IOSPacketTunnelSmokeRunner"))
+        XCTAssertTrue(provider.contains("IOSPacketTunnelLoopRunner"))
         XCTAssertTrue(provider.contains("startTunnelTask"))
         XCTAssertTrue(provider.contains("packetFlow"))
         XCTAssertTrue(provider.contains("cancel()"))
@@ -98,6 +99,19 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(storeResolver.contains("group.dev.irock.shared"))
         XCTAssertTrue(smokeRunner.contains("TunnelRuntimeController.runShadowsocksTCPBatch"))
         XCTAssertTrue(smokeRunner.contains("UnsupportedTransportAdapter"))
+    }
+
+    func testPacketTunnelLoopRunnerDeclaresCancellableLongRunningBoundary() throws {
+        let loopRunner = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/IOSPacketTunnelLoopRunner.swift"))
+        let provider = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/PacketTunnelProvider.swift"))
+
+        XCTAssertTrue(loopRunner.contains("import " + "NetworkExtension"))
+        XCTAssertTrue(loopRunner.contains("IOSPacketTunnelSmokeRunner"))
+        XCTAssertTrue(loopRunner.contains("Task.isCancelled"))
+        XCTAssertTrue(loopRunner.contains("Task.sleep"))
+        XCTAssertTrue(loopRunner.contains("while !Task.isCancelled"))
+        XCTAssertTrue(provider.contains("IOSPacketTunnelLoopRunner"))
+        XCTAssertFalse(provider.contains("IOSPacketTunnelSmokeRunner().runOnce"))
     }
 
     func testNetworkExtensionImportsStayInsideTunnelExtension() throws {
@@ -131,12 +145,12 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(applicator.contains("setTunnelNetworkSettings"))
     }
 
-    func testPacketTunnelProviderAppliesSettingsBeforeSmokeRunner() throws {
+    func testPacketTunnelProviderAppliesSettingsBeforeLoopRunner() throws {
         let provider = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/PacketTunnelProvider.swift"))
         let settingsRange = try XCTUnwrap(provider.range(of: "PacketTunnelRuntimeSettingsApplicator"))
-        let smokeRange = try XCTUnwrap(provider.range(of: "IOSPacketTunnelSmokeRunner"))
+        let loopRange = try XCTUnwrap(provider.range(of: "IOSPacketTunnelLoopRunner"))
 
-        XCTAssertLessThan(settingsRange.lowerBound, smokeRange.lowerBound)
+        XCTAssertLessThan(settingsRange.lowerBound, loopRange.lowerBound)
         XCTAssertTrue(provider.contains("apply(to: self)"))
     }
 
@@ -160,6 +174,7 @@ final class XcodeScaffoldTests: XCTestCase {
             "apps/irock-iOS/irockTunnelExtension/NEPacketTunnelFlowPacketFlowIO.swift",
             "apps/irock-iOS/irockTunnelExtension/PacketTunnelAppGroupStoreResolver.swift",
             "apps/irock-iOS/irockTunnelExtension/IOSPacketTunnelSmokeRunner.swift",
+            "apps/irock-iOS/irockTunnelExtension/IOSPacketTunnelLoopRunner.swift",
             "apps/irock-iOS/irockTunnelExtension/PacketTunnelRuntimeSettingsConfiguration.swift",
             "apps/irock-iOS/irockTunnelExtension/PacketTunnelRuntimeSettingsFactory.swift",
             "apps/irock-iOS/irockTunnelExtension/PacketTunnelRuntimeSettingsApplicator.swift",
