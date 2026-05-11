@@ -13,8 +13,8 @@ struct IOSPacketTunnelLoopRunner: Sendable {
         self.loopDelayNanoseconds = loopDelayNanoseconds
     }
 
-    func runStartupBatch(packetFlow: NEPacketTunnelFlow) async throws {
-        _ = try await smokeRunner.runOnce(packetFlow: packetFlow)
+    func validateStartup() throws {
+        try smokeRunner.validateStartup()
     }
 
     func run(packetFlow: NEPacketTunnelFlow) async throws {

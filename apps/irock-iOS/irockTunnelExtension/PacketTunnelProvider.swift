@@ -6,7 +6,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     override func startTunnel(options: [String: NSObject]?) async throws {
         try await PacketTunnelRuntimeSettingsApplicator().apply(to: self)
         let loopRunner = IOSPacketTunnelLoopRunner()
-        try await loopRunner.runStartupBatch(packetFlow: packetFlow)
+        try loopRunner.validateStartup()
         let task = Task {
             try await loopRunner.run(packetFlow: packetFlow)
         }
