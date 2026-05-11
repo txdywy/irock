@@ -96,6 +96,25 @@ public struct RuntimeStoreBundle: Sendable {
     }
 }
 
+public struct AppGroupRuntimeStoreDirectory: Equatable, Sendable {
+    public let containerURL: URL
+
+    public var runtimeDirectoryURL: URL {
+        containerURL.appendingPathComponent("Runtime", isDirectory: true)
+    }
+
+    public init(containerURL: URL) {
+        self.containerURL = containerURL
+    }
+
+    public func makeRuntimeStoreBundle(
+        logLimit: Int = 200,
+        fileManager: FileManager = .default
+    ) -> RuntimeStoreBundle {
+        RuntimeStoreBundle.fileBacked(directoryURL: runtimeDirectoryURL, logLimit: logLimit, fileManager: fileManager)
+    }
+}
+
 public final class InMemoryRuntimeStatusStore: RuntimeStatusStore, @unchecked Sendable {
     private let lock = NSLock()
     private var status: RuntimeConnectionStatus?

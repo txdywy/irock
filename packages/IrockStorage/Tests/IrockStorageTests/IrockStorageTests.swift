@@ -107,6 +107,33 @@ final class IrockStorageTests: XCTestCase {
         XCTAssertEqual(try bundle.logStore.loadRecent(), [firstLog, secondLog])
     }
 
+    func testAppGroupRuntimeStoreDirectoryDerivesRuntimeDirectory() throws {
+        let containerURL = URL(fileURLWithPath: "/tmp/irock-app-group", isDirectory: true)
+        let directory = AppGroupRuntimeStoreDirectory(containerURL: containerURL)
+
+        XCTAssertEqual(directory.runtimeDirectoryURL, containerURL.appendingPathComponent("Runtime", isDirectory: true))
+    }
+
+    func testAppGroupRuntimeStoreBundlesShareStateThroughContainerDirectory() throws {
+        let containerURL = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(containerURL) }
+        let appDirectory = AppGroupRuntimeStoreDirectory(containerURL: containerURL)
+        let tunnelDirectory = AppGroupRuntimeStoreDirectory(containerURL: containerURL)
+        let appBundle = appDirectory.makeRuntimeStoreBundle(logLimit: 5)
+        let tunnelBundle = tunnelDirectory.makeRuntimeStoreBundle(logLimit: 5)
+        let snapshot = makeSnapshot(id: "snapshot-1", nodeID: "node-1", nodeName: "Demo SS", routeMode: .globalProxy)
+        let status = makeStatus(phase: .connected, message: "Connected")
+        let log = makeLog(id: "1", message: "connected")
+
+        try appBundle.snapshotStore.save(snapshot)
+        try tunnelBundle.statusStore.save(status)
+        try tunnelBundle.logStore.append(log)
+
+        XCTAssertEqual(try tunnelBundle.snapshotStore.load(), snapshot)
+        XCTAssertEqual(try appBundle.statusStore.load(), status)
+        XCTAssertEqual(try appBundle.logStore.loadRecent(), [log])
+    }
+
     func testInMemoryRuntimeStatusStoreRoundTripsStatus() throws {
         let store = InMemoryRuntimeStatusStore()
         let status = makeStatus(phase: .connected, message: "Connected")
