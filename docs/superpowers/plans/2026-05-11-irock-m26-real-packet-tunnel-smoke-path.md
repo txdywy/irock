@@ -161,7 +161,7 @@ struct NEPacketTunnelFlowPacketFlowIO: PacketFlowIO {
         let packets = results.compactMap { result -> NEPacket? in
             switch result.action {
             case .direct, .proxy:
-                return NEPacket(data: Data(result.packet.bytes), protocolFamily: AF_INET as NSNumber)
+                return NEPacket(data: Data(result.packet.bytes), protocolFamily: sa_family_t(AF_INET))
             case .reject, .drop:
                 return nil
             }
