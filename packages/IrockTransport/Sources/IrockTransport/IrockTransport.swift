@@ -128,6 +128,20 @@ public protocol TCPDialer: Sendable {
     func open(host: String, port: Int, initialPayload: Data?) async throws -> TCPDialResult
 }
 
+public struct QUICDialResult: Equatable, Sendable {
+    public let host: String
+    public let port: Int
+
+    public init(host: String, port: Int) {
+        self.host = host
+        self.port = port
+    }
+}
+
+public protocol QUICDialer: Sendable {
+    func open(host: String, port: Int, metadata: [String: String], initialPayload: Data?) async throws -> QUICDialResult
+}
+
 public struct TCPTransportAdapter<Dialer: TCPDialer>: TransportAdapter {
     public let supportedTransport: TransportType = .tcp
     private let dialer: Dialer
@@ -215,6 +229,82 @@ public struct TCPTLSTransportAdapter<Plain: TransportAdapter, TLS: TransportAdap
             return try await tls.open(request: request)
         }
         return try await plain.open(request: request)
+    }
+}
+
+public struct QUICTransportAdapter<Dialer: QUICDialer>: TransportAdapter {
+    public let supportedTransport: TransportType = .quic
+    private let dialer: Dialer
+
+    public init(dialer: Dialer) {
+        self.dialer = dialer
+    }
+
+    public func open(request: TransportRequest) async throws -> any TransportConnection {
+        let descriptor = try descriptor(for: request)
+        let result = try await dialer.open(
+            host: descriptor.host,
+            port: request.port,
+            metadata: descriptor.metadata,
+            initialPayload: descriptor.initialPayload(appending: request.initialPayload)
+        )
+        return EstablishedTransportConnection(host: result.host, port: result.port, transport: .quic)
+    }
+
+    private func descriptor(for request: TransportRequest) throws -> QUICOpenDescriptor {
+        guard request.transport == .quic else {
+            throw TransportError.unsupportedTransport(request.transport)
+        }
+        let host = request.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else {
+            throw TransportError.invalidConfiguration("missing quic host")
+        }
+        guard (1...65_535).contains(request.port) else {
+            throw TransportError.invalidConfiguration("invalid quic port")
+        }
+        let serverName = request.metadata["quicServerName", default: host].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !serverName.isEmpty else {
+            throw TransportError.invalidConfiguration("invalid quic server name")
+        }
+        let protocolName = request.metadata["quicProtocol"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if request.metadata.keys.contains("quicProtocol"), protocolName.isEmpty {
+            throw TransportError.invalidConfiguration("invalid quic protocol")
+        }
+        let metadataALPN = request.metadata["quicALPN"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if request.metadata.keys.contains("quicALPN"), metadataALPN?.isEmpty != false {
+            throw TransportError.invalidConfiguration("invalid quic alpn")
+        }
+        let alpn = metadataALPN?.isEmpty == false ? metadataALPN! : request.tls?.alpn.joined(separator: ",") ?? ""
+        return QUICOpenDescriptor(host: host, serverName: serverName, protocolName: protocolName, alpn: alpn)
+    }
+}
+
+private struct QUICOpenDescriptor {
+    let host: String
+    let serverName: String
+    let protocolName: String
+    let alpn: String
+
+    var metadata: [String: String] {
+        var metadata = [
+            "quicServerName": serverName,
+            "quicHandshake": "foundation"
+        ]
+        if !protocolName.isEmpty {
+            metadata["quicProtocol"] = protocolName
+        }
+        if !alpn.isEmpty {
+            metadata["quicALPN"] = alpn
+        }
+        return metadata
+    }
+
+    func initialPayload(appending payload: Data?) -> Data {
+        var data = Data("quic-foundation:\(serverName):\(protocolName):\(alpn)\n".utf8)
+        if let payload {
+            data.append(payload)
+        }
+        return data
     }
 }
 

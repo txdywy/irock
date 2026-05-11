@@ -788,6 +788,101 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(connection.port, 80)
         XCTAssertEqual(connection.transport, .tcp)
     }
+
+    func testQUICTransportAdapterDialsWithMetadataAndPayload() async throws {
+        let dialer = RecordingQUICDialer(connectionHost: "connected.example.com")
+        let adapter = QUICTransportAdapter(dialer: dialer)
+        let payload = Data("protocol-open".utf8)
+        let request = TransportRequest(
+            host: " example.com ",
+            port: 443,
+            transport: .quic,
+            metadata: ["quicServerName": " quic.example.com ", "quicProtocol": "hysteria2", "quicALPN": "h3"],
+            initialPayload: payload
+        )
+
+        let connection = try await adapter.open(request: request)
+
+        XCTAssertEqual(connection.host, "connected.example.com")
+        XCTAssertEqual(connection.port, 443)
+        XCTAssertEqual(connection.transport, .quic)
+        XCTAssertEqual(dialer.requests.count, 1)
+        XCTAssertEqual(dialer.requests.first?.host, "example.com")
+        XCTAssertEqual(dialer.requests.first?.port, 443)
+        XCTAssertEqual(dialer.requests.first?.metadata["quicServerName"], "quic.example.com")
+        XCTAssertEqual(dialer.requests.first?.metadata["quicProtocol"], "hysteria2")
+        XCTAssertEqual(dialer.requests.first?.metadata["quicALPN"], "h3")
+        XCTAssertEqual(dialer.requests.first?.metadata["quicHandshake"], "foundation")
+        XCTAssertEqual(String(data: dialer.requests.first?.initialPayload ?? Data(), encoding: .utf8), "quic-foundation:quic.example.com:hysteria2:h3\nprotocol-open")
+    }
+
+    func testQUICTransportAdapterDefaultsServerNameAndALPNMetadata() async throws {
+        let dialer = RecordingQUICDialer()
+        let adapter = QUICTransportAdapter(dialer: dialer)
+        let tls = TLSOptions(enabled: true, serverName: nil, allowInsecure: false, alpn: ["h3", "hq-29"], fingerprint: nil, reality: nil)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .quic, tls: tls)
+
+        _ = try await adapter.open(request: request)
+
+        XCTAssertEqual(dialer.requests.first?.metadata["quicServerName"], "example.com")
+        XCTAssertNil(dialer.requests.first?.metadata["quicProtocol"])
+        XCTAssertEqual(dialer.requests.first?.metadata["quicALPN"], "h3,hq-29")
+        XCTAssertEqual(String(data: dialer.requests.first?.initialPayload ?? Data(), encoding: .utf8), "quic-foundation:example.com::h3,hq-29\n")
+    }
+
+    func testQUICTransportAdapterRejectsInvalidConfigurationBeforeDialing() async {
+        let cases: [(TransportRequest, TransportError)] = [
+            (TransportRequest(host: "example.com", port: 443, transport: .tcp), .unsupportedTransport(.tcp)),
+            (TransportRequest(host: "   ", port: 443, transport: .quic), .invalidConfiguration("missing quic host")),
+            (TransportRequest(host: "example.com", port: 0, transport: .quic), .invalidConfiguration("invalid quic port")),
+            (TransportRequest(host: "example.com", port: 443, transport: .quic, metadata: ["quicServerName": "   "]), .invalidConfiguration("invalid quic server name")),
+            (TransportRequest(host: "example.com", port: 443, transport: .quic, metadata: ["quicProtocol": "   "]), .invalidConfiguration("invalid quic protocol")),
+            (TransportRequest(host: "example.com", port: 443, transport: .quic, metadata: ["quicALPN": "   "]), .invalidConfiguration("invalid quic alpn"))
+        ]
+
+        for (request, expectedError) in cases {
+            let dialer = RecordingQUICDialer()
+            let adapter = QUICTransportAdapter(dialer: dialer)
+            do {
+                _ = try await adapter.open(request: request)
+                XCTFail("Expected QUIC validation failure")
+            } catch let error as TransportError {
+                XCTAssertEqual(error, expectedError)
+                XCTAssertEqual(dialer.requests, [])
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testQUICTransportAdapterPropagatesDialerTransportError() async {
+        let adapter = QUICTransportAdapter(dialer: FailingQUICDialer(error: .quicHandshakeFailed("handshake failed")))
+        let request = TransportRequest(host: "example.com", port: 443, transport: .quic)
+
+        do {
+            _ = try await adapter.open(request: request)
+            XCTFail("Expected QUIC dialer failure")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .quicHandshakeFailed("handshake failed"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testTransportAdapterRegistryCanSelectQUICTransportAdapter() async throws {
+        let dialer = RecordingQUICDialer(connectionHost: "quic.example.com")
+        let adapter = QUICTransportAdapter(dialer: dialer)
+        let registry = TransportAdapterRegistry(adapters: [adapter])
+        let selected = registry.adapter(for: .quic)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .quic)
+
+        let connection = try await selected.open(request: request)
+
+        XCTAssertEqual(selected.supportedTransport, .quic)
+        XCTAssertEqual(connection.host, "quic.example.com")
+        XCTAssertEqual(connection.transport, .quic)
+        XCTAssertEqual(dialer.requests.count, 1)
+    }
 }
 
 private struct TransportAdapterRequest: Equatable {
@@ -847,6 +942,48 @@ private struct FailingTransportAdapter: TransportAdapter {
     }
 
     func open(request: TransportRequest) async throws -> any TransportConnection {
+        throw error
+    }
+}
+
+private struct QUICDialRequest: Equatable {
+    let host: String
+    let port: Int
+    let metadata: [String: String]
+    let initialPayload: Data?
+}
+
+private final class RecordingQUICDialer: QUICDialer, @unchecked Sendable {
+    private let lock = NSLock()
+    private let connectionHost: String
+    private var storedRequests: [QUICDialRequest] = []
+
+    init(connectionHost: String = "example.com") {
+        self.connectionHost = connectionHost
+    }
+
+    var requests: [QUICDialRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedRequests
+    }
+
+    func open(host: String, port: Int, metadata: [String: String], initialPayload: Data?) async throws -> QUICDialResult {
+        record(host: host, port: port, metadata: metadata, initialPayload: initialPayload)
+        return QUICDialResult(host: connectionHost, port: port)
+    }
+
+    private func record(host: String, port: Int, metadata: [String: String], initialPayload: Data?) {
+        lock.lock()
+        defer { lock.unlock() }
+        storedRequests.append(QUICDialRequest(host: host, port: port, metadata: metadata, initialPayload: initialPayload))
+    }
+}
+
+private struct FailingQUICDialer: QUICDialer {
+    let error: TransportError
+
+    func open(host: String, port: Int, metadata: [String: String], initialPayload: Data?) async throws -> QUICDialResult {
         throw error
     }
 }
