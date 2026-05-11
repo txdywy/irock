@@ -15,6 +15,14 @@ public enum PacketAction: Equatable, Sendable {
     case drop(PacketDropReason)
 }
 
+public enum UDPForwardingDecision: Equatable, Sendable {
+    case direct(FlowKey)
+    case proxy(FlowKey)
+    case unsupported(FlowKey)
+    case reject(FlowKey)
+    case drop(PacketDropReason)
+}
+
 public struct PacketProcessingResult: Equatable, Sendable {
     public let packet: Packet
     public let parsedPacket: ParsedPacket?
@@ -32,6 +40,21 @@ public struct PacketProcessingResult: Equatable, Sendable {
 
     public func withResponsePacketBytes(_ bytes: [UInt8]?) -> PacketProcessingResult {
         PacketProcessingResult(packet: packet, parsedPacket: parsedPacket, flowKey: flowKey, action: action, responsePacketBytes: bytes)
+    }
+
+    public func udpForwardingDecision(udpPolicy: UDPPolicy) -> UDPForwardingDecision? {
+        switch action {
+        case let .direct(flowKey) where parsedPacket?.transportProtocol == .udp:
+            return .direct(flowKey)
+        case let .proxy(flowKey) where parsedPacket?.transportProtocol == .udp:
+            return udpPolicy == .enabled ? .proxy(flowKey) : .unsupported(flowKey)
+        case let .reject(flowKey) where parsedPacket?.transportProtocol == .udp:
+            return .reject(flowKey)
+        case let .drop(reason) where parsedPacket == nil:
+            return .drop(reason)
+        default:
+            return nil
+        }
     }
 }
 

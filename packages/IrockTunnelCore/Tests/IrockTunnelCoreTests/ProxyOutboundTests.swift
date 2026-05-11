@@ -62,6 +62,22 @@ final class ProxyOutboundTests: XCTestCase {
         }
     }
 
+    func testConnectBuildsUDPProxyRequestWhenNodeEnablesUDP() async throws {
+        let adapter = RecordingProxyAdapter(protocolType: .trojan)
+        let outbound = ProxyOutbound(node: makeNode(protocolType: .trojan, udpPolicy: .enabled), registry: ProxyAdapterRegistry(adapters: [adapter]))
+        var processor = PacketProcessor(configuration: configuration(routeMode: .globalProxy))
+        let packet = Packet.ipv4UDP(id: "udp-enabled", source: .v4(10, 0, 0, 2), destination: .v4(1, 1, 1, 1), sourcePort: 55_555, destinationPort: 53)
+        let result = processor.process(packet)
+
+        let connection = try await outbound.connect(result: result)
+
+        XCTAssertEqual(connection?.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection?.destination, .ipv4("1.1.1.1", port: 53))
+        XCTAssertEqual(adapter.requests.map(\.destination), [.ipv4("1.1.1.1", port: 53)])
+        XCTAssertEqual(adapter.requests.first?.metadata["packetID"], "udp-enabled")
+        XCTAssertEqual(adapter.requests.first?.metadata["transportProtocol"], "udp")
+    }
+
     func testConnectReturnsNilForNonProxyResults() async throws {
         let adapter = RecordingProxyAdapter(protocolType: .trojan)
         let outbound = ProxyOutbound(node: makeNode(protocolType: .trojan), registry: ProxyAdapterRegistry(adapters: [adapter]))
@@ -79,8 +95,8 @@ final class ProxyOutboundTests: XCTestCase {
         TunnelRuntimeConfiguration(snapshot: RuntimeSnapshot(id: SnapshotID(rawValue: "snapshot-1"), selectedNode: makeNode(protocolType: .trojan), routeMode: routeMode, logLevel: .user), routingEngine: RoutingEngine(rules: [.final(.proxy)]), batchLimit: 16, flowLimit: 32)
     }
 
-    private func makeNode(protocolType: ProxyProtocolType) -> ProxyNode {
-        ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: protocolType, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .tcp, tls: .disabled, udpPolicy: .disabled)
+    private func makeNode(protocolType: ProxyProtocolType, udpPolicy: UDPPolicy = .disabled) -> ProxyNode {
+        ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: protocolType, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .tcp, tls: .disabled, udpPolicy: udpPolicy)
     }
 }
 

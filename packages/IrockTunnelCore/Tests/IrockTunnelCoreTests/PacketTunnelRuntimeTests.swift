@@ -279,6 +279,43 @@ final class PacketTunnelRuntimeTests: XCTestCase {
         }
     }
 
+    func testRuntimePublishesFailedStatusAndLogWhenUDPProxyIsUnsupported() async throws {
+        let udpPacket = Packet.ipv4UDP(id: "udp-unsupported", source: .v4(10, 0, 0, 2), destination: .v4(1, 1, 1, 1), sourcePort: 55_555, destinationPort: 53)
+        let reader = InMemoryPacketReader(packets: [udpPacket])
+        let writer = InMemoryPacketWriter()
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+        let reporter = TunnelRuntimeReporter(statusStore: statusStore, logStore: logStore)
+        let runtime = PacketTunnelRuntime(
+            reader: reader,
+            writer: writer,
+            configuration: TunnelRuntimeConfiguration(
+                snapshot: snapshot(routeMode: .globalProxy),
+                routingEngine: RoutingEngine(rules: [.final(.proxy)]),
+                proxyAdapterRegistry: ProxyAdapterRegistry(adapters: [RuntimeRecordingProxyAdapter(protocolType: .trojan)]),
+                batchLimit: 16,
+                flowLimit: 32
+            ),
+            reporter: reporter
+        )
+
+        do {
+            _ = try await runtime.runOnce()
+            XCTFail("Expected UDP unsupported")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .udpUnsupported)
+            let status = try XCTUnwrap(statusStore.load())
+            XCTAssertEqual(status.phase, .failed)
+            XCTAssertEqual(status.selectedNodeID, NodeID(rawValue: "node-1"))
+            XCTAssertEqual(status.selectedNodeName, "Demo")
+            XCTAssertEqual(status.message, "Proxy adapter failed: UDP unsupported")
+            XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Proxy adapter failed: UDP unsupported"])
+            XCTAssertEqual(writer.writtenResults, [])
+        } catch {
+            XCTFail("Expected proxy protocol error, got \(error)")
+        }
+    }
+
     func testRuntimePublishesFailedStatusAndLogWhenProxyAdapterThrows() async throws {
         let validPacket = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
         let reader = InMemoryPacketReader(packets: [validPacket])
