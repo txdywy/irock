@@ -194,3 +194,21 @@ public struct TLSTransportAdapter<Underlying: TransportAdapter>: TransportAdapte
         }
     }
 }
+
+public struct TCPTLSTransportAdapter<Plain: TransportAdapter, TLS: TransportAdapter>: TransportAdapter {
+    public let supportedTransport: TransportType = .tcp
+    private let plain: Plain
+    private let tls: TLS
+
+    public init(plain: Plain, tls: TLS) {
+        self.plain = plain
+        self.tls = tls
+    }
+
+    public func open(request: TransportRequest) async throws -> any TransportConnection {
+        if request.tls?.enabled == true {
+            return try await tls.open(request: request)
+        }
+        return try await plain.open(request: request)
+    }
+}

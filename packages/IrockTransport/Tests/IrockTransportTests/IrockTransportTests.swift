@@ -396,6 +396,46 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(connection.port, 443)
         XCTAssertEqual(connection.transport, .tcp)
     }
+
+    func testTCPTLSTransportAdapterReportsTCPTransport() {
+        let adapter = TCPTLSTransportAdapter(
+            plain: RecordingTransportAdapter(transport: .tcp),
+            tls: RecordingTransportAdapter(transport: .tcp)
+        )
+
+        XCTAssertEqual(adapter.supportedTransport, .tcp)
+    }
+
+    func testTCPTLSTransportAdapterRoutesPlainTCPToPlainChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp, connectionHost: "plain.example.com")
+        let tls = RecordingTransportAdapter(transport: .tcp, connectionHost: "tls.example.com")
+        let adapter = TCPTLSTransportAdapter(plain: plain, tls: tls)
+        let request = TransportRequest(host: "example.com", port: 80, transport: .tcp, metadata: ["mode": "plain"])
+
+        let connection = try await adapter.open(request: request)
+
+        XCTAssertEqual(connection.host, "plain.example.com")
+        XCTAssertEqual(connection.port, 80)
+        XCTAssertEqual(connection.transport, .tcp)
+        XCTAssertEqual(plain.requests, [TransportAdapterRequest(host: "example.com", port: 80, transport: .tcp, tls: nil, metadata: ["mode": "plain"])])
+        XCTAssertEqual(tls.requests, [])
+    }
+
+    func testTCPTLSTransportAdapterRoutesEnabledTLSToTLSChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp, connectionHost: "plain.example.com")
+        let tlsChild = RecordingTransportAdapter(transport: .tcp, connectionHost: "tls.example.com")
+        let adapter = TCPTLSTransportAdapter(plain: plain, tls: tlsChild)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .tcp, tls: tls, metadata: ["mode": "tls"])
+
+        let connection = try await adapter.open(request: request)
+
+        XCTAssertEqual(connection.host, "tls.example.com")
+        XCTAssertEqual(connection.port, 443)
+        XCTAssertEqual(connection.transport, .tcp)
+        XCTAssertEqual(plain.requests, [])
+        XCTAssertEqual(tlsChild.requests, [TransportAdapterRequest(host: "example.com", port: 443, transport: .tcp, tls: tls, metadata: ["mode": "tls"])])
+    }
 }
 
 private struct TransportAdapterRequest: Equatable {
