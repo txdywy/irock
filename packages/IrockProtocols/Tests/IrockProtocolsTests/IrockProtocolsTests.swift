@@ -97,6 +97,30 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testVMessOpenRequestBuildsStableMetadataAndPayload() throws {
+        let request = try VMessOpenRequest(
+            userID: "00000000-0000-0000-0000-000000000001",
+            destination: .host("apple.com", port: 443)
+        )
+
+        XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
+        XCTAssertEqual(request.security, "auto")
+        XCTAssertEqual(request.alterID, 0)
+        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "vmess-foundation:host:apple.com:443:auto:0")
+        XCTAssertEqual(request.metadata["vmessUserIDPresent"], "true")
+        XCTAssertEqual(request.metadata["vmessDestination"], "host:apple.com:443")
+        XCTAssertEqual(request.metadata["vmessSecurity"], "auto")
+        XCTAssertEqual(request.metadata["vmessAlterID"], "0")
+        XCTAssertNil(request.metadata["vmessUserID"])
+        XCTAssertFalse(request.openBytes.contains(Data("00000000-0000-0000-0000-000000000001".utf8)))
+    }
+
+    func testVMessOpenRequestRejectsInvalidUserID() {
+        XCTAssertThrowsError(try VMessOpenRequest(userID: "not-a-uuid", destination: .host("apple.com", port: 443))) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("invalid vmess user id"))
+        }
+    }
+
     func testEstablishedProxyConnectionStoresNodeIDAndDestination() {
         let connection = EstablishedProxyConnection(
             nodeID: NodeID(rawValue: "node-1"),
@@ -252,6 +276,68 @@ final class IrockProtocolsTests: XCTestCase {
             XCTAssertEqual(transport.requests, [])
         } catch {
             XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testVMessProxyAdapterOpensTCPTransportAndReturnsProxyConnection() async throws {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = VMessProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let node = makeNode(protocolType: .vmess, transport: .tcp, credentialAccount: "00000000-0000-0000-0000-000000000001")
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, ProxyDestination.host("apple.com", port: 443))
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests.first?.host, "example.com")
+        XCTAssertEqual(transport.requests.first?.port, 443)
+        XCTAssertEqual(transport.requests.first?.transport, .tcp)
+        XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "vmess")
+        XCTAssertEqual(transport.requests.first?.metadata["vmessUserIDPresent"], "true")
+        XCTAssertNil(transport.requests.first?.metadata["vmessUserID"])
+        XCTAssertEqual(transport.requests.first?.metadata["vmessDestination"], "host:apple.com:443")
+        XCTAssertEqual(String(data: transport.requests.first?.initialPayload ?? Data(), encoding: .utf8), "vmess-foundation:host:apple.com:443:auto:0")
+        XCTAssertFalse((transport.requests.first?.initialPayload ?? Data()).contains(Data("00000000-0000-0000-0000-000000000001".utf8)))
+    }
+
+    func testVMessProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = VMessProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .trojan, transport: .tcp), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected unsupported protocol")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .unsupportedProtocol(.trojan))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testVMessProxyAdapterRejectsInvalidConfigurationBeforeTransportOpen() async {
+        let cases: [(ProxyNode, ProxyProtocolError)] = [
+            (makeNode(protocolType: .vmess, transport: .tcp, serverHost: "   ", credentialAccount: "00000000-0000-0000-0000-000000000001"), .invalidConfiguration("missing vmess server host")),
+            (makeNode(protocolType: .vmess, transport: .tcp, serverPort: 0, credentialAccount: "00000000-0000-0000-0000-000000000001"), .invalidConfiguration("invalid vmess server port")),
+            (makeNode(protocolType: .vmess, transport: .tcp, credentialAccount: "not-a-uuid"), .invalidConfiguration("invalid vmess user id")),
+            (makeNode(protocolType: .vmess, transport: .grpc, credentialAccount: "00000000-0000-0000-0000-000000000001"), .unsupportedTransport(.grpc))
+        ]
+
+        for (node, expectedError) in cases {
+            let transport = RecordingTransportAdapter(transport: .tcp)
+            let adapter = VMessProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+            do {
+                _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
+                XCTFail("Expected VMess validation failure")
+            } catch let error as ProxyProtocolError {
+                XCTAssertEqual(error, expectedError)
+                XCTAssertEqual(transport.requests, [])
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
         }
     }
 
