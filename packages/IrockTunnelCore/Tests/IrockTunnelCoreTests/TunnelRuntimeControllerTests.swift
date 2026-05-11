@@ -148,6 +148,37 @@ final class TunnelRuntimeControllerTests: XCTestCase {
         }
     }
 
+    func testRunShadowsocksTCPBatchReportsRuntimeStoreFailureWhenSnapshotLoadThrows() async throws {
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+
+        do {
+            _ = try await TunnelRuntimeController.runShadowsocksTCPBatch(
+                snapshotStore: ControllerFailingLoadRuntimeSnapshotStore(),
+                flow: ControllerRecordingPacketFlowIO(packets: []),
+                statusStore: statusStore,
+                logStore: logStore,
+                plain: ControllerRecordingTransportAdapter(transport: .tcp),
+                tls: ControllerRecordingTransportAdapter(transport: .tcp),
+                credentialResolver: TestShadowsocksCredentialResolver(),
+                batchLimit: 16,
+                flowLimit: 32
+            )
+            XCTFail("Expected runtime store failure")
+        } catch ControllerRuntimeStoreError.failed {
+            let status = try XCTUnwrap(statusStore.load())
+            XCTAssertEqual(status.phase, .failed)
+            XCTAssertNil(status.selectedNodeID)
+            XCTAssertNil(status.selectedNodeName)
+            XCTAssertEqual(status.message, "Runtime store unavailable")
+            let logs = try logStore.loadRecent()
+            XCTAssertEqual(logs.map(\.message), ["Runtime store unavailable"])
+            XCTAssertEqual(logs.map(\.phase), [.failed])
+        } catch {
+            XCTFail("Expected runtime store failure, got \(error)")
+        }
+    }
+
     func testRunShadowsocksTCPBatchLoadsSnapshotAndRunsPacketFlowBatch() async throws {
         let snapshotStore = InMemoryRuntimeSnapshotStore()
         try snapshotStore.save(controllerSnapshot(tls: .disabled))
@@ -287,6 +318,14 @@ private struct ControllerFailingWritePacketFlowIO: PacketFlowIO {
 
     func writePackets(_ results: [PacketProcessingResult]) async throws {
         throw error
+    }
+}
+
+private final class ControllerFailingLoadRuntimeSnapshotStore: RuntimeSnapshotStore, @unchecked Sendable {
+    func save(_ snapshot: RuntimeSnapshot) throws {}
+
+    func load() throws -> RuntimeSnapshot? {
+        throw ControllerRuntimeStoreError.failed
     }
 }
 

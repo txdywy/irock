@@ -116,6 +116,36 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(provider.contains("cancel()"))
     }
 
+    func testPacketTunnelProviderReportsStoppedLifecycle() throws {
+        let provider = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/PacketTunnelProvider.swift"))
+
+        XCTAssertTrue(provider.contains("reportStoppedLifecycle"))
+        XCTAssertTrue(provider.contains("PacketTunnelAppGroupStoreResolver"))
+        XCTAssertTrue(provider.contains("TunnelRuntimeReporter"))
+        XCTAssertTrue(provider.contains("reportStopped()"))
+        XCTAssertTrue(provider.contains("try await task.value"))
+    }
+
+    func testPacketTunnelSmokeRunnerReportsRuntimeStoreUnavailableDuringStartupValidation() throws {
+        let smokeRunner = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/IOSPacketTunnelSmokeRunner.swift"))
+
+        XCTAssertTrue(smokeRunner.contains("reportRuntimeStoreUnavailable"))
+        XCTAssertTrue(smokeRunner.contains("TunnelRuntimeReporter"))
+        XCTAssertTrue(smokeRunner.contains("catch TunnelRuntimeControllerError.missingRuntimeSnapshot"))
+    }
+
+    func testM35AlphaSmokeRunbookDocumentsDiagnosticExpectations() throws {
+        let runbook = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/Signing/M35-ALPHA-SMOKE.md"))
+
+        XCTAssertTrue(runbook.contains("Runtime snapshot unavailable"))
+        XCTAssertTrue(runbook.contains("Runtime store unavailable"))
+        XCTAssertTrue(runbook.contains("Proxy adapter failed"))
+        XCTAssertTrue(runbook.contains("Packet batch failed"))
+        XCTAssertTrue(runbook.contains("Tunnel stopped"))
+        XCTAssertTrue(runbook.contains("External blocker"))
+        XCTAssertTrue(runbook.contains("Do not commit"))
+    }
+
     func testContainerAppDeclaresVPNManagerBoundary() throws {
         let configuration = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockApp/IOSVPNManagerConfiguration.swift"))
         let manager = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockApp/IOSVPNManager.swift"))
@@ -311,6 +341,7 @@ final class XcodeScaffoldTests: XCTestCase {
             "apps/irock-iOS/irock.xcodeproj/project.pbxproj",
             "apps/irock-iOS/Signing/LocalSigning.xcconfig.example",
             "apps/irock-iOS/Signing/DEVICE-SMOKE.md",
+            "apps/irock-iOS/Signing/M35-ALPHA-SMOKE.md",
             "apps/irock-iOS/irockApp/IrockApp.swift",
             "apps/irock-iOS/irockApp/ContentView.swift",
             "apps/irock-iOS/irockApp/IOSVPNManagerConfiguration.swift",

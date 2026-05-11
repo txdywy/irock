@@ -23,9 +23,17 @@ struct IOSPacketTunnelSmokeRunner: Sendable {
 
     func validateStartup() throws {
         let stores = try storeResolver.makeRuntimeStoreBundle()
-        guard try stores.snapshotStore.load() != nil else {
-            reportMissingSnapshot(stores: stores)
+        do {
+            guard try stores.snapshotStore.load() != nil else {
+                reportMissingSnapshot(stores: stores)
+                throw TunnelRuntimeControllerError.missingRuntimeSnapshot
+            }
+        } catch TunnelRuntimeControllerError.missingRuntimeSnapshot {
             throw TunnelRuntimeControllerError.missingRuntimeSnapshot
+        } catch {
+            let reporter = TunnelRuntimeReporter(statusStore: stores.statusStore, logStore: stores.logStore)
+            try? reporter.reportRuntimeStoreUnavailable()
+            throw error
         }
     }
 

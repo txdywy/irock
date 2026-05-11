@@ -20,9 +20,19 @@ public struct TunnelRuntimeController: Sendable {
         batchLimit: Int,
         flowLimit: Int
     ) async throws -> PacketTunnelRuntimeSummary {
-        guard let snapshot = try snapshotStore.load() else {
-            reportMissingSnapshot(statusStore: statusStore, logStore: logStore)
+        let snapshot: RuntimeSnapshot
+        do {
+            guard let loadedSnapshot = try snapshotStore.load() else {
+                reportMissingSnapshot(statusStore: statusStore, logStore: logStore)
+                throw TunnelRuntimeControllerError.missingRuntimeSnapshot
+            }
+            snapshot = loadedSnapshot
+        } catch TunnelRuntimeControllerError.missingRuntimeSnapshot {
             throw TunnelRuntimeControllerError.missingRuntimeSnapshot
+        } catch {
+            let reporter = TunnelRuntimeReporter(statusStore: statusStore, logStore: logStore)
+            try? reporter.reportRuntimeStoreUnavailable()
+            throw error
         }
         let io = PacketFlowRuntimeIO(flow: flow, batchLimit: batchLimit)
         let runtime = try TunnelRuntimeBootstrap.shadowsocksTCP(

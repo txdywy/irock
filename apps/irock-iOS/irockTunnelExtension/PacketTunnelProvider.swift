@@ -1,3 +1,4 @@
+import IrockTunnelCore
 import NetworkExtension
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
@@ -14,7 +15,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func stopTunnel(with reason: NEProviderStopReason) async {
-        startTunnelTask?.cancel()
+        let task = startTunnelTask
+        task?.cancel()
         startTunnelTask = nil
+        if let task {
+            do {
+                try await task.value
+            } catch {}
+        }
+        reportStoppedLifecycle()
+    }
+
+    private func reportStoppedLifecycle() {
+        guard let stores = try? PacketTunnelAppGroupStoreResolver().makeRuntimeStoreBundle() else {
+            return
+        }
+        let reporter = TunnelRuntimeReporter(statusStore: stores.statusStore, logStore: stores.logStore)
+        try? reporter.reportStopped()
     }
 }
