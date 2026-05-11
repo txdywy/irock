@@ -118,6 +118,75 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(connection.host, "second.example.com")
     }
 
+    func testTCPTransportAdapterRejectsNonTCPBeforeDialing() async {
+        let dialer = RecordingTCPDialer()
+        let adapter = TCPTransportAdapter(dialer: dialer)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .grpc)
+
+        do {
+            _ = try await adapter.open(request: request)
+            XCTFail("Expected unsupported transport")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .unsupportedTransport(.grpc))
+            XCTAssertEqual(dialer.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testTCPTransportAdapterRejectsEmptyHostBeforeDialing() async {
+        let dialer = RecordingTCPDialer()
+        let adapter = TCPTransportAdapter(dialer: dialer)
+        let request = TransportRequest(host: "   ", port: 443, transport: .tcp)
+
+        do {
+            _ = try await adapter.open(request: request)
+            XCTFail("Expected invalid configuration")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .invalidConfiguration("missing tcp host"))
+            XCTAssertEqual(dialer.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testTCPTransportAdapterRejectsInvalidPortBeforeDialing() async {
+        let dialer = RecordingTCPDialer()
+        let adapter = TCPTransportAdapter(dialer: dialer)
+
+        for port in [0, 65_536] {
+            let request = TransportRequest(host: "example.com", port: port, transport: .tcp)
+
+            do {
+                _ = try await adapter.open(request: request)
+                XCTFail("Expected invalid configuration")
+            } catch let error as TransportError {
+                XCTAssertEqual(error, .invalidConfiguration("invalid tcp port"))
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+
+        XCTAssertEqual(dialer.requests, [])
+    }
+
+    func testTCPTransportAdapterRejectsTLSBeforeDialing() async {
+        let dialer = RecordingTCPDialer()
+        let adapter = TCPTransportAdapter(dialer: dialer)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .tcp, tls: tls)
+
+        do {
+            _ = try await adapter.open(request: request)
+            XCTFail("Expected unsupported transport")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .unsupportedTransport(.tcp))
+            XCTAssertEqual(dialer.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testTCPTransportAdapterReportsSupportedTransport() {
         let adapter = TCPTransportAdapter(dialer: RecordingTCPDialer())
 
@@ -135,6 +204,34 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(connection.port, 443)
         XCTAssertEqual(connection.transport, .tcp)
         XCTAssertEqual(dialer.requests, [TCPDialRequest(host: "example.com", port: 443)])
+    }
+
+    func testTCPTransportAdapterPropagatesDialerTransportError() async {
+        let adapter = TCPTransportAdapter(dialer: FailingTCPDialer(error: .tcpConnectFailed("connection refused")))
+        let request = TransportRequest(host: "example.com", port: 443, transport: .tcp)
+
+        do {
+            _ = try await adapter.open(request: request)
+            XCTFail("Expected dialer failure")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .tcpConnectFailed("connection refused"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testTransportAdapterRegistryCanSelectTCPTransportAdapter() async throws {
+        let adapter = TCPTransportAdapter(dialer: RecordingTCPDialer())
+        let registry = TransportAdapterRegistry(adapters: [adapter])
+        let selected = registry.adapter(for: .tcp)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .tcp)
+
+        let connection = try await selected.open(request: request)
+
+        XCTAssertEqual(selected.supportedTransport, .tcp)
+        XCTAssertEqual(connection.host, "example.com")
+        XCTAssertEqual(connection.port, 443)
+        XCTAssertEqual(connection.transport, .tcp)
     }
 }
 
@@ -176,5 +273,13 @@ private final class RecordingTCPDialer: TCPDialer, @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         storedRequests.append(TCPDialRequest(host: host, port: port))
+    }
+}
+
+private struct FailingTCPDialer: TCPDialer {
+    let error: TransportError
+
+    func open(host: String, port: Int) async throws -> TCPDialResult {
+        throw error
     }
 }

@@ -1,3 +1,4 @@
+import Foundation
 import IrockCore
 
 public struct TransportRequest: Equatable, Sendable {
@@ -134,7 +135,24 @@ public struct TCPTransportAdapter<Dialer: TCPDialer>: TransportAdapter {
     }
 
     public func open(request: TransportRequest) async throws -> any TransportConnection {
-        let result = try await dialer.open(host: request.host, port: request.port)
+        try validate(request)
+        let host = request.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let result = try await dialer.open(host: host, port: request.port)
         return EstablishedTransportConnection(host: result.host, port: result.port, transport: .tcp)
+    }
+
+    private func validate(_ request: TransportRequest) throws {
+        guard request.transport == .tcp else {
+            throw TransportError.unsupportedTransport(request.transport)
+        }
+        guard !request.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw TransportError.invalidConfiguration("missing tcp host")
+        }
+        guard (1...65_535).contains(request.port) else {
+            throw TransportError.invalidConfiguration("invalid tcp port")
+        }
+        guard request.tls == nil else {
+            throw TransportError.unsupportedTransport(.tcp)
+        }
     }
 }
