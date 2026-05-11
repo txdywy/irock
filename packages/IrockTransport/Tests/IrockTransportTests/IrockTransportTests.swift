@@ -233,19 +233,62 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(connection.port, 443)
         XCTAssertEqual(connection.transport, .tcp)
     }
+
+    func testTLSTransportAdapterReportsTCPTransport() {
+        let adapter = TLSTransportAdapter(underlying: RecordingTransportAdapter(transport: .tcp))
+
+        XCTAssertEqual(adapter.supportedTransport, .tcp)
+    }
+
+    func testTLSTransportAdapterStripsTLSAndReturnsUnderlyingConnection() async throws {
+        let underlying = RecordingTransportAdapter(transport: .tcp, connectionHost: "connected.example.com")
+        let adapter = TLSTransportAdapter(underlying: underlying)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: "chrome", reality: nil)
+        let request = TransportRequest(host: " example.com ", port: 443, transport: .tcp, tls: tls, metadata: ["source": "unit-test"])
+
+        let connection = try await adapter.open(request: request)
+
+        XCTAssertEqual(connection.host, "connected.example.com")
+        XCTAssertEqual(connection.port, 443)
+        XCTAssertEqual(connection.transport, .tcp)
+        XCTAssertEqual(underlying.requests, [TransportAdapterRequest(host: "example.com", port: 443, transport: .tcp, tls: nil, metadata: ["source": "unit-test"])])
+    }
 }
 
-private struct RecordingTransportAdapter: TransportAdapter {
+private struct TransportAdapterRequest: Equatable {
+    let host: String
+    let port: Int
+    let transport: TransportType
+    let tls: TLSOptions?
+    let metadata: [String: String]
+}
+
+private final class RecordingTransportAdapter: TransportAdapter, @unchecked Sendable {
     let supportedTransport: TransportType
     let connectionHost: String
+    private let lock = NSLock()
+    private var storedRequests: [TransportAdapterRequest] = []
 
     init(transport: TransportType, connectionHost: String = "example.com") {
         self.supportedTransport = transport
         self.connectionHost = connectionHost
     }
 
+    var requests: [TransportAdapterRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedRequests
+    }
+
     func open(request: TransportRequest) async throws -> any TransportConnection {
-        EstablishedTransportConnection(host: connectionHost, port: request.port, transport: request.transport)
+        record(request)
+        return EstablishedTransportConnection(host: connectionHost, port: request.port, transport: request.transport)
+    }
+
+    private func record(_ request: TransportRequest) {
+        lock.lock()
+        defer { lock.unlock() }
+        storedRequests.append(TransportAdapterRequest(host: request.host, port: request.port, transport: request.transport, tls: request.tls, metadata: request.metadata))
     }
 }
 

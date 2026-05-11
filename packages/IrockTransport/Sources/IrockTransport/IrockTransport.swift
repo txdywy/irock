@@ -156,3 +156,19 @@ public struct TCPTransportAdapter<Dialer: TCPDialer>: TransportAdapter {
         }
     }
 }
+
+public struct TLSTransportAdapter<Underlying: TransportAdapter>: TransportAdapter {
+    public let supportedTransport: TransportType = .tcp
+    private let underlying: Underlying
+
+    public init(underlying: Underlying) {
+        self.underlying = underlying
+    }
+
+    public func open(request: TransportRequest) async throws -> any TransportConnection {
+        let host = request.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let underlyingRequest = TransportRequest(host: host, port: request.port, transport: request.transport, tls: nil, metadata: request.metadata)
+        let connection = try await underlying.open(request: underlyingRequest)
+        return EstablishedTransportConnection(host: connection.host, port: connection.port, transport: .tcp)
+    }
+}
