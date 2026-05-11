@@ -1,8 +1,10 @@
+import IrockAppFeature
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var viewModel = AppViewModel(nodes: [])
+
     var body: some View {
-        Text("irock")
-            .padding()
+        IrockRootView(viewModel: viewModel)
     }
 }

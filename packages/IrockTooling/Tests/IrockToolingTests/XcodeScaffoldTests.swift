@@ -86,6 +86,49 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(provider.contains("cancel()"))
     }
 
+    func testContainerAppDeclaresVPNManagerBoundary() throws {
+        let configuration = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockApp/IOSVPNManagerConfiguration.swift"))
+        let manager = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockApp/IOSVPNManager.swift"))
+        let project = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irock.xcodeproj/project.pbxproj"))
+
+        XCTAssertTrue(configuration.contains("struct IOSVPNManagerConfiguration"))
+        XCTAssertTrue(configuration.contains("dev.irock.app.tunnel"))
+        XCTAssertTrue(configuration.contains("group.dev.irock.shared"))
+        XCTAssertTrue(manager.contains("import " + "NetworkExtension"))
+        XCTAssertTrue(manager.contains("final class IOSVPNManager"))
+        XCTAssertTrue(manager.contains("NETunnelProviderManager.loadAllFromPreferences"))
+        XCTAssertTrue(manager.contains("NETunnelProviderProtocol"))
+        XCTAssertTrue(manager.contains("providerBundleIdentifier"))
+        XCTAssertTrue(manager.contains("saveToPreferences"))
+        XCTAssertTrue(manager.contains("startVPNTunnel"))
+        XCTAssertTrue(manager.contains("stopVPNTunnel"))
+        XCTAssertTrue(project.contains("IOSVPNManagerConfiguration.swift in Sources"))
+        XCTAssertTrue(project.contains("IOSVPNManager.swift in Sources"))
+    }
+
+    func testContainerAppHostsSharedRootView() throws {
+        let contentView = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockApp/ContentView.swift"))
+
+        XCTAssertTrue(contentView.contains("import " + "IrockAppFeature"))
+        XCTAssertTrue(contentView.contains("@StateObject"))
+        XCTAssertTrue(contentView.contains("AppViewModel"))
+        XCTAssertTrue(contentView.contains("IrockRootView(viewModel: viewModel)"))
+        XCTAssertFalse(contentView.contains("Text(\"irock\")"))
+    }
+
+    func testNEPacketTunnelFlowAdapterWritesOnlyExplicitResponseBytes() throws {
+        let flowAdapter = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/NEPacketTunnelFlowPacketFlowIO.swift"))
+
+        XCTAssertTrue(flowAdapter.contains("result.responsePacketBytes"))
+        XCTAssertTrue(flowAdapter.contains("Data(responsePacketBytes)"))
+        XCTAssertTrue(flowAdapter.contains("protocolFamily(for: responsePacketBytes)"))
+        XCTAssertTrue(flowAdapter.contains("case 4:"))
+        XCTAssertTrue(flowAdapter.contains("case 6:"))
+        XCTAssertTrue(flowAdapter.contains("AF_INET6"))
+        XCTAssertFalse(flowAdapter.contains("Data(result.packet.bytes)"))
+        XCTAssertFalse(flowAdapter.contains("protocolFamily: sa_family_t(AF_INET))"))
+    }
+
     func testPacketTunnelSmokePathFilesDeclareExpectedBoundaries() throws {
         let flowAdapter = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/NEPacketTunnelFlowPacketFlowIO.swift"))
         let storeResolver = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/PacketTunnelAppGroupStoreResolver.swift"))
@@ -151,26 +194,17 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(dialer.contains("TransportError.tcpConnectFailed"))
     }
 
-    func testPlatformImportsStayInsideTunnelExtension() throws {
-        let forbiddenRoots = [
-            repositoryRoot.appendingPathComponent("packages"),
-            repositoryRoot.appendingPathComponent("apps/irock-iOS/irockApp")
-        ]
-        let forbiddenImports = [
-            "import " + "NetworkExtension",
-            "import " + "Network",
-            "import " + "Security",
-            "import " + "UIKit",
-            "import " + "AppKit"
-        ]
+    func testPlatformImportsStayInsidePlatformTargets() throws {
+        let forbiddenPackageModules = Set(["NetworkExtension", "Network", "Security", "UIKit", "AppKit"])
+        for file in try swiftFiles(under: repositoryRoot.appendingPathComponent("packages")) {
+            let importedModules = try importedModules(in: file)
+            XCTAssertTrue(importedModules.isDisjoint(with: forbiddenPackageModules), "Platform imports leaked into \(file.path): \(importedModules.intersection(forbiddenPackageModules))")
+        }
 
-        for root in forbiddenRoots {
-            for file in try swiftFiles(under: root) {
-                let contents = try String(contentsOf: file)
-                for forbiddenImport in forbiddenImports {
-                    XCTAssertFalse(contents.contains(forbiddenImport), "\(forbiddenImport) leaked into \(file.path)")
-                }
-            }
+        let forbiddenAppModules = Set(["Network", "Security", "UIKit", "AppKit"])
+        for file in try swiftFiles(under: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockApp")) {
+            let importedModules = try importedModules(in: file)
+            XCTAssertTrue(importedModules.isDisjoint(with: forbiddenAppModules), "Forbidden app imports leaked into \(file.path): \(importedModules.intersection(forbiddenAppModules))")
         }
     }
 
@@ -214,6 +248,8 @@ final class XcodeScaffoldTests: XCTestCase {
             "apps/irock-iOS/irock.xcodeproj/project.pbxproj",
             "apps/irock-iOS/irockApp/IrockApp.swift",
             "apps/irock-iOS/irockApp/ContentView.swift",
+            "apps/irock-iOS/irockApp/IOSVPNManagerConfiguration.swift",
+            "apps/irock-iOS/irockApp/IOSVPNManager.swift",
             "apps/irock-iOS/irockApp/Info.plist",
             "apps/irock-iOS/irockApp/irockApp.entitlements",
             "apps/irock-iOS/irockTunnelExtension/PacketTunnelProvider.swift",
@@ -243,5 +279,14 @@ final class XcodeScaffoldTests: XCTestCase {
             guard let url = item as? URL, url.pathExtension == "swift" else { return nil }
             return url
         }
+    }
+
+    private func importedModules(in file: URL) throws -> Set<String> {
+        let contents = try String(contentsOf: file)
+        return Set(contents.split(separator: "\n").compactMap { line in
+            let parts = line.split(separator: " ")
+            guard parts.count == 2, parts[0] == "import" else { return nil }
+            return String(parts[1])
+        })
     }
 }
