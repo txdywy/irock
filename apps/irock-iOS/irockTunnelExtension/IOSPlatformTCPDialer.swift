@@ -10,7 +10,7 @@ struct IOSPlatformTCPDialer: TCPDialer {
         self.timeoutNanoseconds = timeoutNanoseconds
     }
 
-    func open(host: String, port: Int) async throws -> TCPDialResult {
+    func open(host: String, port: Int, initialPayload: Data?) async throws -> TCPDialResult {
         let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedHost.isEmpty else {
             throw TransportError.invalidConfiguration("missing tcp host")
@@ -24,7 +24,8 @@ struct IOSPlatformTCPDialer: TCPDialer {
             connection: connection,
             host: normalizedHost,
             port: port,
-            timeoutNanoseconds: timeoutNanoseconds
+            timeoutNanoseconds: timeoutNanoseconds,
+            initialPayload: initialPayload
         )
 
         return try await withTaskCancellationHandler {
@@ -40,15 +41,17 @@ private final class IOSPlatformTCPDialWaiter: @unchecked Sendable {
     private let host: String
     private let port: Int
     private let timeoutNanoseconds: UInt64
+    private let initialPayload: Data?
     private let lock = NSLock()
     private var continuation: CheckedContinuation<TCPDialResult, Error>?
     private var terminalResult: Result<TCPDialResult, Error>?
 
-    init(connection: NWConnection, host: String, port: Int, timeoutNanoseconds: UInt64) {
+    init(connection: NWConnection, host: String, port: Int, timeoutNanoseconds: UInt64, initialPayload: Data?) {
         self.connection = connection
         self.host = host
         self.port = port
         self.timeoutNanoseconds = timeoutNanoseconds
+        self.initialPayload = initialPayload
     }
 
     func open(on queue: DispatchQueue) async throws -> TCPDialResult {
@@ -92,7 +95,7 @@ private final class IOSPlatformTCPDialWaiter: @unchecked Sendable {
     private func handle(_ state: NWConnection.State) {
         switch state {
         case .ready:
-            resume(with: .success(TCPDialResult(host: host, port: port)))
+            sendInitialPayloadIfNeeded()
         case .failed(let error):
             resume(with: .failure(TransportError.tcpConnectFailed(error.localizedDescription)))
         case .waiting:
@@ -104,6 +107,22 @@ private final class IOSPlatformTCPDialWaiter: @unchecked Sendable {
         @unknown default:
             resume(with: .failure(TransportError.tcpConnectFailed("unknown tcp connection state")))
         }
+    }
+
+    private func sendInitialPayloadIfNeeded() {
+        guard let initialPayload, !initialPayload.isEmpty else {
+            resume(with: .success(TCPDialResult(host: host, port: port)))
+            return
+        }
+
+        connection.send(content: initialPayload, completion: .contentProcessed { [weak self] error in
+            guard let self else { return }
+            if let error {
+                resume(with: .failure(TransportError.tcpConnectFailed(error.localizedDescription)))
+                return
+            }
+            resume(with: .success(TCPDialResult(host: host, port: port)))
+        })
     }
 
     private func resume(with result: Result<TCPDialResult, Error>) {

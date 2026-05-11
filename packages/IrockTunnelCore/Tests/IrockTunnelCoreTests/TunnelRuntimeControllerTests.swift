@@ -14,6 +14,7 @@ final class TunnelRuntimeControllerTests: XCTestCase {
                 logStore: ControllerFailingRuntimeLogStore(),
                 plain: ControllerRecordingTransportAdapter(transport: .tcp),
                 tls: ControllerRecordingTransportAdapter(transport: .tcp),
+                credentialResolver: TestShadowsocksCredentialResolver(),
                 batchLimit: 16,
                 flowLimit: 32
             )
@@ -41,6 +42,7 @@ final class TunnelRuntimeControllerTests: XCTestCase {
                 logStore: InMemoryRuntimeLogStore(),
                 plain: ControllerRecordingTransportAdapter(transport: .tcp),
                 tls: ControllerRecordingTransportAdapter(transport: .tcp),
+                credentialResolver: TestShadowsocksCredentialResolver(),
                 batchLimit: 16,
                 flowLimit: 32
             )
@@ -68,6 +70,7 @@ final class TunnelRuntimeControllerTests: XCTestCase {
                 logStore: logStore,
                 plain: ControllerRecordingTransportAdapter(transport: .tcp),
                 tls: ControllerRecordingTransportAdapter(transport: .tcp),
+                credentialResolver: TestShadowsocksCredentialResolver(),
                 batchLimit: 16,
                 flowLimit: 32
             )
@@ -97,6 +100,7 @@ final class TunnelRuntimeControllerTests: XCTestCase {
                 logStore: logStore,
                 plain: ControllerRecordingTransportAdapter(transport: .tcp),
                 tls: ControllerRecordingTransportAdapter(transport: .tcp),
+                credentialResolver: TestShadowsocksCredentialResolver(),
                 batchLimit: 16,
                 flowLimit: 32
             )
@@ -123,6 +127,7 @@ final class TunnelRuntimeControllerTests: XCTestCase {
                 logStore: logStore,
                 plain: ControllerRecordingTransportAdapter(transport: .tcp),
                 tls: ControllerRecordingTransportAdapter(transport: .tcp),
+                credentialResolver: TestShadowsocksCredentialResolver(),
                 batchLimit: 16,
                 flowLimit: 32
             )
@@ -160,6 +165,7 @@ final class TunnelRuntimeControllerTests: XCTestCase {
             logStore: logStore,
             plain: plain,
             tls: tlsChild,
+            credentialResolver: TestShadowsocksCredentialResolver(),
             batchLimit: 16,
             flowLimit: 32
         )
@@ -315,7 +321,7 @@ private func controllerSnapshot(tls: TLSOptions, routingRuleManifest: RuntimeRou
             protocolType: .shadowsocks,
             serverHost: "example.com",
             serverPort: 443,
-            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "aes-256-gcm:pass"),
             transport: .tcp,
             tls: tls,
             udpPolicy: .disabled

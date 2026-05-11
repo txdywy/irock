@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 import IrockCore
 import IrockTransport
@@ -30,6 +31,72 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(request.metadata, [:])
     }
 
+    func testShadowsocksStreamRequestBuildsAES256GCMHostOpenBytes() throws {
+        let request = try ShadowsocksStreamRequest(
+            credential: "aes-256-gcm:pass",
+            destination: .host("apple.com", port: 443),
+            salt: Data(repeating: 1, count: 32)
+        )
+
+        XCTAssertEqual(request.cipher, "aes-256-gcm")
+        XCTAssertEqual(request.addressFrameHex, "03096170706c652e636f6d01bb")
+        XCTAssertEqual(request.openBytesHex, "0101010101010101010101010101010101010101010101010101010101010101620abbadfec9a6d19bc1964dc25cdc714a40d7df10cbff62357470f76caa6c7eb90f8d9a21aab8e2bff8ab3c1b4997")
+        XCTAssertEqual(request.openBytes.count, 79)
+        XCTAssertEqual(request.metadata["shadowsocksCipher"], "aes-256-gcm")
+        XCTAssertEqual(request.metadata["shadowsocksAddressFrameHex"], request.addressFrameHex)
+        XCTAssertEqual(request.metadata["shadowsocksStreamOpenHex"], request.openBytesHex)
+    }
+
+    func testShadowsocksStreamRequestEncodesIPv4DestinationFrame() throws {
+        let request = try ShadowsocksStreamRequest(
+            credential: "aes-256-gcm:pass",
+            destination: .ipv4("93.184.216.34", port: 443),
+            salt: Data(repeating: 2, count: 32)
+        )
+
+        XCTAssertEqual(request.addressFrameHex, "015db8d82201bb")
+    }
+
+    func testShadowsocksStreamRequestEncodesIPv6DestinationFrame() throws {
+        let request = try ShadowsocksStreamRequest(
+            credential: "aes-256-gcm:pass",
+            destination: .ipv6("2606:2800:0220:0001:0248:1893:25c8:1946", port: 443),
+            salt: Data(repeating: 3, count: 32)
+        )
+
+        XCTAssertEqual(request.addressFrameHex, "0426062800022000010248189325c8194601bb")
+    }
+
+    func testShadowsocksStreamRequestRejectsUnsupportedMethod() {
+        XCTAssertThrowsError(try ShadowsocksStreamRequest(
+            credential: "chacha20-ietf-poly1305:pass",
+            destination: .host("apple.com", port: 443),
+            salt: Data(repeating: 1, count: 32)
+        )) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("unsupported shadowsocks method"))
+        }
+    }
+
+    func testShadowsocksStreamRequestRejectsInvalidCredential() {
+        XCTAssertThrowsError(try ShadowsocksStreamRequest(
+            credential: "aes-256-gcm",
+            destination: .host("apple.com", port: 443),
+            salt: Data(repeating: 1, count: 32)
+        )) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("invalid shadowsocks credential"))
+        }
+    }
+
+    func testShadowsocksStreamRequestRejectsInvalidSalt() {
+        XCTAssertThrowsError(try ShadowsocksStreamRequest(
+            credential: "aes-256-gcm:pass",
+            destination: .host("apple.com", port: 443),
+            salt: Data(repeating: 1, count: 31)
+        )) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("invalid shadowsocks salt"))
+        }
+    }
+
     func testEstablishedProxyConnectionStoresNodeIDAndDestination() {
         let connection = EstablishedProxyConnection(
             nodeID: NodeID(rawValue: "node-1"),
@@ -37,7 +104,7 @@ final class IrockProtocolsTests: XCTestCase {
         )
 
         XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
-        XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
+        XCTAssertEqual(connection.destination, ProxyDestination.host("apple.com", port: 443))
     }
 
     func testUnsupportedProxyAdapterFailsWithRequestedProtocol() async {
@@ -122,7 +189,7 @@ final class IrockProtocolsTests: XCTestCase {
 
         XCTAssertEqual(selected.supportedProtocol, .trojan)
         XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
-        XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
+        XCTAssertEqual(connection.destination, ProxyDestination.host("apple.com", port: 443))
     }
 
     func testProxyAdapterRegistryFallsBackToUnsupportedAdapter() async {
@@ -161,7 +228,7 @@ final class IrockProtocolsTests: XCTestCase {
         let connection = try await adapter.connect(request: request)
 
         XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
-        XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
+        XCTAssertEqual(connection.destination, ProxyDestination.host("apple.com", port: 443))
         XCTAssertEqual(transport.requests.count, 1)
         XCTAssertEqual(transport.requests.first?.host, "example.com")
         XCTAssertEqual(transport.requests.first?.port, 443)
@@ -287,20 +354,27 @@ final class IrockProtocolsTests: XCTestCase {
 
     func testShadowsocksProxyAdapterOpensTCPTransportAndReturnsProxyConnection() async throws {
         let transport = RecordingTransportAdapter(transport: .tcp)
-        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let adapter = ShadowsocksProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: [transport]),
+            credentialResolver: StaticShadowsocksCredentialResolver(credential: "aes-256-gcm:pass")
+        )
         let node = makeNode(protocolType: .shadowsocks, transport: .tcp)
         let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
 
         let connection = try await adapter.connect(request: request)
 
         XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
-        XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
+        XCTAssertEqual(connection.destination, ProxyDestination.host("apple.com", port: 443))
         XCTAssertEqual(transport.requests.count, 1)
         XCTAssertEqual(transport.requests.first?.host, "example.com")
         XCTAssertEqual(transport.requests.first?.port, 443)
         XCTAssertEqual(transport.requests.first?.transport, .tcp)
         XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
         XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "shadowsocks")
+        XCTAssertEqual(transport.requests.first?.metadata["shadowsocksCipher"], "aes-256-gcm")
+        XCTAssertEqual(transport.requests.first?.metadata["shadowsocksAddressFrameHex"], "03096170706c652e636f6d01bb")
+        XCTAssertEqual(transport.requests.first?.metadata["shadowsocksStreamOpenHex"]?.count, 158)
+        XCTAssertEqual(transport.requests.first?.initialPayload?.count, 79)
     }
 
     func testTransportBackedProxyAdapterMapsTransportErrorsToProtocolErrors() async {
@@ -335,7 +409,8 @@ final class IrockProtocolsTests: XCTestCase {
 
     func testShadowsocksProxyAdapterPropagatesMappedTransportFailure() async {
         let adapter = ShadowsocksProxyAdapter(
-            transportRegistry: TransportAdapterRegistry(adapters: [FailingTransportAdapter(transport: .tcp, error: .tcpConnectFailed("password refused"))])
+            transportRegistry: TransportAdapterRegistry(adapters: [FailingTransportAdapter(transport: .tcp, error: .tcpConnectFailed("password refused"))]),
+            credentialResolver: StaticShadowsocksCredentialResolver(credential: "aes-256-gcm:pass")
         )
         let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp), destination: .host("apple.com", port: 443))
 
@@ -353,7 +428,10 @@ final class IrockProtocolsTests: XCTestCase {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
         let selector = TCPTLSTransportAdapter(plain: plain, tls: tlsChild)
-        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [selector]))
+        let adapter = ShadowsocksProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: [selector]),
+            credentialResolver: StaticShadowsocksCredentialResolver(credential: "aes-256-gcm:pass")
+        )
         let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil)
         let node = makeNode(protocolType: .shadowsocks, transport: .tcp, tls: tls)
         let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
@@ -361,7 +439,7 @@ final class IrockProtocolsTests: XCTestCase {
         let connection = try await adapter.connect(request: request)
 
         XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
-        XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
+        XCTAssertEqual(connection.destination, ProxyDestination.host("apple.com", port: 443))
         XCTAssertEqual(plain.requests, [])
         XCTAssertEqual(tlsChild.requests.count, 1)
         XCTAssertEqual(tlsChild.requests.first?.host, "example.com")
@@ -377,7 +455,10 @@ final class IrockProtocolsTests: XCTestCase {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
         let selector = TCPTLSTransportAdapter(plain: plain, tls: tlsChild)
-        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [selector]))
+        let adapter = ShadowsocksProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: [selector]),
+            credentialResolver: StaticShadowsocksCredentialResolver(credential: "aes-256-gcm:pass")
+        )
         let node = makeNode(protocolType: .shadowsocks, transport: .tcp, tls: .disabled)
         let request = ProxyRequest(node: node, destination: .ipv4("93.184.216.34", port: 443))
 
@@ -400,7 +481,10 @@ final class IrockProtocolsTests: XCTestCase {
             plain: RecordingTransportAdapter(transport: .tcp),
             tls: FailingTransportAdapter(transport: .tcp, error: .tlsHandshakeFailed("tls refused"))
         )
-        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [selector]))
+        let adapter = ShadowsocksProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: [selector]),
+            credentialResolver: StaticShadowsocksCredentialResolver(credential: "aes-256-gcm:pass")
+        )
         let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
         let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp, tls: tls), destination: .host("apple.com", port: 443))
 
@@ -419,7 +503,10 @@ final class IrockProtocolsTests: XCTestCase {
             plain: FailingTransportAdapter(transport: .tcp, error: .tcpConnectFailed("plain refused")),
             tls: RecordingTransportAdapter(transport: .tcp)
         )
-        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [selector]))
+        let adapter = ShadowsocksProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: [selector]),
+            credentialResolver: StaticShadowsocksCredentialResolver(credential: "aes-256-gcm:pass")
+        )
         let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp, tls: .disabled), destination: .host("apple.com", port: 443))
 
         do {
@@ -465,6 +552,14 @@ final class IrockProtocolsTests: XCTestCase {
         func connect(request: ProxyRequest) async throws -> any ProxyConnection {
             EstablishedProxyConnection(nodeID: connectionNodeID, destination: request.destination)
         }
+    }
+}
+
+private struct StaticShadowsocksCredentialResolver: ShadowsocksCredentialResolver {
+    let credential: String
+
+    func credential(for reference: CredentialReference) throws -> String {
+        credential
     }
 }
 

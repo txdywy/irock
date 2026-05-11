@@ -1,3 +1,5 @@
+import CryptoKit
+import Foundation
 import IrockCore
 import IrockTransport
 
@@ -5,6 +7,145 @@ public enum ProxyDestination: Equatable, Sendable {
     case host(String, port: Int)
     case ipv4(String, port: Int)
     case ipv6(String, port: Int)
+}
+
+public struct ShadowsocksStreamRequest: Equatable, Sendable {
+    public let cipher: String
+    public let addressFrame: Data
+    public let openBytes: Data
+
+    public var addressFrameHex: String {
+        addressFrame.hexString
+    }
+
+    public var openBytesHex: String {
+        openBytes.hexString
+    }
+
+    public var metadata: [String: String] {
+        [
+            "shadowsocksCipher": cipher,
+            "shadowsocksAddressFrameHex": addressFrameHex,
+            "shadowsocksStreamOpenHex": openBytesHex
+        ]
+    }
+
+    public init(credential: String, destination: ProxyDestination, salt: Data) throws {
+        let parsed = try Self.parseCredential(credential)
+        guard parsed.method == "aes-256-gcm" else {
+            throw ProxyProtocolError.invalidConfiguration("unsupported shadowsocks method")
+        }
+        guard salt.count == 32 else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks salt")
+        }
+
+        self.cipher = parsed.method
+        self.addressFrame = try Self.addressFrame(for: destination)
+        let masterKey = SymmetricKey(data: Self.evpBytesToKey(password: Data(parsed.password.utf8), keyLength: 32))
+        let subkey = HKDF<Insecure.SHA1>.deriveKey(inputKeyMaterial: masterKey, salt: salt, info: Data("ss-subkey".utf8), outputByteCount: 32)
+        let length = Data([UInt8(addressFrame.count >> 8), UInt8(addressFrame.count & 0xff)])
+        let encryptedLength = try Self.seal(length, using: subkey, nonceValue: 0)
+        let encryptedPayload = try Self.seal(addressFrame, using: subkey, nonceValue: 1)
+        self.openBytes = salt + encryptedLength + encryptedPayload
+    }
+
+    private static func seal(_ data: Data, using key: SymmetricKey, nonceValue: UInt64) throws -> Data {
+        let sealed = try AES.GCM.seal(data, using: key, nonce: AES.GCM.Nonce(data: nonceBytes(nonceValue)))
+        return sealed.ciphertext + sealed.tag
+    }
+
+    private static func nonceBytes(_ value: UInt64) -> Data {
+        var bytes = Data(repeating: 0, count: 12)
+        var current = value
+        for index in 0..<8 {
+            bytes[index] = UInt8(current & 0xff)
+            current >>= 8
+        }
+        return bytes
+    }
+
+    private static func evpBytesToKey(password: Data, keyLength: Int) -> Data {
+        var key = Data()
+        var previous = Data()
+        while key.count < keyLength {
+            var input = Data()
+            input.append(previous)
+            input.append(password)
+            previous = Data(Insecure.MD5.hash(data: input))
+            key.append(previous)
+        }
+        return key.prefix(keyLength)
+    }
+
+    private static func parseCredential(_ credential: String) throws -> (method: String, password: String) {
+        guard let separator = credential.firstIndex(of: ":") else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks credential")
+        }
+        let method = credential[..<separator].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let password = credential[credential.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !method.isEmpty, !password.isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks credential")
+        }
+        return (method, password)
+    }
+
+    private static func addressFrame(for destination: ProxyDestination) throws -> Data {
+        switch destination {
+        case let .host(host, port):
+            let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+            let hostBytes = Data(normalizedHost.utf8)
+            guard !hostBytes.isEmpty, hostBytes.count <= 255 else {
+                throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks host")
+            }
+            return try Data([0x03, UInt8(hostBytes.count)]) + hostBytes + portBytes(port)
+        case let .ipv4(address, port):
+            let octets = address.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+            guard octets.count == 4 else {
+                throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks ipv4 destination")
+            }
+            let bytes = try octets.map { octet -> UInt8 in
+                guard let value = UInt8(octet) else {
+                    throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks ipv4 destination")
+                }
+                return value
+            }
+            return try Data([0x01]) + Data(bytes) + portBytes(port)
+        case let .ipv6(address, port):
+            let bytes = try ipv6Bytes(address)
+            return try Data([0x04]) + Data(bytes) + portBytes(port)
+        }
+    }
+
+    private static func ipv6Bytes(_ address: String) throws -> [UInt8] {
+        let parts = address.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 8 else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks ipv6 destination")
+        }
+        return try parts.flatMap { part -> [UInt8] in
+            guard part.count <= 4, let value = UInt16(part, radix: 16) else {
+                throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks ipv6 destination")
+            }
+            return [UInt8(value >> 8), UInt8(value & 0xff)]
+        }
+    }
+
+    private static func portBytes(_ port: Int) throws -> Data {
+        guard (1...65_535).contains(port) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks destination port")
+        }
+        return Data([UInt8(port >> 8), UInt8(port & 0xff)])
+    }
+}
+
+private extension Data {
+    static func random(count: Int) -> Data {
+        var generator = SystemRandomNumberGenerator()
+        return Data((0..<count).map { _ in UInt8.random(in: UInt8.min...UInt8.max, using: &generator) })
+    }
+
+    var hexString: String {
+        map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 public struct ProxyRequest: Equatable, Sendable {
@@ -192,17 +333,49 @@ public struct TransportBackedProxyAdapter: ProxyAdapter {
     }
 }
 
-public struct ShadowsocksProxyAdapter: ProxyAdapter {
-    public let supportedProtocol: ProxyProtocolType = .shadowsocks
-    private let transportBackedAdapter: TransportBackedProxyAdapter
+public protocol ShadowsocksCredentialResolver: Sendable {
+    func credential(for reference: CredentialReference) throws -> String
+}
 
-    public init(transportRegistry: TransportAdapterRegistry) {
-        self.transportBackedAdapter = TransportBackedProxyAdapter(protocolType: .shadowsocks, transportRegistry: transportRegistry)
+public struct MissingShadowsocksCredentialResolver: ShadowsocksCredentialResolver {
+    public init() {}
+
+    public func credential(for reference: CredentialReference) throws -> String {
+        throw ProxyProtocolError.invalidConfiguration("missing shadowsocks credential material")
+    }
+}
+
+public struct ShadowsocksProxyAdapter<CredentialResolver: ShadowsocksCredentialResolver>: ProxyAdapter {
+    public let supportedProtocol: ProxyProtocolType = .shadowsocks
+    private let transportRegistry: TransportAdapterRegistry
+    private let credentialResolver: CredentialResolver
+
+    public init(transportRegistry: TransportAdapterRegistry, credentialResolver: CredentialResolver) {
+        self.transportRegistry = transportRegistry
+        self.credentialResolver = credentialResolver
     }
 
     public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
         try validate(request.node)
-        return try await transportBackedAdapter.connect(request: request)
+        let streamRequest = try ShadowsocksStreamRequest(
+            credential: credentialResolver.credential(for: request.node.credentialReference),
+            destination: request.destination,
+            salt: Data.random(count: 32)
+        )
+        let transportRequest = TransportRequest(
+            host: request.node.serverHost,
+            port: request.node.serverPort,
+            transport: request.node.transport,
+            tls: request.node.tls.enabled ? request.node.tls : nil,
+            metadata: transportMetadata(for: request, streamRequest: streamRequest),
+            initialPayload: streamRequest.openBytes
+        )
+        do {
+            _ = try await transportRegistry.adapter(for: request.node.transport).open(request: transportRequest)
+        } catch let error as TransportError {
+            throw proxyProtocolError(for: error)
+        }
+        return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination)
     }
 
     private func validate(_ node: ProxyNode) throws {
@@ -221,5 +394,53 @@ public struct ShadowsocksProxyAdapter: ProxyAdapter {
         guard node.transport == .tcp else {
             throw ProxyProtocolError.unsupportedTransport(node.transport)
         }
+    }
+
+    private func transportMetadata(for request: ProxyRequest, streamRequest: ShadowsocksStreamRequest) -> [String: String] {
+        var metadata = request.metadata
+        metadata["proxyProtocol"] = request.node.protocolType.rawValue
+        metadata["destination"] = destinationDescription(request.destination)
+        for (key, value) in streamRequest.metadata {
+            metadata[key] = value
+        }
+        return metadata
+    }
+
+    private func destinationDescription(_ destination: ProxyDestination) -> String {
+        switch destination {
+        case let .host(host, port):
+            return "host:\(host):\(port)"
+        case let .ipv4(address, port):
+            return "ipv4:\(address):\(port)"
+        case let .ipv6(address, port):
+            return "ipv6:\(address):\(port)"
+        }
+    }
+
+    private func proxyProtocolError(for error: TransportError) -> ProxyProtocolError {
+        switch error {
+        case .invalidConfiguration:
+            return .invalidConfiguration("transport invalid")
+        case .dnsFailed:
+            return .dnsFailed("transport dns failed")
+        case .tcpConnectFailed:
+            return .tcpConnectFailed("transport tcp connect failed")
+        case .tlsHandshakeFailed:
+            return .tlsHandshakeFailed("transport tls handshake failed")
+        case let .unsupportedTransport(transport):
+            return .unsupportedTransport(transport)
+        case .quicHandshakeFailed:
+            return .quicHandshakeFailed("transport quic handshake failed")
+        case .remoteClosed:
+            return .remoteClosed
+        case .timeout:
+            return .timeout
+        }
+    }
+}
+
+public extension ShadowsocksProxyAdapter where CredentialResolver == MissingShadowsocksCredentialResolver {
+    init(transportRegistry: TransportAdapterRegistry) {
+        self.init(transportRegistry: transportRegistry, credentialResolver: MissingShadowsocksCredentialResolver())
     }
 }

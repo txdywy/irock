@@ -7,13 +7,15 @@ public struct TransportRequest: Equatable, Sendable {
     public let transport: TransportType
     public let tls: TLSOptions?
     public let metadata: [String: String]
+    public let initialPayload: Data?
 
-    public init(host: String, port: Int, transport: TransportType, tls: TLSOptions? = nil, metadata: [String: String] = [:]) {
+    public init(host: String, port: Int, transport: TransportType, tls: TLSOptions? = nil, metadata: [String: String] = [:], initialPayload: Data? = nil) {
         self.host = host
         self.port = port
         self.transport = transport
         self.tls = tls
         self.metadata = metadata
+        self.initialPayload = initialPayload
     }
 }
 
@@ -123,7 +125,7 @@ public struct TCPDialResult: Equatable, Sendable {
 }
 
 public protocol TCPDialer: Sendable {
-    func open(host: String, port: Int) async throws -> TCPDialResult
+    func open(host: String, port: Int, initialPayload: Data?) async throws -> TCPDialResult
 }
 
 public struct TCPTransportAdapter<Dialer: TCPDialer>: TransportAdapter {
@@ -137,7 +139,7 @@ public struct TCPTransportAdapter<Dialer: TCPDialer>: TransportAdapter {
     public func open(request: TransportRequest) async throws -> any TransportConnection {
         try validate(request)
         let host = request.host.trimmingCharacters(in: .whitespacesAndNewlines)
-        let result = try await dialer.open(host: host, port: request.port)
+        let result = try await dialer.open(host: host, port: request.port, initialPayload: request.initialPayload)
         return EstablishedTransportConnection(host: result.host, port: result.port, transport: .tcp)
     }
 
@@ -168,7 +170,7 @@ public struct TLSTransportAdapter<Underlying: TransportAdapter>: TransportAdapte
     public func open(request: TransportRequest) async throws -> any TransportConnection {
         try validate(request)
         let host = request.host.trimmingCharacters(in: .whitespacesAndNewlines)
-        let underlyingRequest = TransportRequest(host: host, port: request.port, transport: request.transport, tls: nil, metadata: request.metadata)
+        let underlyingRequest = TransportRequest(host: host, port: request.port, transport: request.transport, tls: nil, metadata: request.metadata, initialPayload: request.initialPayload)
         let connection = try await underlying.open(request: underlyingRequest)
         return EstablishedTransportConnection(host: connection.host, port: connection.port, transport: .tcp)
     }

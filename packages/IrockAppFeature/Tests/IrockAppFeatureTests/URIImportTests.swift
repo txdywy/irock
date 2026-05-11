@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 import IrockCore
 @testable import IrockAppFeature
@@ -94,6 +95,10 @@ final class URIImportTests: XCTestCase {
         XCTAssertEqual(node.name, "Demo")
         XCTAssertEqual(node.serverHost, "example.com")
         XCTAssertEqual(node.serverPort, 8388)
-        XCTAssertEqual(node.credentialReference.account, "aes-256-gcm:pass")
+        XCTAssertEqual(node.credentialReference.account, "node-1")
+
+        let snapshot = RuntimeSnapshot(id: SnapshotID(rawValue: "snapshot-1"), selectedNode: node, routeMode: .ruleBased, logLevel: .user)
+        let encoded = String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("aes-256-gcm:pass"))
     }
 }

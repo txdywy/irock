@@ -1,5 +1,6 @@
 import Foundation
 import IrockCore
+import IrockProtocols
 import IrockStorage
 import IrockTransport
 
@@ -8,13 +9,14 @@ public enum TunnelRuntimeControllerError: Error, Equatable, Sendable {
 }
 
 public struct TunnelRuntimeController: Sendable {
-    public static func runShadowsocksTCPBatch<Flow: PacketFlowIO, Plain: TransportAdapter, TLS: TransportAdapter>(
+    public static func runShadowsocksTCPBatch<Flow: PacketFlowIO, Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ShadowsocksCredentialResolver>(
         snapshotStore: RuntimeSnapshotStore,
         flow: Flow,
         statusStore: RuntimeStatusStore,
         logStore: RuntimeLogStore,
         plain: Plain,
         tls: TLS,
+        credentialResolver: CredentialResolver,
         batchLimit: Int,
         flowLimit: Int
     ) async throws -> PacketTunnelRuntimeSummary {
@@ -31,6 +33,7 @@ public struct TunnelRuntimeController: Sendable {
             logStore: logStore,
             plain: plain,
             tls: tls,
+            credentialResolver: credentialResolver,
             batchLimit: batchLimit,
             flowLimit: flowLimit
         )

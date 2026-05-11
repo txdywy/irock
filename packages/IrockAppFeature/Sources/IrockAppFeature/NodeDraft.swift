@@ -47,7 +47,7 @@ public struct NodeDraft: Equatable, Sendable {
             protocolType: protocolType,
             serverHost: trimmedHost,
             serverPort: port,
-            credentialReference: CredentialReference(keychainService: keychainService, account: trimmedAccount),
+            credentialReference: CredentialReference(keychainService: keychainService, account: id.rawValue),
             transport: transport,
             tls: TLSOptions(enabled: tlsEnabled, serverName: tlsServerName.isEmpty ? nil : tlsServerName, allowInsecure: false, alpn: [], fingerprint: nil, reality: nil),
             udpPolicy: udpEnabled ? .enabled : .disabled

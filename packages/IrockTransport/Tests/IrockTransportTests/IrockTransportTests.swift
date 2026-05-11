@@ -3,15 +3,17 @@ import IrockCore
 @testable import IrockTransport
 
 final class IrockTransportTests: XCTestCase {
-    func testTransportRequestStoresEndpointTLSAndMetadata() {
+    func testTransportRequestStoresEndpointTLSMetadataAndInitialPayload() {
         let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil)
-        let request = TransportRequest(host: "example.com", port: 443, transport: .grpc, tls: tls, metadata: ["source": "unit-test"])
+        let payload = Data([0xde, 0xad, 0xbe, 0xef])
+        let request = TransportRequest(host: "example.com", port: 443, transport: .grpc, tls: tls, metadata: ["source": "unit-test"], initialPayload: payload)
 
         XCTAssertEqual(request.host, "example.com")
         XCTAssertEqual(request.port, 443)
         XCTAssertEqual(request.transport, .grpc)
         XCTAssertEqual(request.tls, tls)
         XCTAssertEqual(request.metadata, ["source": "unit-test"])
+        XCTAssertEqual(request.initialPayload, payload)
     }
 
     func testTransportRequestDefaultsTLSAndMetadata() {
@@ -19,6 +21,7 @@ final class IrockTransportTests: XCTestCase {
 
         XCTAssertNil(request.tls)
         XCTAssertEqual(request.metadata, [:])
+        XCTAssertNil(request.initialPayload)
     }
 
     func testEstablishedTransportConnectionStoresEndpointAndKind() {
@@ -196,14 +199,15 @@ final class IrockTransportTests: XCTestCase {
     func testTCPTransportAdapterDialsHostAndPortAndReturnsConnection() async throws {
         let dialer = RecordingTCPDialer()
         let adapter = TCPTransportAdapter(dialer: dialer)
-        let request = TransportRequest(host: "example.com", port: 443, transport: .tcp)
+        let payload = Data([0xca, 0xfe])
+        let request = TransportRequest(host: "example.com", port: 443, transport: .tcp, initialPayload: payload)
 
         let connection = try await adapter.open(request: request)
 
         XCTAssertEqual(connection.host, "example.com")
         XCTAssertEqual(connection.port, 443)
         XCTAssertEqual(connection.transport, .tcp)
-        XCTAssertEqual(dialer.requests, [TCPDialRequest(host: "example.com", port: 443)])
+        XCTAssertEqual(dialer.requests, [TCPDialRequest(host: "example.com", port: 443, initialPayload: payload)])
     }
 
     func testTCPTransportAdapterPropagatesDialerTransportError() async {
@@ -527,6 +531,16 @@ private struct TransportAdapterRequest: Equatable {
     let transport: TransportType
     let tls: TLSOptions?
     let metadata: [String: String]
+    let initialPayload: Data?
+
+    init(host: String, port: Int, transport: TransportType, tls: TLSOptions?, metadata: [String: String], initialPayload: Data? = nil) {
+        self.host = host
+        self.port = port
+        self.transport = transport
+        self.tls = tls
+        self.metadata = metadata
+        self.initialPayload = initialPayload
+    }
 }
 
 private final class RecordingTransportAdapter: TransportAdapter, @unchecked Sendable {
@@ -554,7 +568,7 @@ private final class RecordingTransportAdapter: TransportAdapter, @unchecked Send
     private func record(_ request: TransportRequest) {
         lock.lock()
         defer { lock.unlock() }
-        storedRequests.append(TransportAdapterRequest(host: request.host, port: request.port, transport: request.transport, tls: request.tls, metadata: request.metadata))
+        storedRequests.append(TransportAdapterRequest(host: request.host, port: request.port, transport: request.transport, tls: request.tls, metadata: request.metadata, initialPayload: request.initialPayload))
     }
 }
 
@@ -575,6 +589,7 @@ private struct FailingTransportAdapter: TransportAdapter {
 private struct TCPDialRequest: Equatable {
     let host: String
     let port: Int
+    let initialPayload: Data?
 }
 
 private final class RecordingTCPDialer: TCPDialer, @unchecked Sendable {
@@ -587,22 +602,22 @@ private final class RecordingTCPDialer: TCPDialer, @unchecked Sendable {
         return storedRequests
     }
 
-    func open(host: String, port: Int) async throws -> TCPDialResult {
-        record(host: host, port: port)
+    func open(host: String, port: Int, initialPayload: Data?) async throws -> TCPDialResult {
+        record(host: host, port: port, initialPayload: initialPayload)
         return TCPDialResult(host: host, port: port)
     }
 
-    private func record(host: String, port: Int) {
+    private func record(host: String, port: Int, initialPayload: Data?) {
         lock.lock()
         defer { lock.unlock() }
-        storedRequests.append(TCPDialRequest(host: host, port: port))
+        storedRequests.append(TCPDialRequest(host: host, port: port, initialPayload: initialPayload))
     }
 }
 
 private struct FailingTCPDialer: TCPDialer {
     let error: TransportError
 
-    func open(host: String, port: Int) async throws -> TCPDialResult {
+    func open(host: String, port: Int, initialPayload: Data?) async throws -> TCPDialResult {
         throw error
     }
 }

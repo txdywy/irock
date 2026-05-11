@@ -1,3 +1,4 @@
+import IrockProtocols
 import IrockStorage
 import IrockTransport
 import IrockTunnelCore
@@ -34,6 +35,7 @@ struct IOSPacketTunnelSmokeRunner: Sendable {
             logStore: stores.logStore,
             plain: TCPTransportAdapter(dialer: IOSPlatformTCPDialer()),
             tls: UnsupportedTransportAdapter(transport: .tcp),
+            credentialResolver: MissingShadowsocksCredentialResolver(),
             batchLimit: batchLimit,
             flowLimit: flowLimit
         )

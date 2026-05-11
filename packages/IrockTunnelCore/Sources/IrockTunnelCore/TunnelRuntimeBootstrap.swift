@@ -1,9 +1,10 @@
 import IrockCore
+import IrockProtocols
 import IrockStorage
 import IrockTransport
 
 public struct TunnelRuntimeBootstrap: Sendable {
-    public static func shadowsocksTCP<Reader: PacketReader, Writer: PacketWriter, Plain: TransportAdapter, TLS: TransportAdapter>(
+    public static func shadowsocksTCP<Reader: PacketReader, Writer: PacketWriter, Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ShadowsocksCredentialResolver>(
         snapshot: RuntimeSnapshot,
         reader: Reader,
         writer: Writer,
@@ -11,6 +12,7 @@ public struct TunnelRuntimeBootstrap: Sendable {
         logStore: RuntimeLogStore,
         plain: Plain,
         tls: TLS,
+        credentialResolver: CredentialResolver,
         batchLimit: Int,
         flowLimit: Int
     ) throws -> PacketTunnelRuntime<Reader, Writer> {
@@ -18,6 +20,7 @@ public struct TunnelRuntimeBootstrap: Sendable {
             snapshot: snapshot,
             plain: plain,
             tls: tls,
+            credentialResolver: credentialResolver,
             batchLimit: batchLimit,
             flowLimit: flowLimit
         )

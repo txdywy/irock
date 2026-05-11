@@ -17,6 +17,7 @@ final class RuntimeProxyStackTests: XCTestCase {
             routingEngine: RoutingEngine(rules: [.final(.proxy)]),
             plain: plain,
             tls: tlsChild,
+            credentialResolver: TestShadowsocksCredentialResolver(),
             batchLimit: 16,
             flowLimit: 32
         )
@@ -47,6 +48,7 @@ final class RuntimeProxyStackTests: XCTestCase {
             routingEngine: RoutingEngine(rules: [.final(.proxy)]),
             plain: plain,
             tls: tlsChild,
+            credentialResolver: TestShadowsocksCredentialResolver(),
             batchLimit: 16,
             flowLimit: 32
         )
@@ -71,7 +73,7 @@ final class RuntimeProxyStackTests: XCTestCase {
     func testShadowsocksTCPStackRoutesEnabledTLSToTLSChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
-        let registry = RuntimeProxyStack.shadowsocksTCP(plain: plain, tls: tlsChild)
+        let registry = RuntimeProxyStack.shadowsocksTCP(plain: plain, tls: tlsChild, credentialResolver: TestShadowsocksCredentialResolver())
         let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil)
         let outbound = ProxyOutbound(node: makeNode(tls: tls), registry: registry)
         let result = proxyResult(packetID: "tcp-1")
@@ -95,7 +97,7 @@ final class RuntimeProxyStackTests: XCTestCase {
     func testShadowsocksTCPStackRoutesDisabledTLSToPlainChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
-        let registry = RuntimeProxyStack.shadowsocksTCP(plain: plain, tls: tlsChild)
+        let registry = RuntimeProxyStack.shadowsocksTCP(plain: plain, tls: tlsChild, credentialResolver: TestShadowsocksCredentialResolver())
         let outbound = ProxyOutbound(node: makeNode(tls: .disabled), registry: registry)
         let result = proxyResult(packetID: "tcp-1")
 
@@ -168,5 +170,5 @@ private func snapshot(tls: TLSOptions) -> RuntimeSnapshot {
 }
 
 private func makeNode(tls: TLSOptions) -> ProxyNode {
-    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .shadowsocks, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .tcp, tls: tls, udpPolicy: .disabled)
+    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .shadowsocks, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "aes-256-gcm:pass"), transport: .tcp, tls: tls, udpPolicy: .disabled)
 }

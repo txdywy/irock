@@ -21,6 +21,7 @@ final class TunnelRuntimeBootstrapTests: XCTestCase {
             logStore: logStore,
             plain: plain,
             tls: tlsChild,
+            credentialResolver: TestShadowsocksCredentialResolver(),
             batchLimit: 16,
             flowLimit: 32
         )
@@ -55,6 +56,7 @@ final class TunnelRuntimeBootstrapTests: XCTestCase {
             logStore: InMemoryRuntimeLogStore(),
             plain: BootstrapRecordingTransportAdapter(transport: .tcp),
             tls: BootstrapRecordingTransportAdapter(transport: .tcp),
+            credentialResolver: TestShadowsocksCredentialResolver(),
             batchLimit: 16,
             flowLimit: 32
         )) { error in
@@ -78,6 +80,7 @@ final class TunnelRuntimeBootstrapTests: XCTestCase {
             logStore: logStore,
             plain: plain,
             tls: tlsChild,
+            credentialResolver: TestShadowsocksCredentialResolver(),
             batchLimit: 16,
             flowLimit: 32
         )
@@ -149,7 +152,7 @@ private func bootstrapSnapshot(tls: TLSOptions, routingRuleManifest: RuntimeRout
             protocolType: .shadowsocks,
             serverHost: "example.com",
             serverPort: 443,
-            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "aes-256-gcm:pass"),
             transport: .tcp,
             tls: tls,
             udpPolicy: .disabled

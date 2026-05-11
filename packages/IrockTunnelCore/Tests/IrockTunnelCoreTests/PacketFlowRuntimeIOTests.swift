@@ -18,6 +18,7 @@ final class PacketFlowRuntimeIOTests: XCTestCase {
             logStore: logStore,
             plain: PacketFlowRecordingTransportAdapter(transport: .tcp),
             tls: PacketFlowRecordingTransportAdapter(transport: .tcp),
+            credentialResolver: TestShadowsocksCredentialResolver(),
             batchLimit: 16,
             flowLimit: 32
         )
@@ -49,6 +50,7 @@ final class PacketFlowRuntimeIOTests: XCTestCase {
             logStore: logStore,
             plain: PacketFlowRecordingTransportAdapter(transport: .tcp),
             tls: PacketFlowRecordingTransportAdapter(transport: .tcp),
+            credentialResolver: TestShadowsocksCredentialResolver(),
             batchLimit: 16,
             flowLimit: 32
         )
@@ -82,6 +84,7 @@ final class PacketFlowRuntimeIOTests: XCTestCase {
             logStore: logStore,
             plain: plain,
             tls: tlsChild,
+            credentialResolver: TestShadowsocksCredentialResolver(),
             batchLimit: 16,
             flowLimit: 32
         )
@@ -235,7 +238,7 @@ private func packetFlowSnapshot(tls: TLSOptions, routingRuleManifest: RuntimeRou
             protocolType: .shadowsocks,
             serverHost: "example.com",
             serverPort: 443,
-            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "aes-256-gcm:pass"),
             transport: .tcp,
             tls: tls,
             udpPolicy: .disabled
