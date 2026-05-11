@@ -194,6 +194,40 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testTUICOpenRequestBuildsCredentialSafeMetadataAndPayload() throws {
+        let request = try TUICOpenRequest(
+            credential: "00000000-0000-0000-0000-000000000003:tuic-password",
+            destination: .host("apple.com", port: 443),
+            sni: " tuic.example.com "
+        )
+
+        XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
+        XCTAssertEqual(request.sni, "tuic.example.com")
+        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "tuic-foundation:host:apple.com:443:tuic.example.com:uuid-present:password-present")
+        XCTAssertEqual(request.metadata["tuicUUIDPresent"], "true")
+        XCTAssertEqual(request.metadata["tuicPasswordPresent"], "true")
+        XCTAssertEqual(request.metadata["tuicDestination"], "host:apple.com:443")
+        XCTAssertEqual(request.metadata["tuicSNI"], "tuic.example.com")
+        XCTAssertNil(request.metadata["tuicUUID"])
+        XCTAssertNil(request.metadata["tuicPassword"])
+        XCTAssertFalse(request.openBytes.contains(Data("00000000-0000-0000-0000-000000000003".utf8)))
+        XCTAssertFalse(request.openBytes.contains(Data("tuic-password".utf8)))
+    }
+
+    func testTUICOpenRequestRejectsInvalidCredentials() {
+        let cases: [(String, ProxyProtocolError)] = [
+            ("not-a-uuid:tuic-password", .invalidConfiguration("invalid tuic uuid")),
+            ("00000000-0000-0000-0000-000000000003:", .invalidConfiguration("missing tuic password")),
+            ("00000000-0000-0000-0000-000000000003", .invalidConfiguration("invalid tuic credential"))
+        ]
+
+        for (credential, expectedError) in cases {
+            XCTAssertThrowsError(try TUICOpenRequest(credential: credential, destination: .host("apple.com", port: 443))) { error in
+                XCTAssertEqual(error as? ProxyProtocolError, expectedError)
+            }
+        }
+    }
+
     func testEstablishedProxyConnectionStoresNodeIDAndDestination() {
         let connection = EstablishedProxyConnection(
             nodeID: NodeID(rawValue: "node-1"),
@@ -257,6 +291,56 @@ final class IrockProtocolsTests: XCTestCase {
             do {
                 _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
                 XCTFail("Expected Hysteria2 validation failure")
+            } catch let error as ProxyProtocolError {
+                XCTAssertEqual(error, expectedError)
+                XCTAssertEqual(transport.requests, [])
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testTUICProxyAdapterOpensQUICTransportAndReturnsProxyConnection() async throws {
+        let transport = RecordingTransportAdapter(transport: .quic)
+        let adapter = TUICProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let node = makeNode(protocolType: .tuic, transport: .quic, credentialAccount: "00000000-0000-0000-0000-000000000003:tuic-password")
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, ProxyDestination.host("apple.com", port: 443))
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests.first?.host, "example.com")
+        XCTAssertEqual(transport.requests.first?.port, 443)
+        XCTAssertEqual(transport.requests.first?.transport, .quic)
+        XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "tuic")
+        XCTAssertEqual(transport.requests.first?.metadata["tuicUUIDPresent"], "true")
+        XCTAssertEqual(transport.requests.first?.metadata["tuicPasswordPresent"], "true")
+        XCTAssertEqual(transport.requests.first?.metadata["tuicDestination"], "host:apple.com:443")
+        let payload = transport.requests.first?.initialPayload ?? Data()
+        XCTAssertEqual(String(data: payload, encoding: .utf8), "tuic-foundation:host:apple.com:443:example.com:uuid-present:password-present")
+        XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000003".utf8)))
+        XCTAssertFalse(payload.contains(Data("tuic-password".utf8)))
+    }
+
+    func testTUICProxyAdapterRejectsInvalidConfigurationBeforeTransportOpen() async {
+        let cases: [(ProxyNode, ProxyProtocolError)] = [
+            (makeNode(protocolType: .hysteria2, transport: .quic, credentialAccount: "00000000-0000-0000-0000-000000000003:tuic-password"), .unsupportedProtocol(.hysteria2)),
+            (makeNode(protocolType: .tuic, transport: .tcp, credentialAccount: "00000000-0000-0000-0000-000000000003:tuic-password"), .unsupportedTransport(.tcp)),
+            (makeNode(protocolType: .tuic, transport: .quic, serverHost: "   ", credentialAccount: "00000000-0000-0000-0000-000000000003:tuic-password"), .invalidConfiguration("missing tuic server host")),
+            (makeNode(protocolType: .tuic, transport: .quic, serverPort: 0, credentialAccount: "00000000-0000-0000-0000-000000000003:tuic-password"), .invalidConfiguration("invalid tuic server port")),
+            (makeNode(protocolType: .tuic, transport: .quic, credentialAccount: "not-a-uuid:tuic-password"), .invalidConfiguration("invalid tuic uuid")),
+            (makeNode(protocolType: .tuic, transport: .quic, credentialAccount: "00000000-0000-0000-0000-000000000003:"), .invalidConfiguration("missing tuic password"))
+        ]
+
+        for (node, expectedError) in cases {
+            let transport = RecordingTransportAdapter(transport: .quic)
+            let adapter = TUICProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+            do {
+                _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
+                XCTFail("Expected TUIC validation failure")
             } catch let error as ProxyProtocolError {
                 XCTAssertEqual(error, expectedError)
                 XCTAssertEqual(transport.requests, [])

@@ -234,6 +234,26 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertFalse(payload.contains(Data("hysteria-secret".utf8)))
     }
 
+    func testTUICQUICStackRoutesThroughQUICTransport() async throws {
+        let quic = RecordingTransportAdapter(transport: .quic)
+        let registry = RuntimeProxyStack.tuicQUIC(quic: quic)
+        let outbound = ProxyOutbound(node: makeTUICNode(), registry: registry)
+        let result = proxyResult(packetID: "tcp-1")
+
+        let connection = try await outbound.connect(result: result)
+
+        XCTAssertEqual(connection?.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(quic.requests.count, 1)
+        XCTAssertEqual(quic.requests.first?.transport, .quic)
+        XCTAssertEqual(quic.requests.first?.metadata["proxyProtocol"], "tuic")
+        XCTAssertEqual(quic.requests.first?.metadata["tuicUUIDPresent"], "true")
+        XCTAssertEqual(quic.requests.first?.metadata["tuicPasswordPresent"], "true")
+        XCTAssertEqual(quic.requests.first?.metadata["tuicDestination"], "ipv4:93.184.216.34:443")
+        let payload = quic.requests.first?.initialPayload ?? Data()
+        XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000003".utf8)))
+        XCTAssertFalse(payload.contains(Data("tuic-password".utf8)))
+    }
+
     func testTrojanTCPStackRoutesDisabledTLSToPlainChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
@@ -342,4 +362,9 @@ private func makeTrojanNode(tls: TLSOptions) -> ProxyNode {
 private func makeHysteria2Node() -> ProxyNode {
     let tls = TLSOptions(enabled: true, serverName: "hysteria.example.com", allowInsecure: false, alpn: ["h3"], fingerprint: nil, reality: nil)
     return ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .hysteria2, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "hysteria-secret"), transport: .quic, tls: tls, udpPolicy: .disabled)
+}
+
+private func makeTUICNode() -> ProxyNode {
+    let tls = TLSOptions(enabled: true, serverName: "tuic.example.com", allowInsecure: false, alpn: ["h3"], fingerprint: nil, reality: nil)
+    return ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .tuic, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "00000000-0000-0000-0000-000000000003:tuic-password"), transport: .quic, tls: tls, udpPolicy: .disabled)
 }

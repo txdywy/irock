@@ -61,6 +61,14 @@ public struct RuntimeProxyStack: Sendable {
         let hysteria2 = Hysteria2ProxyAdapter(transportRegistry: transportRegistry)
         return ProxyAdapterRegistry(adapters: [hysteria2])
     }
+
+    public static func tuicQUIC<QUIC: TransportAdapter>(
+        quic: QUIC
+    ) -> ProxyAdapterRegistry {
+        let transportRegistry = TransportAdapterRegistry(adapters: [quic])
+        let tuic = TUICProxyAdapter(transportRegistry: transportRegistry)
+        return ProxyAdapterRegistry(adapters: [tuic])
+    }
 }
 
 public extension TunnelRuntimeConfiguration {
@@ -183,6 +191,36 @@ public extension TunnelRuntimeConfiguration {
         try TunnelRuntimeConfiguration(
             snapshot: snapshot,
             proxyAdapterRegistry: RuntimeProxyStack.hysteria2QUIC(quic: quic),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func tuicQUIC<QUIC: TransportAdapter>(
+        snapshot: RuntimeSnapshot,
+        routingEngine: RoutingEngine,
+        quic: QUIC,
+        batchLimit: Int,
+        flowLimit: Int
+    ) -> TunnelRuntimeConfiguration {
+        TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            routingEngine: routingEngine,
+            proxyAdapterRegistry: RuntimeProxyStack.tuicQUIC(quic: quic),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func tuicQUIC<QUIC: TransportAdapter>(
+        snapshot: RuntimeSnapshot,
+        quic: QUIC,
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> TunnelRuntimeConfiguration {
+        try TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            proxyAdapterRegistry: RuntimeProxyStack.tuicQUIC(quic: quic),
             batchLimit: batchLimit,
             flowLimit: flowLimit
         )
