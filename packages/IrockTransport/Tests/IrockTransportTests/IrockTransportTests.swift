@@ -253,6 +253,119 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(connection.transport, .tcp)
         XCTAssertEqual(underlying.requests, [TransportAdapterRequest(host: "example.com", port: 443, transport: .tcp, tls: nil, metadata: ["source": "unit-test"])])
     }
+
+    func testTLSTransportAdapterRejectsNonTCPBeforeOpeningUnderlying() async {
+        let underlying = RecordingTransportAdapter(transport: .grpc)
+        let adapter = TLSTransportAdapter(underlying: underlying)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .grpc, tls: tls)
+
+        do {
+            _ = try await adapter.open(request: request)
+            XCTFail("Expected unsupported transport")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .unsupportedTransport(.grpc))
+            XCTAssertEqual(underlying.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testTLSTransportAdapterRejectsMissingOrDisabledTLSBeforeOpeningUnderlying() async {
+        let underlying = RecordingTransportAdapter(transport: .tcp)
+        let adapter = TLSTransportAdapter(underlying: underlying)
+        let disabled = TLSOptions.disabled
+        let requests = [
+            TransportRequest(host: "example.com", port: 443, transport: .tcp),
+            TransportRequest(host: "example.com", port: 443, transport: .tcp, tls: disabled)
+        ]
+
+        for request in requests {
+            do {
+                _ = try await adapter.open(request: request)
+                XCTFail("Expected invalid configuration")
+            } catch let error as TransportError {
+                XCTAssertEqual(error, .invalidConfiguration("missing tls options"))
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+
+        XCTAssertEqual(underlying.requests, [])
+    }
+
+    func testTLSTransportAdapterRejectsEmptyHostBeforeOpeningUnderlying() async {
+        let underlying = RecordingTransportAdapter(transport: .tcp)
+        let adapter = TLSTransportAdapter(underlying: underlying)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let request = TransportRequest(host: "   ", port: 443, transport: .tcp, tls: tls)
+
+        do {
+            _ = try await adapter.open(request: request)
+            XCTFail("Expected invalid configuration")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .invalidConfiguration("missing tls host"))
+            XCTAssertEqual(underlying.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testTLSTransportAdapterRejectsInvalidPortBeforeOpeningUnderlying() async {
+        let underlying = RecordingTransportAdapter(transport: .tcp)
+        let adapter = TLSTransportAdapter(underlying: underlying)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+
+        for port in [0, 65_536] {
+            let request = TransportRequest(host: "example.com", port: port, transport: .tcp, tls: tls)
+
+            do {
+                _ = try await adapter.open(request: request)
+                XCTFail("Expected invalid configuration")
+            } catch let error as TransportError {
+                XCTAssertEqual(error, .invalidConfiguration("invalid tls port"))
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+
+        XCTAssertEqual(underlying.requests, [])
+    }
+
+    func testTLSTransportAdapterRejectsEmptyServerNameBeforeOpeningUnderlying() async {
+        let underlying = RecordingTransportAdapter(transport: .tcp)
+        let adapter = TLSTransportAdapter(underlying: underlying)
+        let tls = TLSOptions(enabled: true, serverName: "   ", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .tcp, tls: tls)
+
+        do {
+            _ = try await adapter.open(request: request)
+            XCTFail("Expected invalid configuration")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .invalidConfiguration("invalid tls server name"))
+            XCTAssertEqual(underlying.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testTLSTransportAdapterRejectsRealityBeforeOpeningUnderlying() async {
+        let underlying = RecordingTransportAdapter(transport: .tcp)
+        let adapter = TLSTransportAdapter(underlying: underlying)
+        let reality = RealityOptions(publicKey: "public", shortID: nil, spiderX: nil)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: reality)
+        let request = TransportRequest(host: "example.com", port: 443, transport: .tcp, tls: tls)
+
+        do {
+            _ = try await adapter.open(request: request)
+            XCTFail("Expected unsupported transport")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .unsupportedTransport(.tcp))
+            XCTAssertEqual(underlying.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
 }
 
 private struct TransportAdapterRequest: Equatable {

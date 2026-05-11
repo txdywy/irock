@@ -166,9 +166,31 @@ public struct TLSTransportAdapter<Underlying: TransportAdapter>: TransportAdapte
     }
 
     public func open(request: TransportRequest) async throws -> any TransportConnection {
+        try validate(request)
         let host = request.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let underlyingRequest = TransportRequest(host: host, port: request.port, transport: request.transport, tls: nil, metadata: request.metadata)
         let connection = try await underlying.open(request: underlyingRequest)
         return EstablishedTransportConnection(host: connection.host, port: connection.port, transport: .tcp)
+    }
+
+    private func validate(_ request: TransportRequest) throws {
+        guard request.transport == .tcp else {
+            throw TransportError.unsupportedTransport(request.transport)
+        }
+        guard let tls = request.tls, tls.enabled else {
+            throw TransportError.invalidConfiguration("missing tls options")
+        }
+        guard !request.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw TransportError.invalidConfiguration("missing tls host")
+        }
+        guard (1...65_535).contains(request.port) else {
+            throw TransportError.invalidConfiguration("invalid tls port")
+        }
+        if let serverName = tls.serverName, serverName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw TransportError.invalidConfiguration("invalid tls server name")
+        }
+        guard tls.reality == nil else {
+            throw TransportError.unsupportedTransport(.tcp)
+        }
     }
 }
