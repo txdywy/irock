@@ -65,8 +65,50 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(project.contains("IrockApp.swift in Sources"))
         XCTAssertTrue(project.contains("ContentView.swift in Sources"))
         XCTAssertTrue(project.contains("PacketTunnelProvider.swift in Sources"))
+        XCTAssertTrue(project.contains("NEPacketTunnelFlowPacketFlowIO.swift in Sources"))
+        XCTAssertTrue(project.contains("PacketTunnelAppGroupStoreResolver.swift in Sources"))
+        XCTAssertTrue(project.contains("IOSPacketTunnelSmokeRunner.swift in Sources"))
         XCTAssertTrue(project.contains("irockTunnelExtension.appex in Embed App Extensions"))
         XCTAssertTrue(project.contains("relativePath = ../.."))
+    }
+
+    func testPacketTunnelProviderWiresSmokeRunner() throws {
+        let provider = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/PacketTunnelProvider.swift"))
+
+        XCTAssertTrue(provider.contains("IOSPacketTunnelSmokeRunner"))
+        XCTAssertTrue(provider.contains("startTunnelTask"))
+        XCTAssertTrue(provider.contains("packetFlow"))
+        XCTAssertTrue(provider.contains("cancel()"))
+    }
+
+    func testPacketTunnelSmokePathFilesDeclareExpectedBoundaries() throws {
+        let flowAdapter = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/NEPacketTunnelFlowPacketFlowIO.swift"))
+        let storeResolver = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/PacketTunnelAppGroupStoreResolver.swift"))
+        let smokeRunner = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-iOS/irockTunnelExtension/IOSPacketTunnelSmokeRunner.swift"))
+
+        XCTAssertTrue(flowAdapter.contains("import " + "NetworkExtension"))
+        XCTAssertTrue(flowAdapter.contains("PacketFlowIO"))
+        XCTAssertTrue(flowAdapter.contains("readPacketObjects"))
+        XCTAssertTrue(flowAdapter.contains("writePacketObjects"))
+        XCTAssertTrue(storeResolver.contains("containerURL(forSecurityApplicationGroupIdentifier:"))
+        XCTAssertTrue(storeResolver.contains("AppGroupRuntimeStoreDirectory"))
+        XCTAssertTrue(storeResolver.contains("group.dev.irock.shared"))
+        XCTAssertTrue(smokeRunner.contains("TunnelRuntimeController.runShadowsocksTCPBatch"))
+        XCTAssertTrue(smokeRunner.contains("UnsupportedTransportAdapter"))
+    }
+
+    func testNetworkExtensionImportsStayInsideTunnelExtension() throws {
+        let forbiddenRoots = [
+            repositoryRoot.appendingPathComponent("packages"),
+            repositoryRoot.appendingPathComponent("apps/irock-iOS/irockApp")
+        ]
+
+        for root in forbiddenRoots {
+            for file in try swiftFiles(under: root) {
+                let contents = try String(contentsOf: file)
+                XCTAssertFalse(contents.contains("import " + "NetworkExtension"), "NetworkExtension leaked into \(file.path)")
+            }
+        }
     }
 
     private var repositoryRoot: URL {
@@ -86,6 +128,9 @@ final class XcodeScaffoldTests: XCTestCase {
             "apps/irock-iOS/irockApp/Info.plist",
             "apps/irock-iOS/irockApp/irockApp.entitlements",
             "apps/irock-iOS/irockTunnelExtension/PacketTunnelProvider.swift",
+            "apps/irock-iOS/irockTunnelExtension/NEPacketTunnelFlowPacketFlowIO.swift",
+            "apps/irock-iOS/irockTunnelExtension/PacketTunnelAppGroupStoreResolver.swift",
+            "apps/irock-iOS/irockTunnelExtension/IOSPacketTunnelSmokeRunner.swift",
             "apps/irock-iOS/irockTunnelExtension/Info.plist",
             "apps/irock-iOS/irockTunnelExtension/irockTunnelExtension.entitlements"
         ]

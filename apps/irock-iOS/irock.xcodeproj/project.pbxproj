@@ -10,6 +10,9 @@
 		IROCKAPPFILEBUILD000001 /* IrockApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKAPPFILEREF000001 /* IrockApp.swift */;};
 		IROCKCONTENTBUILD000001 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKCONTENTFILEREF0001 /* ContentView.swift */;};
 		IROCKPROVIDERBUILD00001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKPROVIDERFILEREF001 /* PacketTunnelProvider.swift */;};
+		IROCKFLOWIOBUILD000001 /* NEPacketTunnelFlowPacketFlowIO.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKFLOWIOFILEREF00001 /* NEPacketTunnelFlowPacketFlowIO.swift */;};
+		IROCKSTORERESBUILD0001 /* PacketTunnelAppGroupStoreResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKSTORERESFILEREF001 /* PacketTunnelAppGroupStoreResolver.swift */;};
+		IROCKSMOKERUNBUILD0001 /* IOSPacketTunnelSmokeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKSMOKERUNFILEREF001 /* IOSPacketTunnelSmokeRunner.swift */;};
 		IROCKTUNNELEMBEDBUILD01 /* irockTunnelExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = IROCKTUNNELPRODUCT000001 /* irockTunnelExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, );};};
 /* End PBXBuildFile section */
 
@@ -110,6 +113,9 @@
 			isa = PBXGroup;
 			children = (
 				IROCKPROVIDERFILEREF001 /* PacketTunnelProvider.swift */,
+				IROCKFLOWIOFILEREF00001 /* NEPacketTunnelFlowPacketFlowIO.swift */,
+				IROCKSTORERESFILEREF001 /* PacketTunnelAppGroupStoreResolver.swift */,
+				IROCKSMOKERUNFILEREF001 /* IOSPacketTunnelSmokeRunner.swift */,
 				IROCKTUNNELINFOFILEREF1 /* Info.plist */,
 				IROCKTUNNELENTITLEFILEREF /* irockTunnelExtension.entitlements */,
 			);
@@ -133,6 +139,9 @@
 		IROCKAPPINFOFILEREF001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>";};
 		IROCKAPPENTITLEFILEREF1 /* irockApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = irockApp.entitlements; sourceTree = "<group>";};
 		IROCKPROVIDERFILEREF001 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>";};
+		IROCKFLOWIOFILEREF00001 /* NEPacketTunnelFlowPacketFlowIO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NEPacketTunnelFlowPacketFlowIO.swift; sourceTree = "<group>";};
+		IROCKSTORERESFILEREF001 /* PacketTunnelAppGroupStoreResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelAppGroupStoreResolver.swift; sourceTree = "<group>";};
+		IROCKSMOKERUNFILEREF001 /* IOSPacketTunnelSmokeRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSPacketTunnelSmokeRunner.swift; sourceTree = "<group>";};
 		IROCKTUNNELINFOFILEREF1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>";};
 		IROCKTUNNELENTITLEFILEREF /* irockTunnelExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = irockTunnelExtension.entitlements; sourceTree = "<group>";};
 		IROCKAPPPRODUCT000000001 /* irockApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = irockApp.app; sourceTree = BUILT_PRODUCTS_DIR;};
@@ -141,7 +150,7 @@
 
 /* Begin PBXSourcesBuildPhase section */
 		IROCKAPPSOURCES0000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (IROCKAPPFILEBUILD000001 /* IrockApp.swift in Sources */, IROCKCONTENTBUILD000001 /* ContentView.swift in Sources */); runOnlyForDeploymentPostprocessing = 0;};
-		IROCKTUNNELSOURCES000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (IROCKPROVIDERBUILD00001 /* PacketTunnelProvider.swift in Sources */); runOnlyForDeploymentPostprocessing = 0;};
+		IROCKTUNNELSOURCES000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (IROCKPROVIDERBUILD00001 /* PacketTunnelProvider.swift in Sources */, IROCKFLOWIOBUILD000001 /* NEPacketTunnelFlowPacketFlowIO.swift in Sources */, IROCKSTORERESBUILD0001 /* PacketTunnelAppGroupStoreResolver.swift in Sources */, IROCKSMOKERUNBUILD0001 /* IOSPacketTunnelSmokeRunner.swift in Sources */); runOnlyForDeploymentPostprocessing = 0;};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
