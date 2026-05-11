@@ -6,10 +6,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     override func startTunnel(options: [String: NSObject]?) async throws {
         try await PacketTunnelRuntimeSettingsApplicator().apply(to: self)
         let task = Task {
-            _ = try await IOSPacketTunnelSmokeRunner().runOnce(packetFlow: packetFlow)
+            try await IOSPacketTunnelLoopRunner().run(packetFlow: packetFlow)
         }
         startTunnelTask = task
-        try await task.value
     }
 
     override func stopTunnel(with reason: NEProviderStopReason) async {
