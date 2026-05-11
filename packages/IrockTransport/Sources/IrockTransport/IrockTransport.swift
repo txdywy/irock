@@ -217,3 +217,76 @@ public struct TCPTLSTransportAdapter<Plain: TransportAdapter, TLS: TransportAdap
         return try await plain.open(request: request)
     }
 }
+
+public struct WebSocketTransportAdapter<Underlying: TransportAdapter>: TransportAdapter {
+    public let supportedTransport: TransportType = .webSocket
+    private let underlying: Underlying
+
+    public init(underlying: Underlying) {
+        self.underlying = underlying
+    }
+
+    public func open(request: TransportRequest) async throws -> any TransportConnection {
+        let descriptor = try descriptor(for: request)
+        let underlyingRequest = TransportRequest(
+            host: descriptor.host,
+            port: request.port,
+            transport: .tcp,
+            tls: request.tls,
+            metadata: descriptor.metadata,
+            initialPayload: descriptor.initialPayload(appending: request.initialPayload)
+        )
+        let connection = try await underlying.open(request: underlyingRequest)
+        return EstablishedTransportConnection(host: connection.host, port: connection.port, transport: .webSocket)
+    }
+
+    private func descriptor(for request: TransportRequest) throws -> WebSocketOpenDescriptor {
+        guard request.transport == .webSocket else {
+            throw TransportError.unsupportedTransport(request.transport)
+        }
+        let host = request.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else {
+            throw TransportError.invalidConfiguration("missing websocket host")
+        }
+        guard (1...65_535).contains(request.port) else {
+            throw TransportError.invalidConfiguration("invalid websocket port")
+        }
+        let path = request.metadata["webSocketPath", default: "/"].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard path.hasPrefix("/") else {
+            throw TransportError.invalidConfiguration("invalid websocket path")
+        }
+        let hostHeader = request.metadata["webSocketHost", default: host].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !hostHeader.isEmpty else {
+            throw TransportError.invalidConfiguration("invalid websocket host header")
+        }
+        let protocolName = request.metadata["webSocketProtocol"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return WebSocketOpenDescriptor(host: host, hostHeader: hostHeader, path: path, protocolName: protocolName)
+    }
+}
+
+private struct WebSocketOpenDescriptor {
+    let host: String
+    let hostHeader: String
+    let path: String
+    let protocolName: String
+
+    var metadata: [String: String] {
+        var metadata = [
+            "webSocketHost": hostHeader,
+            "webSocketPath": path,
+            "webSocketUpgrade": "true"
+        ]
+        if !protocolName.isEmpty {
+            metadata["webSocketProtocol"] = protocolName
+        }
+        return metadata
+    }
+
+    func initialPayload(appending payload: Data?) -> Data {
+        var data = Data("websocket-foundation:\(hostHeader):\(path):\(protocolName)\n".utf8)
+        if let payload {
+            data.append(payload)
+        }
+        return data
+    }
+}

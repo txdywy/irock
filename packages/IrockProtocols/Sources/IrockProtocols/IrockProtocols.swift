@@ -500,7 +500,7 @@ public struct VMessProxyAdapter: ProxyAdapter {
         guard (1...65_535).contains(node.serverPort) else {
             throw ProxyProtocolError.invalidConfiguration("invalid vmess server port")
         }
-        guard node.transport == .tcp else {
+        guard node.transport == .tcp || node.transport == .webSocket else {
             throw ProxyProtocolError.unsupportedTransport(node.transport)
         }
         _ = try VMessOpenRequest(userID: node.credentialReference.account, destination: .host("validation.local", port: 1))
@@ -574,7 +574,7 @@ public struct VLESSProxyAdapter: ProxyAdapter {
         guard (1...65_535).contains(node.serverPort) else {
             throw ProxyProtocolError.invalidConfiguration("invalid vless server port")
         }
-        guard node.transport == .tcp else {
+        guard node.transport == .tcp || node.transport == .webSocket else {
             throw ProxyProtocolError.unsupportedTransport(node.transport)
         }
         _ = try VLESSOpenRequest(userID: node.credentialReference.account, destination: .host("validation.local", port: 1))
@@ -652,7 +652,7 @@ public struct TrojanProxyAdapter: ProxyAdapter {
         guard (1...65_535).contains(node.serverPort) else {
             throw ProxyProtocolError.invalidConfiguration("invalid trojan server port")
         }
-        guard node.transport == .tcp else {
+        guard node.transport == .tcp || node.transport == .webSocket else {
             throw ProxyProtocolError.unsupportedTransport(node.transport)
         }
         _ = try TrojanOpenRequest(password: node.credentialReference.account, destination: .host("validation.local", port: 1), serverName: node.tls.serverName ?? "")

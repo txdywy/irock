@@ -515,6 +515,38 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testProtocolFoundationAdaptersOpenWebSocketTransport() async throws {
+        let cases: [(ProxyProtocolType, String)] = [
+            (.vmess, "00000000-0000-0000-0000-000000000001"),
+            (.vless, "00000000-0000-0000-0000-000000000002"),
+            (.trojan, "secret-password")
+        ]
+
+        for (protocolType, credentialAccount) in cases {
+            let transport = RecordingTransportAdapter(transport: .webSocket)
+            let registry = TransportAdapterRegistry(adapters: [transport])
+            let adapter: any ProxyAdapter
+            switch protocolType {
+            case .vmess:
+                adapter = VMessProxyAdapter(transportRegistry: registry)
+            case .vless:
+                adapter = VLESSProxyAdapter(transportRegistry: registry)
+            case .trojan:
+                adapter = TrojanProxyAdapter(transportRegistry: registry)
+            default:
+                XCTFail("Unexpected protocol type")
+                return
+            }
+            let node = makeNode(protocolType: protocolType, transport: .webSocket, credentialAccount: credentialAccount)
+
+            _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
+
+            XCTAssertEqual(transport.requests.count, 1)
+            XCTAssertEqual(transport.requests.first?.transport, .webSocket)
+            XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], protocolType.rawValue)
+        }
+    }
+
     func testTransportBackedProxyAdapterOmitsDisabledTLS() async throws {
         let transport = RecordingTransportAdapter(transport: .tcp)
         let adapter = TransportBackedProxyAdapter(protocolType: .trojan, transportRegistry: TransportAdapterRegistry(adapters: [transport]))

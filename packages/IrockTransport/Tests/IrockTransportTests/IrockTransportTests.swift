@@ -371,6 +371,74 @@ final class IrockTransportTests: XCTestCase {
         }
     }
 
+    func testWebSocketTransportAdapterOpensUnderlyingTCPWithMetadataAndPayload() async throws {
+        let underlying = RecordingTransportAdapter(transport: .tcp, connectionHost: "connected.example.com")
+        let adapter = WebSocketTransportAdapter(underlying: underlying)
+        let payload = Data("protocol-open".utf8)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let request = TransportRequest(
+            host: " example.com ",
+            port: 443,
+            transport: .webSocket,
+            tls: tls,
+            metadata: ["webSocketPath": "/proxy", "webSocketProtocol": "vmess"],
+            initialPayload: payload
+        )
+
+        let connection = try await adapter.open(request: request)
+
+        XCTAssertEqual(connection.host, "connected.example.com")
+        XCTAssertEqual(connection.port, 443)
+        XCTAssertEqual(connection.transport, .webSocket)
+        XCTAssertEqual(underlying.requests.count, 1)
+        XCTAssertEqual(underlying.requests.first?.host, "example.com")
+        XCTAssertEqual(underlying.requests.first?.port, 443)
+        XCTAssertEqual(underlying.requests.first?.transport, .tcp)
+        XCTAssertEqual(underlying.requests.first?.tls, tls)
+        XCTAssertEqual(underlying.requests.first?.metadata["webSocketHost"], "example.com")
+        XCTAssertEqual(underlying.requests.first?.metadata["webSocketPath"], "/proxy")
+        XCTAssertEqual(underlying.requests.first?.metadata["webSocketProtocol"], "vmess")
+        XCTAssertEqual(underlying.requests.first?.metadata["webSocketUpgrade"], "true")
+        XCTAssertEqual(String(data: underlying.requests.first?.initialPayload ?? Data(), encoding: .utf8), "websocket-foundation:example.com:/proxy:vmess\nprotocol-open")
+    }
+
+    func testWebSocketTransportAdapterDefaultsPathAndHostMetadata() async throws {
+        let underlying = RecordingTransportAdapter(transport: .tcp)
+        let adapter = WebSocketTransportAdapter(underlying: underlying)
+        let request = TransportRequest(host: "example.com", port: 80, transport: .webSocket)
+
+        _ = try await adapter.open(request: request)
+
+        XCTAssertEqual(underlying.requests.first?.metadata["webSocketHost"], "example.com")
+        XCTAssertEqual(underlying.requests.first?.metadata["webSocketPath"], "/")
+        XCTAssertNil(underlying.requests.first?.metadata["webSocketProtocol"])
+        XCTAssertEqual(String(data: underlying.requests.first?.initialPayload ?? Data(), encoding: .utf8), "websocket-foundation:example.com:/:\n")
+    }
+
+    func testWebSocketTransportAdapterRejectsInvalidConfigurationBeforeOpeningUnderlying() async {
+        let cases: [(TransportRequest, TransportError)] = [
+            (TransportRequest(host: "example.com", port: 443, transport: .tcp), .unsupportedTransport(.tcp)),
+            (TransportRequest(host: "   ", port: 443, transport: .webSocket), .invalidConfiguration("missing websocket host")),
+            (TransportRequest(host: "example.com", port: 0, transport: .webSocket), .invalidConfiguration("invalid websocket port")),
+            (TransportRequest(host: "example.com", port: 443, transport: .webSocket, metadata: ["webSocketPath": "proxy"]), .invalidConfiguration("invalid websocket path")),
+            (TransportRequest(host: "example.com", port: 443, transport: .webSocket, metadata: ["webSocketHost": "   "]), .invalidConfiguration("invalid websocket host header"))
+        ]
+
+        for (request, expectedError) in cases {
+            let underlying = RecordingTransportAdapter(transport: .tcp)
+            let adapter = WebSocketTransportAdapter(underlying: underlying)
+            do {
+                _ = try await adapter.open(request: request)
+                XCTFail("Expected WebSocket validation failure")
+            } catch let error as TransportError {
+                XCTAssertEqual(error, expectedError)
+                XCTAssertEqual(underlying.requests, [])
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
     func testTLSTransportAdapterPropagatesUnderlyingTransportError() async {
         let adapter = TLSTransportAdapter(underlying: FailingTransportAdapter(transport: .tcp, error: .tlsHandshakeFailed("handshake failed")))
         let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
