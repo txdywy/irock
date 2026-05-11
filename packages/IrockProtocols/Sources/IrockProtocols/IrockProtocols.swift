@@ -122,3 +122,104 @@ public struct ProxyAdapterRegistry: Sendable {
         adapters[protocolType] ?? UnsupportedProxyAdapter(protocolType: protocolType)
     }
 }
+
+public struct TransportBackedProxyAdapter: ProxyAdapter {
+    public let supportedProtocol: ProxyProtocolType
+    private let transportRegistry: TransportAdapterRegistry
+
+    public init(protocolType: ProxyProtocolType, transportRegistry: TransportAdapterRegistry) {
+        self.supportedProtocol = protocolType
+        self.transportRegistry = transportRegistry
+    }
+
+    public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
+        guard request.node.protocolType == supportedProtocol else {
+            throw ProxyProtocolError.unsupportedProtocol(request.node.protocolType)
+        }
+
+        let transportRequest = TransportRequest(
+            host: request.node.serverHost,
+            port: request.node.serverPort,
+            transport: request.node.transport,
+            tls: request.node.tls.enabled ? request.node.tls : nil,
+            metadata: transportMetadata(for: request)
+        )
+        do {
+            _ = try await transportRegistry.adapter(for: request.node.transport).open(request: transportRequest)
+        } catch let error as TransportError {
+            throw proxyProtocolError(for: error)
+        }
+        return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination)
+    }
+
+    private func transportMetadata(for request: ProxyRequest) -> [String: String] {
+        var metadata = request.metadata
+        metadata["proxyProtocol"] = request.node.protocolType.rawValue
+        metadata["destination"] = destinationDescription(request.destination)
+        return metadata
+    }
+
+    private func destinationDescription(_ destination: ProxyDestination) -> String {
+        switch destination {
+        case let .host(host, port):
+            return "host:\(host):\(port)"
+        case let .ipv4(address, port):
+            return "ipv4:\(address):\(port)"
+        case let .ipv6(address, port):
+            return "ipv6:\(address):\(port)"
+        }
+    }
+
+    private func proxyProtocolError(for error: TransportError) -> ProxyProtocolError {
+        switch error {
+        case .invalidConfiguration:
+            return .invalidConfiguration("transport invalid")
+        case .dnsFailed:
+            return .dnsFailed("transport dns failed")
+        case .tcpConnectFailed:
+            return .tcpConnectFailed("transport tcp connect failed")
+        case .tlsHandshakeFailed:
+            return .tlsHandshakeFailed("transport tls handshake failed")
+        case let .unsupportedTransport(transport):
+            return .unsupportedTransport(transport)
+        case .quicHandshakeFailed:
+            return .quicHandshakeFailed("transport quic handshake failed")
+        case .remoteClosed:
+            return .remoteClosed
+        case .timeout:
+            return .timeout
+        }
+    }
+}
+
+public struct ShadowsocksProxyAdapter: ProxyAdapter {
+    public let supportedProtocol: ProxyProtocolType = .shadowsocks
+    private let transportBackedAdapter: TransportBackedProxyAdapter
+
+    public init(transportRegistry: TransportAdapterRegistry) {
+        self.transportBackedAdapter = TransportBackedProxyAdapter(protocolType: .shadowsocks, transportRegistry: transportRegistry)
+    }
+
+    public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
+        try validate(request.node)
+        return try await transportBackedAdapter.connect(request: request)
+    }
+
+    private func validate(_ node: ProxyNode) throws {
+        guard node.protocolType == .shadowsocks else {
+            throw ProxyProtocolError.unsupportedProtocol(node.protocolType)
+        }
+        guard !node.serverHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing shadowsocks server host")
+        }
+        guard (1...65_535).contains(node.serverPort) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks server port")
+        }
+        guard !node.credentialReference.account.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing shadowsocks credential account")
+        }
+        guard node.transport == .tcp else {
+            throw ProxyProtocolError.unsupportedTransport(node.transport)
+        }
+    }
+}

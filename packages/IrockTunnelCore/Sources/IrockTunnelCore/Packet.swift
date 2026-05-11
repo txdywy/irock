@@ -10,11 +10,14 @@ public struct Packet: Equatable, Hashable, Sendable {
 
 public enum IPAddress: Equatable, Hashable, Sendable {
     case v4(UInt8, UInt8, UInt8, UInt8)
+    case v6(String)
 
     public var stringValue: String {
         switch self {
         case let .v4(a, b, c, d):
             return "\(a).\(b).\(c).\(d)"
+        case let .v6(address):
+            return address
         }
     }
 }

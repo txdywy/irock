@@ -1,5 +1,6 @@
 import XCTest
 import IrockCore
+import IrockTransport
 @testable import IrockProtocols
 
 final class IrockProtocolsTests: XCTestCase {
@@ -151,16 +152,303 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(connection.nodeID, NodeID(rawValue: "second"))
     }
 
-    private func makeNode(protocolType: ProxyProtocolType, transport: TransportType) -> ProxyNode {
+    func testTransportBackedProxyAdapterOpensNodeTransportAndReturnsProxyConnection() async throws {
+        let transport = RecordingTransportAdapter(transport: .grpc)
+        let adapter = TransportBackedProxyAdapter(protocolType: .trojan, transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let node = makeNode(protocolType: .trojan, transport: .grpc)
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests.first?.host, "example.com")
+        XCTAssertEqual(transport.requests.first?.port, 443)
+        XCTAssertEqual(transport.requests.first?.transport, .grpc)
+        XCTAssertEqual(transport.requests.first?.tls?.enabled, true)
+        XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "trojan")
+        XCTAssertEqual(transport.requests.first?.metadata["destination"], "host:apple.com:443")
+    }
+
+    func testTransportBackedProxyAdapterRejectsProtocolMismatchBeforeOpeningTransport() async {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = TransportBackedProxyAdapter(protocolType: .trojan, transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .vmess, transport: .tcp), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected unsupported protocol")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .unsupportedProtocol(.vmess))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testTransportBackedProxyAdapterOmitsDisabledTLS() async throws {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = TransportBackedProxyAdapter(protocolType: .trojan, transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .trojan, transport: .tcp, tls: .disabled), destination: .ipv4("93.184.216.34", port: 443))
+
+        _ = try await adapter.connect(request: request)
+
+        XCTAssertNil(transport.requests.first?.tls)
+        XCTAssertEqual(transport.requests.first?.metadata["destination"], "ipv4:93.184.216.34:443")
+    }
+
+    func testShadowsocksProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .trojan, transport: .tcp), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected unsupported protocol")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .unsupportedProtocol(.trojan))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testShadowsocksProxyAdapterRejectsEmptyServerHostBeforeTransportOpen() async {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp, serverHost: "   "), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected invalid configuration")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .invalidConfiguration("missing shadowsocks server host"))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testShadowsocksProxyAdapterRejectsInvalidServerPortBeforeTransportOpen() async {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp, serverPort: 0), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected invalid configuration")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .invalidConfiguration("invalid shadowsocks server port"))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testShadowsocksProxyAdapterRejectsEmptyCredentialAccountBeforeTransportOpen() async {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp, credentialAccount: "   "), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected invalid configuration")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .invalidConfiguration("missing shadowsocks credential account"))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testShadowsocksProxyAdapterRejectsNonTCPTransportBeforeTransportOpen() async {
+        let transport = RecordingTransportAdapter(transport: .grpc)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .grpc), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected unsupported transport")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .unsupportedTransport(.grpc))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testShadowsocksProxyAdapterReportsSupportedProtocol() {
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: []))
+
+        XCTAssertEqual(adapter.supportedProtocol, .shadowsocks)
+    }
+
+    func testShadowsocksProxyAdapterOpensTCPTransportAndReturnsProxyConnection() async throws {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let node = makeNode(protocolType: .shadowsocks, transport: .tcp)
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests.first?.host, "example.com")
+        XCTAssertEqual(transport.requests.first?.port, 443)
+        XCTAssertEqual(transport.requests.first?.transport, .tcp)
+        XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "shadowsocks")
+    }
+
+    func testTransportBackedProxyAdapterMapsTransportErrorsToProtocolErrors() async {
+        let cases: [(TransportError, ProxyProtocolError)] = [
+            (.invalidConfiguration("secret invalid"), .invalidConfiguration("transport invalid")),
+            (.dnsFailed("secret host"), .dnsFailed("transport dns failed")),
+            (.tcpConnectFailed("password refused"), .tcpConnectFailed("transport tcp connect failed")),
+            (.tlsHandshakeFailed("token rejected"), .tlsHandshakeFailed("transport tls handshake failed")),
+            (.unsupportedTransport(.quic), .unsupportedTransport(.quic)),
+            (.quicHandshakeFailed("secret timeout"), .quicHandshakeFailed("transport quic handshake failed")),
+            (.remoteClosed, .remoteClosed),
+            (.timeout, .timeout)
+        ]
+
+        for (transportError, expectedProtocolError) in cases {
+            let adapter = TransportBackedProxyAdapter(
+                protocolType: .trojan,
+                transportRegistry: TransportAdapterRegistry(adapters: [FailingTransportAdapter(transport: .tcp, error: transportError)])
+            )
+            let request = ProxyRequest(node: makeNode(protocolType: .trojan, transport: .tcp), destination: .host("apple.com", port: 443))
+
+            do {
+                _ = try await adapter.connect(request: request)
+                XCTFail("Expected protocol error")
+            } catch let error as ProxyProtocolError {
+                XCTAssertEqual(error, expectedProtocolError)
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testShadowsocksProxyAdapterPropagatesMappedTransportFailure() async {
+        let adapter = ShadowsocksProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: [FailingTransportAdapter(transport: .tcp, error: .tcpConnectFailed("password refused"))])
+        )
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected mapped transport failure")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .tcpConnectFailed("transport tcp connect failed"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testShadowsocksProxyAdapterRoutesEnabledTLSThroughSelectorTLSChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let selector = TCPTLSTransportAdapter(plain: plain, tls: tlsChild)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [selector]))
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil)
+        let node = makeNode(protocolType: .shadowsocks, transport: .tcp, tls: tls)
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
+        XCTAssertEqual(plain.requests, [])
+        XCTAssertEqual(tlsChild.requests.count, 1)
+        XCTAssertEqual(tlsChild.requests.first?.host, "example.com")
+        XCTAssertEqual(tlsChild.requests.first?.port, 443)
+        XCTAssertEqual(tlsChild.requests.first?.transport, .tcp)
+        XCTAssertEqual(tlsChild.requests.first?.tls, tls)
+        XCTAssertEqual(tlsChild.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(tlsChild.requests.first?.metadata["proxyProtocol"], "shadowsocks")
+        XCTAssertEqual(tlsChild.requests.first?.metadata["destination"], "host:apple.com:443")
+    }
+
+    func testShadowsocksProxyAdapterRoutesDisabledTLSThroughSelectorPlainChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let selector = TCPTLSTransportAdapter(plain: plain, tls: tlsChild)
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [selector]))
+        let node = makeNode(protocolType: .shadowsocks, transport: .tcp, tls: .disabled)
+        let request = ProxyRequest(node: node, destination: .ipv4("93.184.216.34", port: 443))
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, .ipv4("93.184.216.34", port: 443))
+        XCTAssertEqual(plain.requests.count, 1)
+        XCTAssertEqual(plain.requests.first?.host, "example.com")
+        XCTAssertEqual(plain.requests.first?.port, 443)
+        XCTAssertEqual(plain.requests.first?.transport, .tcp)
+        XCTAssertNil(plain.requests.first?.tls)
+        XCTAssertEqual(plain.requests.first?.metadata["proxyProtocol"], "shadowsocks")
+        XCTAssertEqual(plain.requests.first?.metadata["destination"], "ipv4:93.184.216.34:443")
+        XCTAssertEqual(tlsChild.requests, [])
+    }
+
+    func testShadowsocksProxyAdapterMapsSelectorTLSChildFailure() async {
+        let selector = TCPTLSTransportAdapter(
+            plain: RecordingTransportAdapter(transport: .tcp),
+            tls: FailingTransportAdapter(transport: .tcp, error: .tlsHandshakeFailed("tls refused"))
+        )
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [selector]))
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp, tls: tls), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected mapped TLS failure")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .tlsHandshakeFailed("transport tls handshake failed"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testShadowsocksProxyAdapterMapsSelectorPlainChildFailure() async {
+        let selector = TCPTLSTransportAdapter(
+            plain: FailingTransportAdapter(transport: .tcp, error: .tcpConnectFailed("plain refused")),
+            tls: RecordingTransportAdapter(transport: .tcp)
+        )
+        let adapter = ShadowsocksProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [selector]))
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp, tls: .disabled), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected mapped plain failure")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .tcpConnectFailed("transport tcp connect failed"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    private func makeNode(
+        protocolType: ProxyProtocolType,
+        transport: TransportType,
+        tls: TLSOptions = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil),
+        serverHost: String = "example.com",
+        serverPort: Int = 443,
+        credentialAccount: String = "node-1"
+    ) -> ProxyNode {
         ProxyNode(
             id: NodeID(rawValue: "node-1"),
             name: "Demo Node",
             protocolType: protocolType,
-            serverHost: "example.com",
-            serverPort: 443,
-            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
+            serverHost: serverHost,
+            serverPort: serverPort,
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: credentialAccount),
             transport: transport,
-            tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil),
+            tls: tls,
             udpPolicy: .disabled
         )
     }
@@ -177,5 +465,46 @@ final class IrockProtocolsTests: XCTestCase {
         func connect(request: ProxyRequest) async throws -> any ProxyConnection {
             EstablishedProxyConnection(nodeID: connectionNodeID, destination: request.destination)
         }
+    }
+}
+
+private final class RecordingTransportAdapter: TransportAdapter, @unchecked Sendable {
+    let supportedTransport: TransportType
+    private let lock = NSLock()
+    private var storedRequests: [TransportRequest] = []
+
+    var requests: [TransportRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedRequests
+    }
+
+    init(transport: TransportType) {
+        self.supportedTransport = transport
+    }
+
+    func open(request: TransportRequest) async throws -> any TransportConnection {
+        record(request)
+        return EstablishedTransportConnection(host: request.host, port: request.port, transport: request.transport)
+    }
+
+    private func record(_ request: TransportRequest) {
+        lock.lock()
+        defer { lock.unlock() }
+        storedRequests.append(request)
+    }
+}
+
+private struct FailingTransportAdapter: TransportAdapter {
+    let supportedTransport: TransportType
+    let error: TransportError
+
+    init(transport: TransportType, error: TransportError) {
+        self.supportedTransport = transport
+        self.error = error
+    }
+
+    func open(request: TransportRequest) async throws -> any TransportConnection {
+        throw error
     }
 }
