@@ -542,7 +542,15 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(underlying.requests.first?.metadata["http2Path"], "/proxy")
         XCTAssertEqual(underlying.requests.first?.metadata["http2Protocol"], "vmess")
         XCTAssertEqual(underlying.requests.first?.metadata["http2Upgrade"], "true")
-        XCTAssertEqual(String(data: underlying.requests.first?.initialPayload ?? Data(), encoding: .utf8), "http2-foundation:example.com:/proxy:vmess\nprotocol-open")
+        let opened = underlying.requests.first?.initialPayload ?? Data()
+        XCTAssertTrue(opened.starts(with: Data("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".utf8)))
+        XCTAssertNotNil(opened.range(of: Data([0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00])))
+        XCTAssertNotNil(opened.range(of: Data("http2-authority:example.com\n".utf8)))
+        XCTAssertNotNil(opened.range(of: Data("http2-path:/proxy\n".utf8)))
+        XCTAssertNotNil(opened.range(of: Data("http2-protocol:vmess\n".utf8)))
+        let expectedSuffix = Data("\nprotocol-open".utf8)
+        XCTAssertTrue(opened.suffix(expectedSuffix.count).elementsEqual(expectedSuffix))
+        XCTAssertFalse(String(data: opened, encoding: .utf8)?.contains("http2-foundation") == true)
     }
 
     func testHTTP2TransportAdapterDefaultsPathAndAuthorityMetadata() async throws {
@@ -555,7 +563,12 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(underlying.requests.first?.metadata["http2Authority"], "example.com")
         XCTAssertEqual(underlying.requests.first?.metadata["http2Path"], "/")
         XCTAssertNil(underlying.requests.first?.metadata["http2Protocol"])
-        XCTAssertEqual(String(data: underlying.requests.first?.initialPayload ?? Data(), encoding: .utf8), "http2-foundation:example.com:/:\n")
+        let opened = underlying.requests.first?.initialPayload ?? Data()
+        XCTAssertTrue(opened.starts(with: Data("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".utf8)))
+        XCTAssertNotNil(opened.range(of: Data("http2-authority:example.com\n".utf8)))
+        XCTAssertNotNil(opened.range(of: Data("http2-path:/\n".utf8)))
+        XCTAssertNil(opened.range(of: Data("http2-protocol:".utf8)))
+        XCTAssertFalse(String(data: opened, encoding: .utf8)?.contains("http2-foundation") == true)
     }
 
     func testHTTP2TransportAdapterRejectsInvalidConfigurationBeforeOpeningUnderlying() async {
@@ -610,7 +623,15 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(underlying.requests.first?.metadata["grpcService"], "/TunnelService/Connect")
         XCTAssertEqual(underlying.requests.first?.metadata["grpcProtocol"], "vmess")
         XCTAssertEqual(underlying.requests.first?.metadata["grpcUpgrade"], "true")
-        XCTAssertEqual(String(data: underlying.requests.first?.initialPayload ?? Data(), encoding: .utf8), "grpc-foundation:example.com:/TunnelService/Connect:vmess\nprotocol-open")
+        let opened = underlying.requests.first?.initialPayload ?? Data()
+        XCTAssertTrue(opened.starts(with: Data("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".utf8)))
+        XCTAssertNotNil(opened.range(of: Data([0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00])))
+        XCTAssertNotNil(opened.range(of: Data("grpc-authority:example.com\n".utf8)))
+        XCTAssertNotNil(opened.range(of: Data("grpc-service:/TunnelService/Connect\n".utf8)))
+        XCTAssertNotNil(opened.range(of: Data("grpc-protocol:vmess\n".utf8)))
+        XCTAssertNotNil(opened.range(of: Data([0x00, 0x00, 0x00, 0x00, UInt8(payload.count)])))
+        XCTAssertTrue(opened.suffix(payload.count).elementsEqual(payload))
+        XCTAssertFalse(String(data: opened, encoding: .utf8)?.contains("grpc-foundation") == true)
     }
 
     func testGRPCTransportAdapterDefaultsServiceAndAuthorityMetadata() async throws {
@@ -623,7 +644,12 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(underlying.requests.first?.metadata["grpcAuthority"], "example.com")
         XCTAssertEqual(underlying.requests.first?.metadata["grpcService"], "/TunService/Connect")
         XCTAssertNil(underlying.requests.first?.metadata["grpcProtocol"])
-        XCTAssertEqual(String(data: underlying.requests.first?.initialPayload ?? Data(), encoding: .utf8), "grpc-foundation:example.com:/TunService/Connect:\n")
+        let opened = underlying.requests.first?.initialPayload ?? Data()
+        XCTAssertTrue(opened.starts(with: Data("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".utf8)))
+        XCTAssertNotNil(opened.range(of: Data("grpc-authority:example.com\n".utf8)))
+        XCTAssertNotNil(opened.range(of: Data("grpc-service:/TunService/Connect\n".utf8)))
+        XCTAssertNil(opened.range(of: Data("grpc-protocol:".utf8)))
+        XCTAssertFalse(String(data: opened, encoding: .utf8)?.contains("grpc-foundation") == true)
     }
 
     func testGRPCTransportAdapterRejectsInvalidConfigurationBeforeOpeningUnderlying() async {

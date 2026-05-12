@@ -498,7 +498,7 @@ public struct HTTP2TransportAdapter<Underlying: TransportAdapter>: TransportAdap
             transport: .tcp,
             tls: request.tls,
             metadata: descriptor.metadata,
-            initialPayload: descriptor.initialPayload(appending: request.initialPayload)
+            initialPayload: try descriptor.initialPayload(appending: request.initialPayload)
         )
         let connection = try await underlying.open(request: underlyingRequest)
         return EstablishedTransportConnection(host: connection.host, port: connection.port, transport: .http2)
@@ -546,10 +546,39 @@ private struct HTTP2OpenDescriptor {
         return metadata
     }
 
-    func initialPayload(appending payload: Data?) -> Data {
-        var data = Data("http2-foundation:\(authority):\(path):\(protocolName)\n".utf8)
+    func initialPayload(appending payload: Data?) throws -> Data {
+        var data = try HTTP2LocalPrelude.build(fields: [
+            ("http2-authority", authority),
+            ("http2-path", path),
+            ("http2-protocol", protocolName)
+        ])
         if let payload {
             data.append(payload)
+        }
+        return data
+    }
+}
+
+private enum HTTP2LocalPrelude {
+    static func build(fields: [(String, String)]) throws -> Data {
+        var data = Data("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".utf8)
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00])
+        let headerBlock = fields
+            .filter { !$0.1.isEmpty }
+            .map { "\($0.0):\($0.1)" }
+            .joined(separator: "\n")
+        if !headerBlock.isEmpty {
+            let block = Data((headerBlock + "\n\n").utf8)
+            guard block.count <= 0x00ff_ffff else {
+                throw TransportError.invalidConfiguration("http2 header block too large")
+            }
+            data.append(UInt8((block.count >> 16) & 0xff))
+            data.append(UInt8((block.count >> 8) & 0xff))
+            data.append(UInt8(block.count & 0xff))
+            data.append(0x01)
+            data.append(0x04)
+            data.append(contentsOf: [0x00, 0x00, 0x00, 0x01])
+            data.append(block)
         }
         return data
     }
@@ -571,7 +600,7 @@ public struct GRPCTransportAdapter<Underlying: TransportAdapter>: TransportAdapt
             transport: .tcp,
             tls: request.tls,
             metadata: descriptor.metadata,
-            initialPayload: descriptor.initialPayload(appending: request.initialPayload)
+            initialPayload: try descriptor.initialPayload(appending: request.initialPayload)
         )
         let connection = try await underlying.open(request: underlyingRequest)
         return EstablishedTransportConnection(host: connection.host, port: connection.port, transport: .grpc)
@@ -619,9 +648,22 @@ private struct GRPCOpenDescriptor {
         return metadata
     }
 
-    func initialPayload(appending payload: Data?) -> Data {
-        var data = Data("grpc-foundation:\(authority):\(service):\(protocolName)\n".utf8)
+    func initialPayload(appending payload: Data?) throws -> Data {
+        var data = try HTTP2LocalPrelude.build(fields: [
+            ("grpc-authority", authority),
+            ("grpc-service", service),
+            ("grpc-protocol", protocolName)
+        ])
         if let payload {
+            guard payload.count <= Int(UInt32.max) else {
+                throw TransportError.invalidConfiguration("grpc message too large")
+            }
+            let length = UInt32(payload.count)
+            data.append(0x00)
+            data.append(UInt8((length >> 24) & 0xff))
+            data.append(UInt8((length >> 16) & 0xff))
+            data.append(UInt8((length >> 8) & 0xff))
+            data.append(UInt8(length & 0xff))
             data.append(payload)
         }
         return data
