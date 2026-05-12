@@ -12,6 +12,42 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertNotEqual(ProxyDestination.host("apple.com", port: 443), .host("apple.com", port: 80))
     }
 
+    func testProtocolAddressEncoderBuildsDomainIPv4AndIPv6Frames() throws {
+        XCTAssertEqual(
+            try ProtocolAddressFrame(destination: .host("apple.com", port: 443), domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04).bytes,
+            Data([0x03, 0x09]) + Data("apple.com".utf8) + Data([0x01, 0xbb])
+        )
+        XCTAssertEqual(
+            try ProtocolAddressFrame(destination: .ipv4("93.184.216.34", port: 443), domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04).bytes,
+            Data([0x01, 93, 184, 216, 34, 0x01, 0xbb])
+        )
+        XCTAssertEqual(
+            try ProtocolAddressFrame(destination: .ipv6("2606:2800:220:1:248:1893:25c8:1946", port: 443), domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04).bytes,
+            Data([0x04, 0x26, 0x06, 0x28, 0x00, 0x02, 0x20, 0x00, 0x01, 0x02, 0x48, 0x18, 0x93, 0x25, 0xc8, 0x19, 0x46, 0x01, 0xbb])
+        )
+    }
+
+    func testProtocolAddressEncoderRejectsInvalidInputs() {
+        let cases: [ProxyDestination] = [
+            .host("", port: 443),
+            .host(String(repeating: "a", count: 256), port: 443),
+            .host("apple.com", port: 0),
+            .ipv4("999.184.216.34", port: 443),
+            .ipv6("::1", port: 443)
+        ]
+
+        for destination in cases {
+            XCTAssertThrowsError(try ProtocolAddressFrame(destination: destination, domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04))
+        }
+    }
+
+    func testSHA224MatchesTrojanPasswordVector() {
+        XCTAssertEqual(
+            SHA224.hashHex("secret-password"),
+            "869ce74cceadfb55774ed4ff96cdb65be71412e3d669878bec160955"
+        )
+    }
+
     func testProxyRequestStoresNodeDestinationAndMetadata() {
         let node = makeNode(protocolType: .trojan, transport: .tcp)
         let request = ProxyRequest(
