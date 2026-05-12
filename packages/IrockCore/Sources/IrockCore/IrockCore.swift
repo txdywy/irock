@@ -59,6 +59,76 @@ public struct RealityOptions: Equatable, Codable, Sendable {
     }
 }
 
+public struct WebSocketTransportOptions: Equatable, Codable, Sendable {
+    public let host: String?
+    public let path: String
+
+    public init(host: String?, path: String) {
+        self.host = host
+        self.path = path
+    }
+}
+
+public struct HTTP2TransportOptions: Equatable, Codable, Sendable {
+    public let authority: String?
+    public let path: String
+
+    public init(authority: String?, path: String) {
+        self.authority = authority
+        self.path = path
+    }
+}
+
+public struct GRPCTransportOptions: Equatable, Codable, Sendable {
+    public let authority: String?
+    public let service: String
+
+    public init(authority: String?, service: String) {
+        self.authority = authority
+        self.service = service
+    }
+}
+
+public struct TransportOptions: Equatable, Codable, Sendable {
+    public let webSocket: WebSocketTransportOptions?
+    public let http2: HTTP2TransportOptions?
+    public let grpc: GRPCTransportOptions?
+
+    public init(webSocket: WebSocketTransportOptions? = nil, http2: HTTP2TransportOptions? = nil, grpc: GRPCTransportOptions? = nil) {
+        self.webSocket = webSocket
+        self.http2 = http2
+        self.grpc = grpc
+    }
+}
+
+public struct Hysteria2RealmOptions: Equatable, Codable, Sendable {
+    public let tokenReference: CredentialReference
+    public let rendezvousHost: String
+    public let rendezvousPort: Int?
+    public let name: String
+    public let useTLS: Bool
+    public let stunServers: [String]
+    public let localPort: Int?
+
+    public init(tokenReference: CredentialReference, rendezvousHost: String, rendezvousPort: Int?, name: String, useTLS: Bool, stunServers: [String], localPort: Int?) {
+        self.tokenReference = tokenReference
+        self.rendezvousHost = rendezvousHost
+        self.rendezvousPort = rendezvousPort
+        self.name = name
+        self.useTLS = useTLS
+        self.stunServers = stunServers
+        self.localPort = localPort
+    }
+}
+
+public struct Hysteria2Options: Equatable, Codable, Sendable {
+    public let realm: Hysteria2RealmOptions?
+
+    public init(realm: Hysteria2RealmOptions?) {
+        self.realm = realm
+    }
+}
+
 public struct TLSOptions: Equatable, Codable, Sendable {
     public let enabled: Bool
     public let serverName: String?
@@ -92,6 +162,19 @@ public enum UDPPolicy: String, Codable, Sendable {
 }
 
 public struct ProxyNode: Equatable, Codable, Sendable {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case protocolType
+        case serverHost
+        case serverPort
+        case credentialReference
+        case transport
+        case transportOptions
+        case tls
+        case udpPolicy
+        case hysteria2
+    }
     public let id: NodeID
     public let name: String
     public let protocolType: ProxyProtocolType
@@ -99,8 +182,10 @@ public struct ProxyNode: Equatable, Codable, Sendable {
     public let serverPort: Int
     public let credentialReference: CredentialReference
     public let transport: TransportType
+    public let transportOptions: TransportOptions
     public let tls: TLSOptions
     public let udpPolicy: UDPPolicy
+    public let hysteria2: Hysteria2Options?
 
     public init(
         id: NodeID,
@@ -113,6 +198,34 @@ public struct ProxyNode: Equatable, Codable, Sendable {
         tls: TLSOptions,
         udpPolicy: UDPPolicy
     ) {
+        self.init(
+            id: id,
+            name: name,
+            protocolType: protocolType,
+            serverHost: serverHost,
+            serverPort: serverPort,
+            credentialReference: credentialReference,
+            transport: transport,
+            transportOptions: TransportOptions(),
+            tls: tls,
+            udpPolicy: udpPolicy,
+            hysteria2: nil
+        )
+    }
+
+    public init(
+        id: NodeID,
+        name: String,
+        protocolType: ProxyProtocolType,
+        serverHost: String,
+        serverPort: Int,
+        credentialReference: CredentialReference,
+        transport: TransportType,
+        transportOptions: TransportOptions,
+        tls: TLSOptions,
+        udpPolicy: UDPPolicy,
+        hysteria2: Hysteria2Options? = nil
+    ) {
         self.id = id
         self.name = name
         self.protocolType = protocolType
@@ -120,8 +233,40 @@ public struct ProxyNode: Equatable, Codable, Sendable {
         self.serverPort = serverPort
         self.credentialReference = credentialReference
         self.transport = transport
+        self.transportOptions = transportOptions
         self.tls = tls
         self.udpPolicy = udpPolicy
+        self.hysteria2 = hysteria2
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(NodeID.self, forKey: .id)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.protocolType = try container.decode(ProxyProtocolType.self, forKey: .protocolType)
+        self.serverHost = try container.decode(String.self, forKey: .serverHost)
+        self.serverPort = try container.decode(Int.self, forKey: .serverPort)
+        self.credentialReference = try container.decode(CredentialReference.self, forKey: .credentialReference)
+        self.transport = try container.decode(TransportType.self, forKey: .transport)
+        self.transportOptions = try container.decodeIfPresent(TransportOptions.self, forKey: .transportOptions) ?? TransportOptions()
+        self.tls = try container.decode(TLSOptions.self, forKey: .tls)
+        self.udpPolicy = try container.decode(UDPPolicy.self, forKey: .udpPolicy)
+        self.hysteria2 = try container.decodeIfPresent(Hysteria2Options.self, forKey: .hysteria2)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(protocolType, forKey: .protocolType)
+        try container.encode(serverHost, forKey: .serverHost)
+        try container.encode(serverPort, forKey: .serverPort)
+        try container.encode(credentialReference, forKey: .credentialReference)
+        try container.encode(transport, forKey: .transport)
+        try container.encode(transportOptions, forKey: .transportOptions)
+        try container.encode(tls, forKey: .tls)
+        try container.encode(udpPolicy, forKey: .udpPolicy)
+        try container.encodeIfPresent(hysteria2, forKey: .hysteria2)
     }
 }
 

@@ -17,7 +17,7 @@ final class RuntimeProxyStackTests: XCTestCase {
             routingEngine: RoutingEngine(rules: [.final(.proxy)]),
             plain: plain,
             tls: tlsChild,
-            credentialResolver: TestShadowsocksCredentialResolver(),
+            credentialResolver: TestShadowsocksCredentialResolver(credential: "aes-256-gcm:pass"),
             batchLimit: 16,
             flowLimit: 32
         )
@@ -48,7 +48,7 @@ final class RuntimeProxyStackTests: XCTestCase {
             routingEngine: RoutingEngine(rules: [.final(.proxy)]),
             plain: plain,
             tls: tlsChild,
-            credentialResolver: TestShadowsocksCredentialResolver(),
+            credentialResolver: TestShadowsocksCredentialResolver(credential: "aes-256-gcm:pass"),
             batchLimit: 16,
             flowLimit: 32
         )
@@ -73,7 +73,7 @@ final class RuntimeProxyStackTests: XCTestCase {
     func testShadowsocksTCPStackRoutesEnabledTLSToTLSChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
-        let registry = RuntimeProxyStack.shadowsocksTCP(plain: plain, tls: tlsChild, credentialResolver: TestShadowsocksCredentialResolver())
+        let registry = RuntimeProxyStack.shadowsocksTCP(plain: plain, tls: tlsChild, credentialResolver: TestShadowsocksCredentialResolver(credential: "aes-256-gcm:pass"))
         let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil)
         let outbound = ProxyOutbound(node: makeNode(tls: tls), registry: registry)
         let result = proxyResult(packetID: "tcp-1")
@@ -97,7 +97,7 @@ final class RuntimeProxyStackTests: XCTestCase {
     func testShadowsocksTCPStackRoutesDisabledTLSToPlainChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
-        let registry = RuntimeProxyStack.shadowsocksTCP(plain: plain, tls: tlsChild, credentialResolver: TestShadowsocksCredentialResolver())
+        let registry = RuntimeProxyStack.shadowsocksTCP(plain: plain, tls: tlsChild, credentialResolver: TestShadowsocksCredentialResolver(credential: "aes-256-gcm:pass"))
         let outbound = ProxyOutbound(node: makeNode(tls: .disabled), registry: registry)
         let result = proxyResult(packetID: "tcp-1")
 
@@ -120,7 +120,7 @@ final class RuntimeProxyStackTests: XCTestCase {
     func testVMessTCPStackRoutesDisabledTLSToPlainChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
-        let registry = RuntimeProxyStack.vmessTCP(plain: plain, tls: tlsChild)
+        let registry = RuntimeProxyStack.vmessTCP(plain: plain, tls: tlsChild, credentialResolver: TestProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000001"))
         let outbound = ProxyOutbound(node: makeVMessNode(tls: .disabled), registry: registry)
         let result = proxyResult(packetID: "tcp-1")
 
@@ -132,13 +132,14 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(plain.requests.first?.metadata["proxyProtocol"], "vmess")
         XCTAssertEqual(plain.requests.first?.metadata["vmessUserIDPresent"], "true")
         XCTAssertNil(plain.requests.first?.metadata["vmessUserID"])
+        XCTAssertFalse(plain.requests.first?.metadata.values.contains("node-1") == true)
         XCTAssertEqual(tlsChild.requests, [])
     }
 
     func testVMessTCPStackRoutesEnabledTLSToTLSChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
-        let registry = RuntimeProxyStack.vmessTCP(plain: plain, tls: tlsChild)
+        let registry = RuntimeProxyStack.vmessTCP(plain: plain, tls: tlsChild, credentialResolver: TestProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000001"))
         let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
         let outbound = ProxyOutbound(node: makeVMessNode(tls: tls), registry: registry)
         let result = proxyResult(packetID: "tcp-1")
@@ -152,12 +153,13 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(tlsChild.requests.first?.metadata["proxyProtocol"], "vmess")
         XCTAssertEqual(tlsChild.requests.first?.metadata["vmessUserIDPresent"], "true")
         XCTAssertNil(tlsChild.requests.first?.metadata["vmessUserID"])
+        XCTAssertFalse(tlsChild.requests.first?.metadata.values.contains("node-1") == true)
     }
 
     func testVLESSTCPStackRoutesDisabledTLSToPlainChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
-        let registry = RuntimeProxyStack.vlessTCP(plain: plain, tls: tlsChild)
+        let registry = RuntimeProxyStack.vlessTCP(plain: plain, tls: tlsChild, credentialResolver: TestProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000002"))
         let outbound = ProxyOutbound(node: makeVLESSNode(tls: .disabled), registry: registry)
         let result = proxyResult(packetID: "tcp-1")
 
@@ -169,13 +171,14 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(plain.requests.first?.metadata["proxyProtocol"], "vless")
         XCTAssertEqual(plain.requests.first?.metadata["vlessUserIDPresent"], "true")
         XCTAssertNil(plain.requests.first?.metadata["vlessUserID"])
+        XCTAssertFalse(plain.requests.first?.metadata.values.contains("node-1") == true)
         XCTAssertEqual(tlsChild.requests, [])
     }
 
     func testVLESSTCPStackRoutesEnabledTLSToTLSChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
-        let registry = RuntimeProxyStack.vlessTCP(plain: plain, tls: tlsChild)
+        let registry = RuntimeProxyStack.vlessTCP(plain: plain, tls: tlsChild, credentialResolver: TestProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000002"))
         let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
         let outbound = ProxyOutbound(node: makeVLESSNode(tls: tls), registry: registry)
         let result = proxyResult(packetID: "tcp-1")
@@ -189,13 +192,14 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(tlsChild.requests.first?.metadata["proxyProtocol"], "vless")
         XCTAssertEqual(tlsChild.requests.first?.metadata["vlessUserIDPresent"], "true")
         XCTAssertNil(tlsChild.requests.first?.metadata["vlessUserID"])
+        XCTAssertFalse(tlsChild.requests.first?.metadata.values.contains("node-1") == true)
     }
 
     func testVLESSRealityTCPStackRoutesThroughRealityAdapter() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let reality = RealityOptions(publicKey: "reality-public-key", shortID: "abc123", spiderX: "/")
         let tls = TLSOptions(enabled: true, serverName: "reality.example.com", allowInsecure: false, alpn: ["h2"], fingerprint: "chrome", reality: reality)
-        let registry = RuntimeProxyStack.vlessRealityTCP(plain: plain)
+        let registry = RuntimeProxyStack.vlessRealityTCP(plain: plain, credentialResolver: TestProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000002"))
         let outbound = ProxyOutbound(node: makeVLESSNode(tls: tls), registry: registry)
         let result = proxyResult(packetID: "tcp-1")
 
@@ -207,6 +211,7 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(plain.requests.first?.metadata["proxyProtocol"], "vless")
         XCTAssertEqual(plain.requests.first?.metadata["vlessUserIDPresent"], "true")
         XCTAssertNil(plain.requests.first?.metadata["vlessUserID"])
+        XCTAssertFalse(plain.requests.first?.metadata.values.contains("node-1") == true)
         XCTAssertEqual(plain.requests.first?.metadata["realityServerName"], "reality.example.com")
         XCTAssertEqual(plain.requests.first?.metadata["realityPublicKeyPresent"], "true")
         XCTAssertEqual(plain.requests.first?.metadata["realityShortIDPresent"], "true")
@@ -221,7 +226,7 @@ final class RuntimeProxyStackTests: XCTestCase {
 
     func testHysteria2QUICStackRoutesThroughQUICTransport() async throws {
         let quic = RecordingTransportAdapter(transport: .quic)
-        let registry = RuntimeProxyStack.hysteria2QUIC(quic: quic)
+        let registry = RuntimeProxyStack.hysteria2QUIC(quic: quic, credentialResolver: TestProxyCredentialResolver(credential: "hysteria-secret"))
         let outbound = ProxyOutbound(node: makeHysteria2Node(), registry: registry)
         let result = proxyResult(packetID: "tcp-1")
 
@@ -233,13 +238,14 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(quic.requests.first?.metadata["proxyProtocol"], "hysteria2")
         XCTAssertEqual(quic.requests.first?.metadata["hysteria2AuthPresent"], "true")
         XCTAssertEqual(quic.requests.first?.metadata["hysteria2Destination"], "ipv4:93.184.216.34:443")
+        XCTAssertFalse(quic.requests.first?.metadata.values.contains("node-1") == true)
         let payload = quic.requests.first?.initialPayload ?? Data()
         XCTAssertFalse(payload.contains(Data("hysteria-secret".utf8)))
     }
 
     func testTUICQUICStackRoutesThroughQUICTransport() async throws {
         let quic = RecordingTransportAdapter(transport: .quic)
-        let registry = RuntimeProxyStack.tuicQUIC(quic: quic)
+        let registry = RuntimeProxyStack.tuicQUIC(quic: quic, credentialResolver: TestProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000003:tuic-password"))
         let outbound = ProxyOutbound(node: makeTUICNode(), registry: registry)
         let result = proxyResult(packetID: "tcp-1")
 
@@ -252,6 +258,7 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(quic.requests.first?.metadata["tuicUUIDPresent"], "true")
         XCTAssertEqual(quic.requests.first?.metadata["tuicPasswordPresent"], "true")
         XCTAssertEqual(quic.requests.first?.metadata["tuicDestination"], "ipv4:93.184.216.34:443")
+        XCTAssertFalse(quic.requests.first?.metadata.values.contains("node-1") == true)
         let payload = quic.requests.first?.initialPayload ?? Data()
         XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000003".utf8)))
         XCTAssertFalse(payload.contains(Data("tuic-password".utf8)))
@@ -260,7 +267,7 @@ final class RuntimeProxyStackTests: XCTestCase {
     func testTrojanTCPStackRoutesDisabledTLSToPlainChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
-        let registry = RuntimeProxyStack.trojanTCP(plain: plain, tls: tlsChild)
+        let registry = RuntimeProxyStack.trojanTCP(plain: plain, tls: tlsChild, credentialResolver: TestProxyCredentialResolver(credential: "secret-password"))
         let outbound = ProxyOutbound(node: makeTrojanNode(tls: .disabled), registry: registry)
         let result = proxyResult(packetID: "tcp-1")
 
@@ -272,13 +279,14 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(plain.requests.first?.metadata["proxyProtocol"], "trojan")
         XCTAssertEqual(plain.requests.first?.metadata["trojanPasswordPresent"], "true")
         XCTAssertNil(plain.requests.first?.metadata["trojanPassword"])
+        XCTAssertFalse(plain.requests.first?.metadata.values.contains("node-1") == true)
         XCTAssertEqual(tlsChild.requests, [])
     }
 
     func testTrojanTCPStackRoutesEnabledTLSToTLSChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
-        let registry = RuntimeProxyStack.trojanTCP(plain: plain, tls: tlsChild)
+        let registry = RuntimeProxyStack.trojanTCP(plain: plain, tls: tlsChild, credentialResolver: TestProxyCredentialResolver(credential: "secret-password"))
         let tls = TLSOptions(enabled: true, serverName: "trojan.example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
         let outbound = ProxyOutbound(node: makeTrojanNode(tls: tls), registry: registry)
         let result = proxyResult(packetID: "tcp-1")
@@ -292,6 +300,7 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(tlsChild.requests.first?.metadata["proxyProtocol"], "trojan")
         XCTAssertEqual(tlsChild.requests.first?.metadata["trojanPasswordPresent"], "true")
         XCTAssertNil(tlsChild.requests.first?.metadata["trojanPassword"])
+        XCTAssertFalse(tlsChild.requests.first?.metadata.values.contains("node-1") == true)
     }
 }
 
@@ -347,27 +356,27 @@ private func snapshot(tls: TLSOptions) -> RuntimeSnapshot {
 }
 
 private func makeNode(tls: TLSOptions) -> ProxyNode {
-    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .shadowsocks, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "aes-256-gcm:pass"), transport: .tcp, tls: tls, udpPolicy: .disabled)
+    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .shadowsocks, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .tcp, tls: tls, udpPolicy: .disabled)
 }
 
 private func makeVMessNode(tls: TLSOptions) -> ProxyNode {
-    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .vmess, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "00000000-0000-0000-0000-000000000001"), transport: .tcp, tls: tls, udpPolicy: .disabled)
+    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .vmess, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .tcp, tls: tls, udpPolicy: .disabled)
 }
 
 private func makeVLESSNode(tls: TLSOptions) -> ProxyNode {
-    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .vless, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "00000000-0000-0000-0000-000000000002"), transport: .tcp, tls: tls, udpPolicy: .disabled)
+    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .vless, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .tcp, tls: tls, udpPolicy: .disabled)
 }
 
 private func makeTrojanNode(tls: TLSOptions) -> ProxyNode {
-    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .trojan, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "secret-password"), transport: .tcp, tls: tls, udpPolicy: .disabled)
+    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .trojan, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .tcp, tls: tls, udpPolicy: .disabled)
 }
 
 private func makeHysteria2Node() -> ProxyNode {
     let tls = TLSOptions(enabled: true, serverName: "hysteria.example.com", allowInsecure: false, alpn: ["h3"], fingerprint: nil, reality: nil)
-    return ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .hysteria2, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "hysteria-secret"), transport: .quic, tls: tls, udpPolicy: .disabled)
+    return ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .hysteria2, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .quic, tls: tls, udpPolicy: .disabled)
 }
 
 private func makeTUICNode() -> ProxyNode {
     let tls = TLSOptions(enabled: true, serverName: "tuic.example.com", allowInsecure: false, alpn: ["h3"], fingerprint: nil, reality: nil)
-    return ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .tuic, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "00000000-0000-0000-0000-000000000003:tuic-password"), transport: .quic, tls: tls, udpPolicy: .disabled)
+    return ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .tuic, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .quic, tls: tls, udpPolicy: .disabled)
 }

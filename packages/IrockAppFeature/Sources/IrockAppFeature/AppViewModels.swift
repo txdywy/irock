@@ -67,16 +67,24 @@ public final class AppViewModel: ObservableObject {
     }
 
     @discardableResult
-    public func importShadowsocksURI(_ text: String) throws -> ProxyNode {
-        let draft = try URIImport.parseShadowsocksDraft(text)
+    public func importURI(_ text: String) throws -> ProxyNode {
+        let draft = try URIImport.parseDraft(text)
         let node = try draft.buildNode(id: NodeID(rawValue: "imported-\(nodeListState.nodes.count + 1)"), keychainService: "com.irock.nodes")
         var nodes = nodeListState.nodes
         nodes.append(node)
         importedCredentials[node.id] = draft.credentialAccount
+        if let realm = draft.hysteria2Realm {
+            importedCredentials[NodeID(rawValue: "\(node.id.rawValue).hysteria2.realm-token")] = realm.token
+        }
         nodeListState = NodeListState(nodes: nodes, selectedNodeID: node.id)
         overviewState = OverviewState(connectionStatus: overviewState.connectionStatus, selectedNode: node, routeMode: overviewState.routeMode, recentLogMessages: overviewState.recentLogMessages)
         appendLog("节点已导入：\(node.name)")
         return node
+    }
+
+    @discardableResult
+    public func importShadowsocksURI(_ text: String) throws -> ProxyNode {
+        try importURI(text)
     }
 
     @discardableResult
