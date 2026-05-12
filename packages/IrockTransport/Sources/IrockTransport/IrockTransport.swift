@@ -246,7 +246,7 @@ public struct QUICTransportAdapter<Dialer: QUICDialer>: TransportAdapter {
             host: descriptor.host,
             port: request.port,
             metadata: descriptor.metadata,
-            initialPayload: descriptor.initialPayload(appending: request.initialPayload)
+            initialPayload: try descriptor.initialPayload(appending: request.initialPayload)
         )
         return EstablishedTransportConnection(host: result.host, port: result.port, transport: .quic)
     }
@@ -288,7 +288,7 @@ private struct QUICOpenDescriptor {
     var metadata: [String: String] {
         var metadata = [
             "quicServerName": serverName,
-            "quicHandshake": "foundation"
+            "quicHandshake": "local-prelude"
         ]
         if !protocolName.isEmpty {
             metadata["quicProtocol"] = protocolName
@@ -299,12 +299,29 @@ private struct QUICOpenDescriptor {
         return metadata
     }
 
-    func initialPayload(appending payload: Data?) -> Data {
-        var data = Data("quic-foundation:\(serverName):\(protocolName):\(alpn)\n".utf8)
+    func initialPayload(appending payload: Data?) throws -> Data {
+        var data = Data([0x49, 0x52, 0x4c, 0x51, 0x01])
+        try LocalTransportDescriptor.appendField(0x01, serverName, to: &data)
+        try LocalTransportDescriptor.appendField(0x02, protocolName, to: &data)
+        try LocalTransportDescriptor.appendField(0x03, alpn, to: &data)
+        data.append(0x00)
         if let payload {
             data.append(payload)
         }
         return data
+    }
+}
+
+private enum LocalTransportDescriptor {
+    static func appendField(_ type: UInt8, _ value: String, to data: inout Data) throws {
+        guard !value.isEmpty else { return }
+        let bytes = Data(value.utf8)
+        guard bytes.count <= UInt8.max else {
+            throw TransportError.invalidConfiguration("transport descriptor field too large")
+        }
+        data.append(type)
+        data.append(UInt8(bytes.count))
+        data.append(bytes)
     }
 }
 
@@ -324,7 +341,7 @@ public struct RealityTransportAdapter<Underlying: TransportAdapter>: TransportAd
             transport: .tcp,
             tls: nil,
             metadata: descriptor.metadata(merging: request.metadata),
-            initialPayload: descriptor.initialPayload(appending: request.initialPayload)
+            initialPayload: try descriptor.initialPayload(appending: request.initialPayload)
         )
         let connection = try await underlying.open(request: underlyingRequest)
         return EstablishedTransportConnection(host: connection.host, port: connection.port, transport: .tcp)
@@ -389,8 +406,16 @@ private struct RealityOpenDescriptor {
         return metadata
     }
 
-    func initialPayload(appending payload: Data?) -> Data {
-        var data = Data("reality-foundation:\(serverName):public-key-present:\(shortIDPresent ? "true" : "false"):\(spiderX)\n".utf8)
+    func initialPayload(appending payload: Data?) throws -> Data {
+        var data = Data([0x49, 0x52, 0x4c, 0x52, 0x01])
+        try LocalTransportDescriptor.appendField(0x01, serverName, to: &data)
+        data.append(0x02)
+        data.append(0x01)
+        data.append(shortIDPresent ? 0x01 : 0x00)
+        try LocalTransportDescriptor.appendField(0x03, spiderX, to: &data)
+        try LocalTransportDescriptor.appendField(0x04, fingerprint, to: &data)
+        try LocalTransportDescriptor.appendField(0x05, alpn.joined(separator: ","), to: &data)
+        data.append(0x00)
         if let payload {
             data.append(payload)
         }

@@ -397,7 +397,15 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(underlying.requests.first?.metadata["realityFingerprint"], "chrome")
         XCTAssertEqual(underlying.requests.first?.metadata["realityALPN"], "h2")
         let opened = underlying.requests.first?.initialPayload ?? Data()
-        XCTAssertEqual(String(data: opened, encoding: .utf8), "reality-foundation:reality.example.com:public-key-present:true:/\nvless-open")
+        XCTAssertTrue(opened.starts(with: Data([0x49, 0x52, 0x4c, 0x52, 0x01])))
+        XCTAssertNotNil(opened.range(of: Data([0x01, UInt8("reality.example.com".utf8.count)]) + Data("reality.example.com".utf8)))
+        XCTAssertNotNil(opened.range(of: Data([0x02, 0x01, 0x01])))
+        XCTAssertNotNil(opened.range(of: Data([0x03, UInt8("/".utf8.count)]) + Data("/".utf8)))
+        XCTAssertNotNil(opened.range(of: Data([0x04, UInt8("chrome".utf8.count)]) + Data("chrome".utf8)))
+        XCTAssertNotNil(opened.range(of: Data([0x05, UInt8("h2".utf8.count)]) + Data("h2".utf8)))
+        XCTAssertEqual(opened.dropLast(payload.count).last, 0x00)
+        XCTAssertTrue(opened.suffix(payload.count).elementsEqual(payload))
+        XCTAssertFalse(String(data: opened, encoding: .utf8)?.contains("reality-foundation") == true)
         XCTAssertFalse(opened.contains(Data("reality-public-key".utf8)))
         XCTAssertFalse(opened.contains(Data("abc123".utf8)))
     }
@@ -852,8 +860,15 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(dialer.requests.first?.metadata["quicServerName"], "quic.example.com")
         XCTAssertEqual(dialer.requests.first?.metadata["quicProtocol"], "hysteria2")
         XCTAssertEqual(dialer.requests.first?.metadata["quicALPN"], "h3")
-        XCTAssertEqual(dialer.requests.first?.metadata["quicHandshake"], "foundation")
-        XCTAssertEqual(String(data: dialer.requests.first?.initialPayload ?? Data(), encoding: .utf8), "quic-foundation:quic.example.com:hysteria2:h3\nprotocol-open")
+        XCTAssertEqual(dialer.requests.first?.metadata["quicHandshake"], "local-prelude")
+        let opened = dialer.requests.first?.initialPayload ?? Data()
+        XCTAssertTrue(opened.starts(with: Data([0x49, 0x52, 0x4c, 0x51, 0x01])))
+        XCTAssertNotNil(opened.range(of: Data([0x01, UInt8("quic.example.com".utf8.count)]) + Data("quic.example.com".utf8)))
+        XCTAssertNotNil(opened.range(of: Data([0x02, UInt8("hysteria2".utf8.count)]) + Data("hysteria2".utf8)))
+        XCTAssertNotNil(opened.range(of: Data([0x03, UInt8("h3".utf8.count)]) + Data("h3".utf8)))
+        XCTAssertEqual(opened.dropLast(payload.count).last, 0x00)
+        XCTAssertTrue(opened.suffix(payload.count).elementsEqual(payload))
+        XCTAssertFalse(String(data: opened, encoding: .utf8)?.contains("quic-foundation") == true)
     }
 
     func testQUICTransportAdapterDefaultsServerNameAndALPNMetadata() async throws {
@@ -867,7 +882,13 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(dialer.requests.first?.metadata["quicServerName"], "example.com")
         XCTAssertNil(dialer.requests.first?.metadata["quicProtocol"])
         XCTAssertEqual(dialer.requests.first?.metadata["quicALPN"], "h3,hq-29")
-        XCTAssertEqual(String(data: dialer.requests.first?.initialPayload ?? Data(), encoding: .utf8), "quic-foundation:example.com::h3,hq-29\n")
+        let opened = dialer.requests.first?.initialPayload ?? Data()
+        XCTAssertTrue(opened.starts(with: Data([0x49, 0x52, 0x4c, 0x51, 0x01])))
+        XCTAssertNotNil(opened.range(of: Data([0x01, UInt8("example.com".utf8.count)]) + Data("example.com".utf8)))
+        XCTAssertNil(opened.range(of: Data([0x02])))
+        XCTAssertNotNil(opened.range(of: Data([0x03, UInt8("h3,hq-29".utf8.count)]) + Data("h3,hq-29".utf8)))
+        XCTAssertEqual(opened.last, 0x00)
+        XCTAssertFalse(String(data: opened, encoding: .utf8)?.contains("quic-foundation") == true)
     }
 
     func testQUICTransportAdapterRejectsInvalidConfigurationBeforeDialing() async {
