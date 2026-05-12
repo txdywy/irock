@@ -167,7 +167,7 @@ final class MacOSLocalProxyController: LocalProxyControlling {
     }
 
     private func sendShadowsocksOpen(destination: ProxyDestination, remote: Int32, credential: String) throws -> Data {
-        let salt = Self.randomSalt()
+        let salt = Self.randomSalt(byteCount: try ShadowsocksStreamRequest.saltLength(forCredential: credential))
         let request = try ShadowsocksStreamRequest(credential: credential, destination: destination, salt: salt)
         try writeAll(request.openBytes, to: remote)
         return salt
@@ -206,10 +206,11 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             while let chunk = try readAvailable(from: remote, maxLength: 16_384) {
                 remoteBuffer.append(chunk)
                 if decoder == nil {
-                    guard remoteBuffer.count >= 32 else { continue }
-                    let salt = Data(remoteBuffer.prefix(32))
-                    remoteBuffer.removeFirst(32)
-                    decoder = try ShadowsocksAEADStreamDecoder(credential: credential, salt: salt)
+                    let saltLength = try ShadowsocksStreamRequest.saltLength(forCredential: credential)
+                    guard remoteBuffer.count >= saltLength else { continue }
+                    let salt = Data(remoteBuffer.prefix(saltLength))
+                    remoteBuffer.removeFirst(saltLength)
+                    decoder = try ShadowsocksAEADStreamDecoder(credential: credential, salt: salt, requestSalt: clientSalt)
                 }
                 guard var activeDecoder = decoder else { continue }
                 let payloads = try activeDecoder.appendAndDecryptAvailable(remoteBuffer)
@@ -340,8 +341,8 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         return .host(String(hostPort[0]), port: port)
     }
 
-    private static func randomSalt() -> Data {
+    private static func randomSalt(byteCount: Int) -> Data {
         var generator = SystemRandomNumberGenerator()
-        return Data((0..<32).map { _ in UInt8.random(in: UInt8.min...UInt8.max, using: &generator) })
+        return Data((0..<byteCount).map { _ in UInt8.random(in: UInt8.min...UInt8.max, using: &generator) })
     }
 }

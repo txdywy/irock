@@ -34,6 +34,13 @@ struct ShadowsocksCipher: Equatable {
         }
     }
 
+    static func supportsKnownCredential(_ credential: String) throws -> Bool {
+        let parsed = try ShadowsocksStreamRequest.parseCredential(credential)
+        guard let cipher = lookup(method: parsed.method) else { return false }
+        guard cipher.kind == .shadowsocks2022 else { return true }
+        return (try? cipher.preSharedKey(password: parsed.password)) != nil
+    }
+
     func deriveSubkey(password: String, salt: Data) throws -> SymmetricKey {
         guard salt.count == saltLength else {
             throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks salt")
@@ -43,11 +50,23 @@ struct ShadowsocksCipher: Equatable {
             let masterKey = SymmetricKey(data: ShadowsocksStreamRequest.evpBytesToKey(password: Data(password.utf8), keyLength: keyLength))
             return HKDF<Insecure.SHA1>.deriveKey(inputKeyMaterial: masterKey, salt: salt, info: Data("ss-subkey".utf8), outputByteCount: keyLength)
         case .shadowsocks2022:
-            let psk = Data(password.utf8)
+            let psk = try preSharedKey(password: password)
             let material = psk + salt
             let key = InternalBLAKE3.deriveKey(context: "shadowsocks 2022 session subkey", material: material, outputByteCount: keyLength)
             return SymmetricKey(data: key)
         }
+    }
+
+    private func preSharedKey(password: String) throws -> Data {
+        var normalized = password.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        let remainder = normalized.count % 4
+        if remainder > 0 {
+            normalized.append(String(repeating: "=", count: 4 - remainder))
+        }
+        guard let key = Data(base64Encoded: normalized), key.count == keyLength else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks 2022 key")
+        }
+        return key
     }
 
     func seal(_ data: Data, using key: SymmetricKey, nonceValue: UInt64) throws -> Data {

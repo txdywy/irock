@@ -77,26 +77,93 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
-    func testShadowsocks2022ExampleMethodIsUnsupportedUntilBlake3IsAvailable() {
-        XCTAssertThrowsError(try ShadowsocksStreamRequest(
-            credential: "2022-blake3-aes-128-gcm:credential-redacted",
+    func testShadowsocks2022AES128BuildsClientStreamHeader() throws {
+        let credential = "2022-blake3-aes-128-gcm:\(Data((0..<16).map(UInt8.init)).base64EncodedString())"
+        let request = try ShadowsocksStreamRequest(
+            credential: credential,
+            destination: .host("example.com", port: 80),
+            salt: Data(repeating: 1, count: 16),
+            timestamp: Date(timeIntervalSince1970: 1_715_000_000),
+            padding: Data([0xaa])
+        )
+
+        XCTAssertEqual(request.cipher, "2022-blake3-aes-128-gcm")
+        XCTAssertEqual(request.addressFrameHex, "030b6578616d706c652e636f6d0050")
+        XCTAssertEqual(request.openBytes.count, 16 + 11 + 16 + 18 + 16)
+    }
+
+    func testShadowsocks2022AES256BuildsClientStreamHeader() throws {
+        let credential = "2022-blake3-aes-256-gcm:\(Data((0..<32).map(UInt8.init)).base64EncodedString())"
+        let request = try ShadowsocksStreamRequest(
+            credential: credential,
+            destination: .ipv4("93.184.216.34", port: 443),
+            salt: Data(repeating: 2, count: 32),
+            timestamp: Date(timeIntervalSince1970: 1_715_000_000),
+            padding: Data([0xbb])
+        )
+
+        XCTAssertEqual(request.cipher, "2022-blake3-aes-256-gcm")
+        XCTAssertEqual(request.addressFrameHex, "015db8d82201bb")
+        XCTAssertEqual(request.openBytes.count, 32 + 11 + 16 + 10 + 16)
+    }
+
+    func testShadowsocks2022ChaCha20Poly1305BuildsClientStreamHeader() throws {
+        let credential = "2022-blake3-chacha20-poly1305:\(Data((0..<32).map(UInt8.init)).base64EncodedString())"
+        let request = try ShadowsocksStreamRequest(
+            credential: credential,
             destination: .host("example.com", port: 443),
-            salt: Data(repeating: 1, count: 32)
-        )) { error in
-            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("unsupported shadowsocks method"))
-        }
+            salt: Data(repeating: 3, count: 32),
+            timestamp: Date(timeIntervalSince1970: 1_715_000_000),
+            padding: Data([0xcc])
+        )
+
+        XCTAssertEqual(request.cipher, "2022-blake3-chacha20-poly1305")
+        XCTAssertEqual(request.addressFrameHex, "030b6578616d706c652e636f6d01bb")
+        XCTAssertEqual(request.openBytes.count, 32 + 11 + 16 + 18 + 16)
     }
 
-    func testShadowsocksSupportsApproved2022Blake3Methods() {
-        XCTAssertTrue(ShadowsocksStreamRequest.supportsCredential("2022-blake3-aes-128-gcm:test-key"))
-        XCTAssertTrue(ShadowsocksStreamRequest.supportsCredential("2022-blake3-aes-256-gcm:test-key"))
-        XCTAssertTrue(ShadowsocksStreamRequest.supportsCredential("2022-blake3-chacha20-poly1305:test-key"))
+    func testShadowsocksRegistryRecognizesApproved2022Blake3Methods() throws {
+        XCTAssertTrue(try ShadowsocksCipher.supportsKnownCredential("2022-blake3-aes-128-gcm:\(Data((0..<16).map(UInt8.init)).base64EncodedString())"))
+        XCTAssertTrue(try ShadowsocksCipher.supportsKnownCredential("2022-blake3-aes-256-gcm:\(Data((0..<32).map(UInt8.init)).base64EncodedString())"))
+        XCTAssertTrue(try ShadowsocksCipher.supportsKnownCredential("2022-blake3-chacha20-poly1305:\(Data((0..<32).map(UInt8.init)).base64EncodedString())"))
+        XCTAssertTrue(try ShadowsocksCipher.supportsKnownCredential("aes-256-gcm:pass"))
+    }
+
+    func testShadowsocksLocalProxySupportAdvertisesFullyImplementedMethods() {
         XCTAssertTrue(ShadowsocksStreamRequest.supportsCredential("aes-256-gcm:pass"))
+        XCTAssertTrue(ShadowsocksStreamRequest.supportsCredential("2022-blake3-aes-128-gcm:\(Data((0..<16).map(UInt8.init)).base64EncodedString())"))
+        XCTAssertTrue(ShadowsocksStreamRequest.supportsCredential("2022-blake3-aes-256-gcm:\(Data((0..<32).map(UInt8.init)).base64EncodedString())"))
+        XCTAssertTrue(ShadowsocksStreamRequest.supportsCredential("2022-blake3-chacha20-poly1305:\(Data((0..<32).map(UInt8.init)).base64EncodedString())"))
+        XCTAssertFalse(ShadowsocksStreamRequest.supportsCredential("2022-blake3-aes-192-gcm:\(Data((0..<16).map(UInt8.init)).base64EncodedString())"))
     }
 
-    func testShadowsocksRejectsUnknown2022Blake3Methods() {
-        XCTAssertFalse(ShadowsocksStreamRequest.supportsCredential("2022-blake3-aes-192-gcm:test-key"))
-        XCTAssertFalse(ShadowsocksStreamRequest.supportsCredential("2022-blake3-chacha8-poly1305:test-key"))
+    func testShadowsocksRejectsUnknown2022Blake3Methods() throws {
+        XCTAssertFalse(try ShadowsocksCipher.supportsKnownCredential("2022-blake3-aes-192-gcm:\(Data((0..<16).map(UInt8.init)).base64EncodedString())"))
+        XCTAssertFalse(try ShadowsocksCipher.supportsKnownCredential("2022-blake3-chacha8-poly1305:\(Data((0..<32).map(UInt8.init)).base64EncodedString())"))
+    }
+
+    func testShadowsocks2022CredentialValidationRejectsWrongSecretLength() throws {
+        XCTAssertFalse(try ShadowsocksCipher.supportsKnownCredential("2022-blake3-aes-128-gcm:short"))
+        XCTAssertFalse(try ShadowsocksCipher.supportsKnownCredential("2022-blake3-aes-256-gcm:\(Data((0..<16).map(UInt8.init)).base64EncodedString())"))
+        XCTAssertFalse(try ShadowsocksCipher.supportsKnownCredential("2022-blake3-chacha20-poly1305:\(Data((0..<16).map(UInt8.init)).base64EncodedString())"))
+    }
+
+    func testShadowsocks2022CodecConstructorsRejectWrongSecretLength() throws {
+        let credential = "2022-blake3-aes-128-gcm:\(Data((0..<15).map(UInt8.init)).base64EncodedString())"
+
+        XCTAssertThrowsError(try ShadowsocksStreamRequest(
+            credential: credential,
+            destination: .host("example.com", port: 80),
+            salt: Data(repeating: 1, count: 16)
+        )) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("invalid shadowsocks 2022 key"))
+        }
+        XCTAssertThrowsError(try ShadowsocksAEADStreamEncoder(credential: credential, salt: Data(repeating: 1, count: 16))) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("invalid shadowsocks 2022 key"))
+        }
+        XCTAssertThrowsError(try ShadowsocksAEADStreamDecoder(credential: credential, salt: Data(repeating: 1, count: 16))) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("invalid shadowsocks 2022 key"))
+        }
     }
 
     func testBLAKE3MatchesOfficialVectors() throws {
@@ -206,6 +273,58 @@ final class IrockProtocolsTests: XCTestCase {
         let frame = try encoder.encrypt(Data("after-open".utf8))
 
         XCTAssertEqual(try decoder.decrypt(frame), Data("after-open".utf8))
+    }
+
+    func testShadowsocks2022StreamCodecRoundTripsApprovedMethods() throws {
+        let credentials = [
+            "2022-blake3-aes-128-gcm:\(Data((0..<16).map(UInt8.init)).base64EncodedString())",
+            "2022-blake3-aes-256-gcm:\(Data((0..<32).map(UInt8.init)).base64EncodedString())",
+            "2022-blake3-chacha20-poly1305:\(Data((0..<32).map(UInt8.init)).base64EncodedString())"
+        ]
+
+        for credential in credentials {
+            let saltLength = credential.contains("aes-128") ? 16 : 32
+            let salt = Data(repeating: UInt8(saltLength), count: saltLength)
+            var encoder = try ShadowsocksAEADStreamEncoder(credential: credential, salt: salt, initialNonce: 2)
+            var decoder = try ShadowsocksAEADStreamDecoder(credential: credential, salt: salt, initialNonce: 2)
+
+            let frame = try encoder.encrypt(Data("hello ss2022".utf8))
+
+            XCTAssertEqual(try decoder.decrypt(frame), Data("hello ss2022".utf8), credential)
+        }
+    }
+
+    func testShadowsocks2022DecoderBuffersFragmentedFrames() throws {
+        let credential = "2022-blake3-aes-128-gcm:\(Data((0..<16).map(UInt8.init)).base64EncodedString())"
+        let salt = Data(repeating: 9, count: 16)
+        var encoder = try ShadowsocksAEADStreamEncoder(credential: credential, salt: salt, initialNonce: 2)
+        var decoder = try ShadowsocksAEADStreamDecoder(credential: credential, salt: salt, initialNonce: 2)
+        let ciphertext = try encoder.encrypt(Data("fragmented ss2022 payload".utf8))
+        let splitIndex = ciphertext.index(ciphertext.startIndex, offsetBy: 7)
+
+        XCTAssertNil(try decoder.appendAndDecrypt(ciphertext[..<splitIndex]))
+        XCTAssertEqual(try decoder.appendAndDecrypt(ciphertext[splitIndex...]), Data("fragmented ss2022 payload".utf8))
+    }
+
+    func testShadowsocks2022ResponseDecoderConsumesServerHeaderBeforePayloadFrames() throws {
+        let credential = "2022-blake3-aes-128-gcm:\(Data((0..<16).map(UInt8.init)).base64EncodedString())"
+        let requestSalt = Data(repeating: 1, count: 16)
+        let responseSalt = Data(repeating: 2, count: 16)
+        let parsed = try ShadowsocksStreamRequest.parseCredential(credential)
+        let cipher = try XCTUnwrap(ShadowsocksCipher.lookup(method: parsed.method))
+        let subkey = try cipher.deriveSubkey(password: parsed.password, salt: responseSalt)
+        var responseHeader = Data([1])
+        responseHeader.append(contentsOf: [0, 0, 0, 0, 102, 72, 110, 128])
+        responseHeader.append(requestSalt)
+        responseHeader.append(contentsOf: [0, 5])
+        let encryptedHeader = try cipher.seal(responseHeader, using: subkey, nonceValue: 0)
+        let encryptedFirstPayload = try cipher.seal(Data("hello".utf8), using: subkey, nonceValue: 1)
+        let nextFrame = try cipher.seal(Data([0, 5]), using: subkey, nonceValue: 2) + cipher.seal(Data("again".utf8), using: subkey, nonceValue: 3)
+        var decoder = try ShadowsocksAEADStreamDecoder(credential: credential, salt: responseSalt, requestSalt: requestSalt)
+
+        let payloads = try decoder.appendAndDecryptAvailable(encryptedHeader + encryptedFirstPayload + nextFrame)
+
+        XCTAssertEqual(payloads, [Data("hello".utf8), Data("again".utf8)])
     }
 
     func testVMessOpenRequestBuildsStableMetadataAndPayload() throws {
@@ -970,6 +1089,21 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["shadowsocksAddressFrameHex"], "03096170706c652e636f6d01bb")
         XCTAssertEqual(transport.requests.first?.metadata["shadowsocksStreamOpenHex"]?.count, 158)
         XCTAssertEqual(transport.requests.first?.initialPayload?.count, 79)
+    }
+
+    func testShadowsocksProxyAdapterUsesMethodSpecificSaltLength() async throws {
+        let credential = "2022-blake3-aes-128-gcm:\(Data((0..<16).map(UInt8.init)).base64EncodedString())"
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = ShadowsocksProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: [transport]),
+            credentialResolver: StaticShadowsocksCredentialResolver(credential: credential)
+        )
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocks, transport: .tcp), destination: .host("apple.com", port: 443))
+
+        _ = try await adapter.connect(request: request)
+
+        XCTAssertEqual(transport.requests.first?.metadata["shadowsocksCipher"], "2022-blake3-aes-128-gcm")
+        XCTAssertEqual(transport.requests.first?.initialPayload?.count, 16 + 11 + 16 + 16 + 16)
     }
 
     func testTransportBackedProxyAdapterMapsTransportErrorsToProtocolErrors() async {

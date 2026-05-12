@@ -80,17 +80,31 @@ final class AppViewModelsTests: XCTestCase {
     }
 
     @MainActor
-    func testAppViewModelConnectRejectsUnsupportedShadowsocksMethodBeforeStartingProxy() throws {
+    func testAppViewModelConnectAllowsApprovedShadowsocks2022Methods() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let controller = RecordingLocalProxyController(endpoint: endpoint)
+        let model = AppViewModel(nodes: [], localProxyController: controller)
+        try model.importShadowsocksURI("ss://MjAyMi1ibGFrZTMtYWVzLTEyOC1nY206QUFFQ0F3UUZCZ2NJQ1FvTERBME9Edz09QGV4YW1wbGUuaW52YWxpZDo0MjgxNw==#Shadowsocks-2022-example")
+
+        let result = model.connect()
+
+        XCTAssertEqual(result, .localProxyStarted(endpoint))
+        XCTAssertEqual(controller.startedNode?.name, "Shadowsocks-2022-example")
+        XCTAssertEqual(controller.startedCredential, "2022-blake3-aes-128-gcm:AAECAwQFBgcICQoLDA0ODw==")
+        XCTAssertEqual(model.localProxyState.phase, .running)
+    }
+
+    @MainActor
+    func testAppViewModelConnectRejectsUnknownShadowsocks2022MethodBeforeStartingProxy() throws {
         let controller = RecordingLocalProxyController(endpoint: LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809))
         let model = AppViewModel(nodes: [], localProxyController: controller)
-        try model.importShadowsocksURI("ss://MjAyMi1ibGFrZTMtYWVzLTEyOC1nY206dGVzdC1rZXlAZXhhbXBsZS5pbnZhbGlkOjQyODE3#Shadowsocks-2022-example")
+        try model.importShadowsocksURI("ss://MjAyMi1ibGFrZTMtYWVzLTE5Mi1nY206QUFFQ0F3UUZCZ2NJQ1FvTERBME9Edz09QGV4YW1wbGUuaW52YWxpZDo0MjgxNw==#Unknown-2022-example")
 
         let result = model.connect()
 
         XCTAssertEqual(result, .localProxyFailed("当前 Shadowsocks 加密方法暂不支持本地代理"))
         XCTAssertNil(controller.startedNode)
         XCTAssertEqual(model.localProxyState.phase, .failed)
-        XCTAssertEqual(model.localProxyState.message, "当前 Shadowsocks 加密方法暂不支持本地代理")
     }
 
     @MainActor
