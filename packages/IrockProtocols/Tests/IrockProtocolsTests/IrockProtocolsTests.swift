@@ -406,7 +406,12 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
         XCTAssertEqual(request.security, "none")
         XCTAssertEqual(request.flow, "")
-        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "vless-foundation:host:apple.com:443:none:")
+        let expected = Data([0x00])
+            + Data([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2])
+            + Data([0x00, 0x01, 0x01, 0xbb, 0x02, 0x09])
+            + Data("apple.com".utf8)
+        XCTAssertEqual(request.openBytes, expected)
+        XCTAssertFalse(String(data: request.openBytes, encoding: .utf8)?.contains("vless-foundation") == true)
         XCTAssertEqual(request.metadata["vlessUserIDPresent"], "true")
         XCTAssertNil(request.metadata["vlessUserID"])
         XCTAssertEqual(request.metadata["vlessDestination"], "host:apple.com:443")
@@ -418,6 +423,15 @@ final class IrockProtocolsTests: XCTestCase {
     func testVLESSOpenRequestRejectsInvalidUserID() {
         XCTAssertThrowsError(try VLESSOpenRequest(userID: "not-a-uuid", destination: .host("apple.com", port: 443))) { error in
             XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("invalid vless user id"))
+        }
+    }
+
+    func testVLESSOpenRequestRejectsUnsupportedSecurityAndFlow() {
+        XCTAssertThrowsError(try VLESSOpenRequest(userID: "00000000-0000-0000-0000-000000000002", destination: .host("apple.com", port: 443), security: "aes-128-gcm")) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("unsupported vless security"))
+        }
+        XCTAssertThrowsError(try VLESSOpenRequest(userID: "00000000-0000-0000-0000-000000000002", destination: .host("apple.com", port: 443), flow: "xtls-rprx-vision")) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("unsupported vless flow"))
         }
     }
 
@@ -843,8 +857,10 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["vlessUserIDPresent"], "true")
         XCTAssertNil(transport.requests.first?.metadata["vlessUserID"])
         XCTAssertEqual(transport.requests.first?.metadata["vlessDestination"], "host:apple.com:443")
-        XCTAssertEqual(String(data: transport.requests.first?.initialPayload ?? Data(), encoding: .utf8), "vless-foundation:host:apple.com:443:none:")
-        XCTAssertFalse((transport.requests.first?.initialPayload ?? Data()).contains(Data("00000000-0000-0000-0000-000000000002".utf8)))
+        let payload = transport.requests.first?.initialPayload ?? Data()
+        XCTAssertEqual(payload.prefix(4), Data([0x00, 0, 0, 0]))
+        XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("vless-foundation") == true)
+        XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000002".utf8)))
     }
 
     func testVLESSProxyAdapterOpensRealityTCPTransportWithCredentialSafePayload() async throws {
@@ -865,7 +881,8 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["vlessUserIDPresent"], "true")
         XCTAssertNil(transport.requests.first?.metadata["vlessUserID"])
         let payload = transport.requests.first?.initialPayload ?? Data()
-        XCTAssertEqual(String(data: payload, encoding: .utf8), "vless-foundation:host:apple.com:443:none:")
+        XCTAssertEqual(payload.prefix(4), Data([0x00, 0, 0, 0]))
+        XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("vless-foundation") == true)
         XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000002".utf8)))
         XCTAssertFalse(payload.contains(Data("reality-public-key".utf8)))
     }

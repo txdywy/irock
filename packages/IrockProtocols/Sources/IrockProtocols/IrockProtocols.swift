@@ -483,11 +483,33 @@ public struct VLESSOpenRequest: Equatable, Sendable {
             throw ProxyProtocolError.invalidConfiguration("invalid vless security")
         }
 
-        let destinationDescription = Self.destinationDescription(destination)
-        self.destinationDescription = destinationDescription
+        let uuid = try Self.uuidBytes(normalizedUserID)
+        let normalizedFlow = flow.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedSecurity == "none" else {
+            throw ProxyProtocolError.invalidConfiguration("unsupported vless security")
+        }
+        guard normalizedFlow.isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("unsupported vless flow")
+        }
+        let frame = try ProtocolAddressFrame(destination: destination, domainType: 0x02, ipv4Type: 0x01, ipv6Type: 0x03)
+        self.destinationDescription = frame.description
         self.security = normalizedSecurity
-        self.flow = flow.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.openBytes = Data("vless-foundation:\(destinationDescription):\(normalizedSecurity):\(self.flow)".utf8)
+        self.flow = normalizedFlow
+        var bytes = Data([0x00])
+        bytes.append(contentsOf: uuid)
+        bytes.append(0x00)
+        bytes.append(0x01)
+        bytes.append(frame.bytes.suffix(2))
+        bytes.append(frame.bytes.prefix(frame.bytes.count - 2))
+        self.openBytes = bytes
+    }
+
+    private static func uuidBytes(_ value: String) throws -> [UInt8] {
+        guard let uuid = UUID(uuidString: value) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid vless user id")
+        }
+        let tuple = uuid.uuid
+        return [tuple.0, tuple.1, tuple.2, tuple.3, tuple.4, tuple.5, tuple.6, tuple.7, tuple.8, tuple.9, tuple.10, tuple.11, tuple.12, tuple.13, tuple.14, tuple.15]
     }
 
     private static func destinationDescription(_ destination: ProxyDestination) -> String {
