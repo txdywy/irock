@@ -211,7 +211,10 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(plain.requests.first?.metadata["realityPublicKeyPresent"], "true")
         XCTAssertEqual(plain.requests.first?.metadata["realityShortIDPresent"], "true")
         let payload = plain.requests.first?.initialPayload ?? Data()
-        XCTAssertTrue(String(data: payload, encoding: .utf8)?.hasPrefix("reality-foundation:reality.example.com:public-key-present:true:/\n") == true)
+        XCTAssertTrue(payload.starts(with: Data([0x49, 0x52, 0x4c, 0x52, 0x01])))
+        XCTAssertNotNil(payload.range(of: Data([0x01, UInt8("reality.example.com".utf8.count)]) + Data("reality.example.com".utf8)))
+        XCTAssertNotNil(payload.range(of: Data([0x02, 0x01, 0x01])))
+        XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("reality-foundation") == true)
         XCTAssertFalse(payload.contains(Data("reality-public-key".utf8)))
         XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000002".utf8)))
     }

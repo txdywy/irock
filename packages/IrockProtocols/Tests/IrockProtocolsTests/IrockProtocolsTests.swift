@@ -12,6 +12,52 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertNotEqual(ProxyDestination.host("apple.com", port: 443), .host("apple.com", port: 80))
     }
 
+    func testProtocolAddressEncoderBuildsDomainIPv4AndIPv6Frames() throws {
+        XCTAssertEqual(
+            try ProtocolAddressFrame(destination: .host("apple.com", port: 443), domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04).bytes,
+            Data([0x03, 0x09]) + Data("apple.com".utf8) + Data([0x01, 0xbb])
+        )
+        XCTAssertEqual(
+            try ProtocolAddressFrame(destination: .ipv4("93.184.216.34", port: 443), domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04).bytes,
+            Data([0x01, 93, 184, 216, 34, 0x01, 0xbb])
+        )
+        XCTAssertEqual(
+            try ProtocolAddressFrame(destination: .ipv6("2606:2800:220:1:248:1893:25c8:1946", port: 443), domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04).bytes,
+            Data([0x04, 0x26, 0x06, 0x28, 0x00, 0x02, 0x20, 0x00, 0x01, 0x02, 0x48, 0x18, 0x93, 0x25, 0xc8, 0x19, 0x46, 0x01, 0xbb])
+        )
+        XCTAssertEqual(
+            try ProtocolAddressFrame(destination: .ipv6("::1", port: 443), domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04).bytes,
+            Data([0x04]) + Data(repeating: 0, count: 15) + Data([0x01, 0x01, 0xbb])
+        )
+    }
+
+    func testProtocolAddressEncoderRejectsInvalidInputs() {
+        let cases: [ProxyDestination] = [
+            .host("", port: 443),
+            .host(String(repeating: "a", count: 256), port: 443),
+            .host("apple.com", port: 0),
+            .ipv4("999.184.216.34", port: 443),
+            .ipv6("not-ipv6", port: 443)
+        ]
+
+        for destination in cases {
+            XCTAssertThrowsError(try ProtocolAddressFrame(destination: destination, domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04))
+        }
+    }
+
+    func testSHA224MatchesKnownVectors() {
+        let vectors = [
+            ("", "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f"),
+            ("abc", "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7"),
+            ("secret-password", "869ce74cceadfb55774ed4ff96cdb65be71412e3d669878bec160955"),
+            (String(repeating: "a", count: 64), "a88cd5cde6d6fe9136a4e58b49167461ea95d388ca2bdb7afdc3cbf4")
+        ]
+
+        for (input, expected) in vectors {
+            XCTAssertEqual(SHA224.hashHex(input), expected)
+        }
+    }
+
     func testProxyRequestStoresNodeDestinationAndMetadata() {
         let node = makeNode(protocolType: .trojan, transport: .tcp)
         let request = ProxyRequest(
@@ -336,7 +382,9 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
         XCTAssertEqual(request.security, "auto")
         XCTAssertEqual(request.alterID, 0)
-        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "vmess-foundation:host:apple.com:443:auto:0")
+        XCTAssertEqual(request.openBytes.prefix(5), Data([0x01, 0x01, 0x00, 0x00, 0x01]))
+        XCTAssertTrue(request.openBytes.contains(Data("apple.com".utf8)))
+        XCTAssertFalse(String(data: request.openBytes, encoding: .utf8)?.contains("vmess-foundation") == true)
         XCTAssertEqual(request.metadata["vmessUserIDPresent"], "true")
         XCTAssertEqual(request.metadata["vmessDestination"], "host:apple.com:443")
         XCTAssertEqual(request.metadata["vmessSecurity"], "auto")
@@ -351,6 +399,12 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testVMessOpenRequestRejectsUnsupportedSecurity() {
+        XCTAssertThrowsError(try VMessOpenRequest(userID: "00000000-0000-0000-0000-000000000001", destination: .host("apple.com", port: 443), security: "rc4-md5")) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("unsupported vmess security"))
+        }
+    }
+
     func testVLESSOpenRequestBuildsCredentialSafeMetadataAndPayload() throws {
         let request = try VLESSOpenRequest(
             userID: "00000000-0000-0000-0000-000000000002",
@@ -360,7 +414,12 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
         XCTAssertEqual(request.security, "none")
         XCTAssertEqual(request.flow, "")
-        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "vless-foundation:host:apple.com:443:none:")
+        let expected = Data([0x00])
+            + Data([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2])
+            + Data([0x00, 0x01, 0x01, 0xbb, 0x02, 0x09])
+            + Data("apple.com".utf8)
+        XCTAssertEqual(request.openBytes, expected)
+        XCTAssertFalse(String(data: request.openBytes, encoding: .utf8)?.contains("vless-foundation") == true)
         XCTAssertEqual(request.metadata["vlessUserIDPresent"], "true")
         XCTAssertNil(request.metadata["vlessUserID"])
         XCTAssertEqual(request.metadata["vlessDestination"], "host:apple.com:443")
@@ -375,6 +434,15 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testVLESSOpenRequestRejectsUnsupportedSecurityAndFlow() {
+        XCTAssertThrowsError(try VLESSOpenRequest(userID: "00000000-0000-0000-0000-000000000002", destination: .host("apple.com", port: 443), security: "aes-128-gcm")) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("unsupported vless security"))
+        }
+        XCTAssertThrowsError(try VLESSOpenRequest(userID: "00000000-0000-0000-0000-000000000002", destination: .host("apple.com", port: 443), flow: "xtls-rprx-vision")) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("unsupported vless flow"))
+        }
+    }
+
     func testTrojanOpenRequestBuildsCredentialSafeMetadataAndPayload() throws {
         let request = try TrojanOpenRequest(
             password: "secret-password",
@@ -384,7 +452,10 @@ final class IrockProtocolsTests: XCTestCase {
 
         XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
         XCTAssertEqual(request.serverName, "trojan.example.com")
-        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "trojan-foundation:host:apple.com:443:trojan.example.com")
+        let expectedHash = Data("869ce74cceadfb55774ed4ff96cdb65be71412e3d669878bec160955\r\n".utf8)
+        let expectedAddress = Data([0x01, 0x03, 0x09]) + Data("apple.com".utf8) + Data([0x01, 0xbb, 0x0d, 0x0a])
+        XCTAssertEqual(request.openBytes, expectedHash + expectedAddress)
+        XCTAssertFalse(String(data: request.openBytes, encoding: .utf8)?.contains("trojan-foundation") == true)
         XCTAssertEqual(request.metadata["trojanPasswordPresent"], "true")
         XCTAssertNil(request.metadata["trojanPassword"])
         XCTAssertEqual(request.metadata["trojanDestination"], "host:apple.com:443")
@@ -409,7 +480,9 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
         XCTAssertEqual(request.sni, "hysteria.example.com")
         XCTAssertTrue(request.obfuscationPresent)
-        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "hysteria2-foundation:host:apple.com:443:hysteria.example.com:auth-present:true")
+        XCTAssertEqual(request.openBytes.prefix(5), Data([0x48, 0x59, 0x32, 0x01, 0x01]))
+        XCTAssertTrue(request.openBytes.contains(Data("hysteria.example.com".utf8)))
+        XCTAssertFalse(String(data: request.openBytes, encoding: .utf8)?.contains("hysteria2-foundation") == true)
         XCTAssertEqual(request.metadata["hysteria2AuthPresent"], "true")
         XCTAssertEqual(request.metadata["hysteria2Destination"], "host:apple.com:443")
         XCTAssertEqual(request.metadata["hysteria2SNI"], "hysteria.example.com")
@@ -433,7 +506,9 @@ final class IrockProtocolsTests: XCTestCase {
 
         XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
         XCTAssertEqual(request.sni, "tuic.example.com")
-        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "tuic-foundation:host:apple.com:443:tuic.example.com:uuid-present:password-present")
+        XCTAssertEqual(request.openBytes.prefix(5), Data([0x54, 0x55, 0x49, 0x43, 0x05]))
+        XCTAssertTrue(request.openBytes.contains(Data("tuic.example.com".utf8)))
+        XCTAssertFalse(String(data: request.openBytes, encoding: .utf8)?.contains("tuic-foundation") == true)
         XCTAssertEqual(request.metadata["tuicUUIDPresent"], "true")
         XCTAssertEqual(request.metadata["tuicPasswordPresent"], "true")
         XCTAssertEqual(request.metadata["tuicDestination"], "host:apple.com:443")
@@ -502,7 +577,8 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["hysteria2AuthPresent"], "true")
         XCTAssertEqual(transport.requests.first?.metadata["hysteria2Destination"], "host:apple.com:443")
         let payload = transport.requests.first?.initialPayload ?? Data()
-        XCTAssertEqual(String(data: payload, encoding: .utf8), "hysteria2-foundation:host:apple.com:443:example.com:auth-present:false")
+        XCTAssertEqual(payload.prefix(5), Data([0x48, 0x59, 0x32, 0x01, 0x00]))
+        XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("hysteria2-foundation") == true)
         XCTAssertFalse(payload.contains(Data("hysteria-secret".utf8)))
     }
 
@@ -550,7 +626,8 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["tuicPasswordPresent"], "true")
         XCTAssertEqual(transport.requests.first?.metadata["tuicDestination"], "host:apple.com:443")
         let payload = transport.requests.first?.initialPayload ?? Data()
-        XCTAssertEqual(String(data: payload, encoding: .utf8), "tuic-foundation:host:apple.com:443:example.com:uuid-present:password-present")
+        XCTAssertEqual(payload.prefix(5), Data([0x54, 0x55, 0x49, 0x43, 0x05]))
+        XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("tuic-foundation") == true)
         XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000003".utf8)))
         XCTAssertFalse(payload.contains(Data("tuic-password".utf8)))
     }
@@ -732,8 +809,10 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["vmessUserIDPresent"], "true")
         XCTAssertNil(transport.requests.first?.metadata["vmessUserID"])
         XCTAssertEqual(transport.requests.first?.metadata["vmessDestination"], "host:apple.com:443")
-        XCTAssertEqual(String(data: transport.requests.first?.initialPayload ?? Data(), encoding: .utf8), "vmess-foundation:host:apple.com:443:auto:0")
-        XCTAssertFalse((transport.requests.first?.initialPayload ?? Data()).contains(Data("00000000-0000-0000-0000-000000000001".utf8)))
+        let payload = transport.requests.first?.initialPayload ?? Data()
+        XCTAssertEqual(payload.prefix(5), Data([0x01, 0x01, 0x00, 0x00, 0x01]))
+        XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("vmess-foundation") == true)
+        XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000001".utf8)))
     }
 
     func testVMessProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {
@@ -794,8 +873,10 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["vlessUserIDPresent"], "true")
         XCTAssertNil(transport.requests.first?.metadata["vlessUserID"])
         XCTAssertEqual(transport.requests.first?.metadata["vlessDestination"], "host:apple.com:443")
-        XCTAssertEqual(String(data: transport.requests.first?.initialPayload ?? Data(), encoding: .utf8), "vless-foundation:host:apple.com:443:none:")
-        XCTAssertFalse((transport.requests.first?.initialPayload ?? Data()).contains(Data("00000000-0000-0000-0000-000000000002".utf8)))
+        let payload = transport.requests.first?.initialPayload ?? Data()
+        XCTAssertEqual(payload.prefix(4), Data([0x00, 0, 0, 0]))
+        XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("vless-foundation") == true)
+        XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000002".utf8)))
     }
 
     func testVLESSProxyAdapterOpensRealityTCPTransportWithCredentialSafePayload() async throws {
@@ -816,7 +897,8 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["vlessUserIDPresent"], "true")
         XCTAssertNil(transport.requests.first?.metadata["vlessUserID"])
         let payload = transport.requests.first?.initialPayload ?? Data()
-        XCTAssertEqual(String(data: payload, encoding: .utf8), "vless-foundation:host:apple.com:443:none:")
+        XCTAssertEqual(payload.prefix(4), Data([0x00, 0, 0, 0]))
+        XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("vless-foundation") == true)
         XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000002".utf8)))
         XCTAssertFalse(payload.contains(Data("reality-public-key".utf8)))
     }
@@ -882,8 +964,10 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertNil(transport.requests.first?.metadata["trojanPassword"])
         XCTAssertEqual(transport.requests.first?.metadata["trojanDestination"], "host:apple.com:443")
         XCTAssertEqual(transport.requests.first?.metadata["trojanServerName"], "trojan.example.com")
-        XCTAssertEqual(String(data: transport.requests.first?.initialPayload ?? Data(), encoding: .utf8), "trojan-foundation:host:apple.com:443:trojan.example.com")
-        XCTAssertFalse((transport.requests.first?.initialPayload ?? Data()).contains(Data("secret-password".utf8)))
+        let payload = transport.requests.first?.initialPayload ?? Data()
+        XCTAssertTrue(payload.starts(with: Data("869ce74cceadfb55774ed4ff96cdb65be71412e3d669878bec160955\r\n".utf8)))
+        XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("trojan-foundation") == true)
+        XCTAssertFalse(payload.contains(Data("secret-password".utf8)))
     }
 
     func testTrojanProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {

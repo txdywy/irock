@@ -246,7 +246,7 @@ public struct QUICTransportAdapter<Dialer: QUICDialer>: TransportAdapter {
             host: descriptor.host,
             port: request.port,
             metadata: descriptor.metadata,
-            initialPayload: descriptor.initialPayload(appending: request.initialPayload)
+            initialPayload: try descriptor.initialPayload(appending: request.initialPayload)
         )
         return EstablishedTransportConnection(host: result.host, port: result.port, transport: .quic)
     }
@@ -288,7 +288,7 @@ private struct QUICOpenDescriptor {
     var metadata: [String: String] {
         var metadata = [
             "quicServerName": serverName,
-            "quicHandshake": "foundation"
+            "quicHandshake": "local-prelude"
         ]
         if !protocolName.isEmpty {
             metadata["quicProtocol"] = protocolName
@@ -299,12 +299,29 @@ private struct QUICOpenDescriptor {
         return metadata
     }
 
-    func initialPayload(appending payload: Data?) -> Data {
-        var data = Data("quic-foundation:\(serverName):\(protocolName):\(alpn)\n".utf8)
+    func initialPayload(appending payload: Data?) throws -> Data {
+        var data = Data([0x49, 0x52, 0x4c, 0x51, 0x01])
+        try LocalTransportDescriptor.appendField(0x01, serverName, to: &data)
+        try LocalTransportDescriptor.appendField(0x02, protocolName, to: &data)
+        try LocalTransportDescriptor.appendField(0x03, alpn, to: &data)
+        data.append(0x00)
         if let payload {
             data.append(payload)
         }
         return data
+    }
+}
+
+private enum LocalTransportDescriptor {
+    static func appendField(_ type: UInt8, _ value: String, to data: inout Data) throws {
+        guard !value.isEmpty else { return }
+        let bytes = Data(value.utf8)
+        guard bytes.count <= UInt8.max else {
+            throw TransportError.invalidConfiguration("transport descriptor field too large")
+        }
+        data.append(type)
+        data.append(UInt8(bytes.count))
+        data.append(bytes)
     }
 }
 
@@ -324,7 +341,7 @@ public struct RealityTransportAdapter<Underlying: TransportAdapter>: TransportAd
             transport: .tcp,
             tls: nil,
             metadata: descriptor.metadata(merging: request.metadata),
-            initialPayload: descriptor.initialPayload(appending: request.initialPayload)
+            initialPayload: try descriptor.initialPayload(appending: request.initialPayload)
         )
         let connection = try await underlying.open(request: underlyingRequest)
         return EstablishedTransportConnection(host: connection.host, port: connection.port, transport: .tcp)
@@ -389,8 +406,16 @@ private struct RealityOpenDescriptor {
         return metadata
     }
 
-    func initialPayload(appending payload: Data?) -> Data {
-        var data = Data("reality-foundation:\(serverName):public-key-present:\(shortIDPresent ? "true" : "false"):\(spiderX)\n".utf8)
+    func initialPayload(appending payload: Data?) throws -> Data {
+        var data = Data([0x49, 0x52, 0x4c, 0x52, 0x01])
+        try LocalTransportDescriptor.appendField(0x01, serverName, to: &data)
+        data.append(0x02)
+        data.append(0x01)
+        data.append(shortIDPresent ? 0x01 : 0x00)
+        try LocalTransportDescriptor.appendField(0x03, spiderX, to: &data)
+        try LocalTransportDescriptor.appendField(0x04, fingerprint, to: &data)
+        try LocalTransportDescriptor.appendField(0x05, alpn.joined(separator: ","), to: &data)
+        data.append(0x00)
         if let payload {
             data.append(payload)
         }
@@ -463,7 +488,18 @@ private struct WebSocketOpenDescriptor {
     }
 
     func initialPayload(appending payload: Data?) -> Data {
-        var data = Data("websocket-foundation:\(hostHeader):\(path):\(protocolName)\n".utf8)
+        var headers = [
+            "GET \(path) HTTP/1.1",
+            "Host: \(hostHeader)",
+            "Upgrade: websocket",
+            "Connection: Upgrade",
+            "Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==",
+            "Sec-WebSocket-Version: 13"
+        ]
+        if !protocolName.isEmpty {
+            headers.append("Sec-WebSocket-Protocol: \(protocolName)")
+        }
+        var data = Data((headers.joined(separator: "\r\n") + "\r\n\r\n").utf8)
         if let payload {
             data.append(payload)
         }
@@ -487,7 +523,7 @@ public struct HTTP2TransportAdapter<Underlying: TransportAdapter>: TransportAdap
             transport: .tcp,
             tls: request.tls,
             metadata: descriptor.metadata,
-            initialPayload: descriptor.initialPayload(appending: request.initialPayload)
+            initialPayload: try descriptor.initialPayload(appending: request.initialPayload)
         )
         let connection = try await underlying.open(request: underlyingRequest)
         return EstablishedTransportConnection(host: connection.host, port: connection.port, transport: .http2)
@@ -535,10 +571,39 @@ private struct HTTP2OpenDescriptor {
         return metadata
     }
 
-    func initialPayload(appending payload: Data?) -> Data {
-        var data = Data("http2-foundation:\(authority):\(path):\(protocolName)\n".utf8)
+    func initialPayload(appending payload: Data?) throws -> Data {
+        var data = try HTTP2LocalPrelude.build(fields: [
+            ("http2-authority", authority),
+            ("http2-path", path),
+            ("http2-protocol", protocolName)
+        ])
         if let payload {
             data.append(payload)
+        }
+        return data
+    }
+}
+
+private enum HTTP2LocalPrelude {
+    static func build(fields: [(String, String)]) throws -> Data {
+        var data = Data("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".utf8)
+        data.append(contentsOf: [0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00])
+        let headerBlock = fields
+            .filter { !$0.1.isEmpty }
+            .map { "\($0.0):\($0.1)" }
+            .joined(separator: "\n")
+        if !headerBlock.isEmpty {
+            let block = Data((headerBlock + "\n\n").utf8)
+            guard block.count <= 0x00ff_ffff else {
+                throw TransportError.invalidConfiguration("http2 header block too large")
+            }
+            data.append(UInt8((block.count >> 16) & 0xff))
+            data.append(UInt8((block.count >> 8) & 0xff))
+            data.append(UInt8(block.count & 0xff))
+            data.append(0x01)
+            data.append(0x04)
+            data.append(contentsOf: [0x00, 0x00, 0x00, 0x01])
+            data.append(block)
         }
         return data
     }
@@ -560,7 +625,7 @@ public struct GRPCTransportAdapter<Underlying: TransportAdapter>: TransportAdapt
             transport: .tcp,
             tls: request.tls,
             metadata: descriptor.metadata,
-            initialPayload: descriptor.initialPayload(appending: request.initialPayload)
+            initialPayload: try descriptor.initialPayload(appending: request.initialPayload)
         )
         let connection = try await underlying.open(request: underlyingRequest)
         return EstablishedTransportConnection(host: connection.host, port: connection.port, transport: .grpc)
@@ -608,9 +673,22 @@ private struct GRPCOpenDescriptor {
         return metadata
     }
 
-    func initialPayload(appending payload: Data?) -> Data {
-        var data = Data("grpc-foundation:\(authority):\(service):\(protocolName)\n".utf8)
+    func initialPayload(appending payload: Data?) throws -> Data {
+        var data = try HTTP2LocalPrelude.build(fields: [
+            ("grpc-authority", authority),
+            ("grpc-service", service),
+            ("grpc-protocol", protocolName)
+        ])
         if let payload {
+            guard payload.count <= Int(UInt32.max) else {
+                throw TransportError.invalidConfiguration("grpc message too large")
+            }
+            let length = UInt32(payload.count)
+            data.append(0x00)
+            data.append(UInt8((length >> 24) & 0xff))
+            data.append(UInt8((length >> 16) & 0xff))
+            data.append(UInt8((length >> 8) & 0xff))
+            data.append(UInt8(length & 0xff))
             data.append(payload)
         }
         return data
