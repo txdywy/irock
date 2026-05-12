@@ -87,6 +87,18 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testShadowsocksSupportsApproved2022Blake3Methods() {
+        XCTAssertTrue(ShadowsocksStreamRequest.supportsCredential("2022-blake3-aes-128-gcm:test-key"))
+        XCTAssertTrue(ShadowsocksStreamRequest.supportsCredential("2022-blake3-aes-256-gcm:test-key"))
+        XCTAssertTrue(ShadowsocksStreamRequest.supportsCredential("2022-blake3-chacha20-poly1305:test-key"))
+        XCTAssertTrue(ShadowsocksStreamRequest.supportsCredential("aes-256-gcm:pass"))
+    }
+
+    func testShadowsocksRejectsUnknown2022Blake3Methods() {
+        XCTAssertFalse(ShadowsocksStreamRequest.supportsCredential("2022-blake3-aes-192-gcm:test-key"))
+        XCTAssertFalse(ShadowsocksStreamRequest.supportsCredential("2022-blake3-chacha8-poly1305:test-key"))
+    }
+
     func testBLAKE3MatchesOfficialVectors() throws {
         let empty = Data()
         XCTAssertEqual(
