@@ -382,7 +382,9 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
         XCTAssertEqual(request.security, "auto")
         XCTAssertEqual(request.alterID, 0)
-        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "vmess-foundation:host:apple.com:443:auto:0")
+        XCTAssertEqual(request.openBytes.prefix(5), Data([0x01, 0x01, 0x00, 0x00, 0x01]))
+        XCTAssertTrue(request.openBytes.contains(Data("apple.com".utf8)))
+        XCTAssertFalse(String(data: request.openBytes, encoding: .utf8)?.contains("vmess-foundation") == true)
         XCTAssertEqual(request.metadata["vmessUserIDPresent"], "true")
         XCTAssertEqual(request.metadata["vmessDestination"], "host:apple.com:443")
         XCTAssertEqual(request.metadata["vmessSecurity"], "auto")
@@ -394,6 +396,12 @@ final class IrockProtocolsTests: XCTestCase {
     func testVMessOpenRequestRejectsInvalidUserID() {
         XCTAssertThrowsError(try VMessOpenRequest(userID: "not-a-uuid", destination: .host("apple.com", port: 443))) { error in
             XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("invalid vmess user id"))
+        }
+    }
+
+    func testVMessOpenRequestRejectsUnsupportedSecurity() {
+        XCTAssertThrowsError(try VMessOpenRequest(userID: "00000000-0000-0000-0000-000000000001", destination: .host("apple.com", port: 443), security: "rc4-md5")) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("unsupported vmess security"))
         }
     }
 
@@ -795,8 +803,10 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["vmessUserIDPresent"], "true")
         XCTAssertNil(transport.requests.first?.metadata["vmessUserID"])
         XCTAssertEqual(transport.requests.first?.metadata["vmessDestination"], "host:apple.com:443")
-        XCTAssertEqual(String(data: transport.requests.first?.initialPayload ?? Data(), encoding: .utf8), "vmess-foundation:host:apple.com:443:auto:0")
-        XCTAssertFalse((transport.requests.first?.initialPayload ?? Data()).contains(Data("00000000-0000-0000-0000-000000000001".utf8)))
+        let payload = transport.requests.first?.initialPayload ?? Data()
+        XCTAssertEqual(payload.prefix(5), Data([0x01, 0x01, 0x00, 0x00, 0x01]))
+        XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("vmess-foundation") == true)
+        XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000001".utf8)))
     }
 
     func testVMessProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {

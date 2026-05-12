@@ -439,11 +439,25 @@ public struct VMessOpenRequest: Equatable, Sendable {
             throw ProxyProtocolError.invalidConfiguration("invalid vmess security")
         }
 
-        let destinationDescription = Self.destinationDescription(destination)
-        self.destinationDescription = destinationDescription
+        let allowedSecurity = ["auto", "none", "aes-128-gcm", "chacha20-poly1305"]
+        guard allowedSecurity.contains(normalizedSecurity) else {
+            throw ProxyProtocolError.invalidConfiguration("unsupported vmess security")
+        }
+        let frame = try ProtocolAddressFrame(destination: destination, domainType: 0x02, ipv4Type: 0x01, ipv6Type: 0x03)
+        let securityCode: UInt8
+        switch normalizedSecurity {
+        case "none": securityCode = 0x05
+        case "aes-128-gcm": securityCode = 0x03
+        case "chacha20-poly1305": securityCode = 0x04
+        default: securityCode = 0x00
+        }
+        self.destinationDescription = frame.description
         self.security = normalizedSecurity
         self.alterID = alterID
-        self.openBytes = Data("vmess-foundation:\(destinationDescription):\(normalizedSecurity):\(alterID)".utf8)
+        var bytes = Data([0x01, 0x01, UInt8(min(alterID, 255)), securityCode])
+        bytes.append(frame.bytes.suffix(2))
+        bytes.append(frame.bytes.prefix(frame.bytes.count - 2))
+        self.openBytes = bytes
     }
 
     private static func destinationDescription(_ destination: ProxyDestination) -> String {
