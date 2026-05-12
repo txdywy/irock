@@ -25,6 +25,10 @@ final class IrockProtocolsTests: XCTestCase {
             try ProtocolAddressFrame(destination: .ipv6("2606:2800:220:1:248:1893:25c8:1946", port: 443), domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04).bytes,
             Data([0x04, 0x26, 0x06, 0x28, 0x00, 0x02, 0x20, 0x00, 0x01, 0x02, 0x48, 0x18, 0x93, 0x25, 0xc8, 0x19, 0x46, 0x01, 0xbb])
         )
+        XCTAssertEqual(
+            try ProtocolAddressFrame(destination: .ipv6("::1", port: 443), domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04).bytes,
+            Data([0x04]) + Data(repeating: 0, count: 15) + Data([0x01, 0x01, 0xbb])
+        )
     }
 
     func testProtocolAddressEncoderRejectsInvalidInputs() {
@@ -33,7 +37,7 @@ final class IrockProtocolsTests: XCTestCase {
             .host(String(repeating: "a", count: 256), port: 443),
             .host("apple.com", port: 0),
             .ipv4("999.184.216.34", port: 443),
-            .ipv6("::1", port: 443)
+            .ipv6("not-ipv6", port: 443)
         ]
 
         for destination in cases {
@@ -41,11 +45,17 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
-    func testSHA224MatchesTrojanPasswordVector() {
-        XCTAssertEqual(
-            SHA224.hashHex("secret-password"),
-            "869ce74cceadfb55774ed4ff96cdb65be71412e3d669878bec160955"
-        )
+    func testSHA224MatchesKnownVectors() {
+        let vectors = [
+            ("", "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f"),
+            ("abc", "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7"),
+            ("secret-password", "869ce74cceadfb55774ed4ff96cdb65be71412e3d669878bec160955"),
+            (String(repeating: "a", count: 64), "a88cd5cde6d6fe9136a4e58b49167461ea95d388ca2bdb7afdc3cbf4")
+        ]
+
+        for (input, expected) in vectors {
+            XCTAssertEqual(SHA224.hashHex(input), expected)
+        }
     }
 
     func testProxyRequestStoresNodeDestinationAndMetadata() {

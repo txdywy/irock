@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import IrockCore
 import IrockTransport
@@ -63,16 +64,12 @@ struct ProtocolAddressFrame: Equatable, Sendable {
     }
 
     private static func ipv6Bytes(_ address: String) throws -> [UInt8] {
-        let parts = address.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-        guard parts.count == 8 else {
+        var storage = in6_addr()
+        let result = address.withCString { inet_pton(AF_INET6, $0, &storage) }
+        guard result == 1 else {
             throw ProxyProtocolError.invalidConfiguration("invalid ipv6 destination")
         }
-        return try parts.flatMap { part -> [UInt8] in
-            guard part.count <= 4, let value = UInt16(part, radix: 16) else {
-                throw ProxyProtocolError.invalidConfiguration("invalid ipv6 destination")
-            }
-            return [UInt8(value >> 8), UInt8(value & 0xff)]
-        }
+        return withUnsafeBytes(of: storage) { Array($0) }
     }
 }
 
@@ -706,14 +703,22 @@ enum SHA224 {
         }
 
         var digest: [UInt8] = []
-        let hashWords: [UInt32] = [h0, h1, h2, h3, h4, h5, h6]
-        for word in hashWords {
-            digest.append(UInt8(word >> 24))
-            digest.append(UInt8((word >> 16) & 0xff))
-            digest.append(UInt8((word >> 8) & 0xff))
-            digest.append(UInt8(word & 0xff))
-        }
+        digest.reserveCapacity(28)
+        appendBigEndian(h0, to: &digest)
+        appendBigEndian(h1, to: &digest)
+        appendBigEndian(h2, to: &digest)
+        appendBigEndian(h3, to: &digest)
+        appendBigEndian(h4, to: &digest)
+        appendBigEndian(h5, to: &digest)
+        appendBigEndian(h6, to: &digest)
         return digest
+    }
+
+    private static func appendBigEndian(_ word: UInt32, to digest: inout [UInt8]) {
+        digest.append(UInt8(word >> 24))
+        digest.append(UInt8((word >> 16) & 0xff))
+        digest.append(UInt8((word >> 8) & 0xff))
+        digest.append(UInt8(word & 0xff))
     }
 
     private static let k: [UInt32] = [
