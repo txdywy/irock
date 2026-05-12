@@ -15,10 +15,11 @@ struct ContentView: View {
                 nodes: [],
                 runtimeSnapshotStore: stores.snapshotStore,
                 runtimeStatusStore: stores.statusStore,
-                runtimeLogStore: stores.logStore
+                runtimeLogStore: stores.logStore,
+                localProxyController: MacOSLocalProxyController()
             )
         } catch {
-            return AppViewModel(nodes: [])
+            return AppViewModel(nodes: [], localProxyController: MacOSLocalProxyController())
         }
     }
 }

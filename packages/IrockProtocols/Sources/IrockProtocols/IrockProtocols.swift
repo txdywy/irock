@@ -9,6 +9,104 @@ public enum ProxyDestination: Equatable, Sendable {
     case ipv6(String, port: Int)
 }
 
+public struct ShadowsocksAEADStreamEncoder: Sendable {
+    private var nonceValue: UInt64
+    private let subkey: SymmetricKey
+
+    public init(credential: String, salt: Data, initialNonce: UInt64 = 0) throws {
+        let parsed = try ShadowsocksStreamRequest.parseCredential(credential)
+        guard parsed.method == "aes-256-gcm" else {
+            throw ProxyProtocolError.invalidConfiguration("unsupported shadowsocks method")
+        }
+        guard salt.count == 32 else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks salt")
+        }
+        let masterKey = SymmetricKey(data: ShadowsocksStreamRequest.evpBytesToKey(password: Data(parsed.password.utf8), keyLength: 32))
+        self.subkey = HKDF<Insecure.SHA1>.deriveKey(inputKeyMaterial: masterKey, salt: salt, info: Data("ss-subkey".utf8), outputByteCount: 32)
+        self.nonceValue = initialNonce
+    }
+
+    public mutating func encrypt(_ payload: Data) throws -> Data {
+        guard payload.count <= UInt16.max else {
+            throw ProxyProtocolError.invalidConfiguration("shadowsocks payload chunk too large")
+        }
+        let length = Data([UInt8(payload.count >> 8), UInt8(payload.count & 0xff)])
+        let encryptedLength = try ShadowsocksStreamRequest.seal(length, using: subkey, nonceValue: nonceValue)
+        nonceValue += 1
+        let encryptedPayload = try ShadowsocksStreamRequest.seal(payload, using: subkey, nonceValue: nonceValue)
+        nonceValue += 1
+        var frame = Data()
+        frame.append(encryptedLength)
+        frame.append(encryptedPayload)
+        return frame
+    }
+}
+
+public struct ShadowsocksAEADStreamDecoder: Sendable {
+    private var nonceValue: UInt64
+    private let subkey: SymmetricKey
+    private var buffer: Data
+
+    public init(credential: String, salt: Data, initialNonce: UInt64 = 0) throws {
+        let parsed = try ShadowsocksStreamRequest.parseCredential(credential)
+        guard parsed.method == "aes-256-gcm" else {
+            throw ProxyProtocolError.invalidConfiguration("unsupported shadowsocks method")
+        }
+        guard salt.count == 32 else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks salt")
+        }
+        let masterKey = SymmetricKey(data: ShadowsocksStreamRequest.evpBytesToKey(password: Data(parsed.password.utf8), keyLength: 32))
+        self.subkey = HKDF<Insecure.SHA1>.deriveKey(inputKeyMaterial: masterKey, salt: salt, info: Data("ss-subkey".utf8), outputByteCount: 32)
+        self.nonceValue = initialNonce
+        self.buffer = Data()
+    }
+
+    public mutating func decrypt(_ frame: Data) throws -> Data {
+        buffer.append(frame)
+        guard let payload = try decryptNextBufferedFrame() else {
+            throw ProxyProtocolError.invalidConfiguration("incomplete shadowsocks frame")
+        }
+        guard buffer.isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("trailing shadowsocks frame bytes")
+        }
+        return payload
+    }
+
+    public mutating func appendAndDecrypt<T: DataProtocol>(_ frame: T) throws -> Data? {
+        buffer.append(contentsOf: frame)
+        return try decryptNextBufferedFrame()
+    }
+
+    public mutating func appendAndDecryptAvailable<T: DataProtocol>(_ frame: T) throws -> [Data] {
+        buffer.append(contentsOf: frame)
+        var payloads: [Data] = []
+        while let payload = try decryptNextBufferedFrame() {
+            payloads.append(payload)
+        }
+        return payloads
+    }
+
+    private mutating func decryptNextBufferedFrame() throws -> Data? {
+        let lengthFrameSize = 2 + 16
+        guard buffer.count >= lengthFrameSize else { return nil }
+        let encryptedLength = buffer.prefix(lengthFrameSize)
+        let lengthData = try ShadowsocksStreamRequest.open(Data(encryptedLength), using: subkey, nonceValue: nonceValue)
+        nonceValue += 1
+        let payloadLength = Int(lengthData[0]) << 8 | Int(lengthData[1])
+        let payloadFrameSize = payloadLength + 16
+        guard buffer.count >= lengthFrameSize + payloadFrameSize else {
+            nonceValue -= 1
+            return nil
+        }
+        buffer.removeFirst(lengthFrameSize)
+        let encryptedPayload = buffer.prefix(payloadFrameSize)
+        let payload = try ShadowsocksStreamRequest.open(Data(encryptedPayload), using: subkey, nonceValue: nonceValue)
+        nonceValue += 1
+        buffer.removeFirst(payloadFrameSize)
+        return payload
+    }
+}
+
 public struct ShadowsocksStreamRequest: Equatable, Sendable {
     public let cipher: String
     public let addressFrame: Data
@@ -49,9 +147,19 @@ public struct ShadowsocksStreamRequest: Equatable, Sendable {
         self.openBytes = salt + encryptedLength + encryptedPayload
     }
 
-    private static func seal(_ data: Data, using key: SymmetricKey, nonceValue: UInt64) throws -> Data {
+    static func seal(_ data: Data, using key: SymmetricKey, nonceValue: UInt64) throws -> Data {
         let sealed = try AES.GCM.seal(data, using: key, nonce: AES.GCM.Nonce(data: nonceBytes(nonceValue)))
         return sealed.ciphertext + sealed.tag
+    }
+
+    static func open(_ data: Data, using key: SymmetricKey, nonceValue: UInt64) throws -> Data {
+        guard data.count >= 16 else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks encrypted frame")
+        }
+        let ciphertext = data.prefix(data.count - 16)
+        let tag = data.suffix(16)
+        let sealedBox = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: nonceBytes(nonceValue)), ciphertext: ciphertext, tag: tag)
+        return try AES.GCM.open(sealedBox, using: key)
     }
 
     private static func nonceBytes(_ value: UInt64) -> Data {
@@ -64,7 +172,7 @@ public struct ShadowsocksStreamRequest: Equatable, Sendable {
         return bytes
     }
 
-    private static func evpBytesToKey(password: Data, keyLength: Int) -> Data {
+    static func evpBytesToKey(password: Data, keyLength: Int) -> Data {
         var key = Data()
         var previous = Data()
         while key.count < keyLength {
@@ -77,7 +185,7 @@ public struct ShadowsocksStreamRequest: Equatable, Sendable {
         return key.prefix(keyLength)
     }
 
-    private static func parseCredential(_ credential: String) throws -> (method: String, password: String) {
+    static func parseCredential(_ credential: String) throws -> (method: String, password: String) {
         guard let separator = credential.firstIndex(of: ":") else {
             throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks credential")
         }
