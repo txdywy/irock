@@ -100,11 +100,16 @@ final class IrockProtocolsTests: XCTestCase {
             "2d3adedff11b61f14c886e35afa036736dcd87a74d27b5c1510225d0f592e213"
         )
 
-        let thousandTwentyFour = Data((0..<1024).map { UInt8($0 % 251) })
-        XCTAssertEqual(
-            InternalBLAKE3.hash(thousandTwentyFour, outputByteCount: 32).hexString,
-            "42214739f095a406f3fc83deb889744ac00df831c10daa55189b5d121c855af7"
-        )
+        let officialHashVectors = [
+            1024: "42214739f095a406f3fc83deb889744ac00df831c10daa55189b5d121c855af7",
+            1025: "d00278ae47eb27b34faecf67b4fe263f82d5412916c1ffd97c8cb7fb814b8444",
+            2048: "e776b6028c7cd22a4d0ba182a8bf62205d2ef576467e838ed6f2529b85fba24a",
+            2049: "5f4d72f40d7a5f82b15ca2b2e44b1de3c2ef86c426c95c1af0b6879522563030"
+        ]
+        for (inputLength, expectedHash) in officialHashVectors {
+            let input = Data((0..<inputLength).map { UInt8($0 % 251) })
+            XCTAssertEqual(InternalBLAKE3.hash(input, outputByteCount: 32).hexString, expectedHash)
+        }
     }
 
     func testBLAKE3DeriveKeyMatchesOfficialVectors() throws {
@@ -119,11 +124,16 @@ final class IrockProtocolsTests: XCTestCase {
             "b3e2e340a117a499c6cf2398a19ee0d29cca2bb7404c73063382693bf66cb06c"
         )
 
-        let thousandTwentyFour = Data((0..<1024).map { UInt8($0 % 251) })
-        XCTAssertEqual(
-            InternalBLAKE3.deriveKey(context: context, material: thousandTwentyFour, outputByteCount: 32).hexString,
-            "7356cd7720d5b66b6d0697eb3177d9f8d73a4a5c5e968896eb6a689684302706"
-        )
+        let officialDeriveKeyVectors = [
+            1024: "7356cd7720d5b66b6d0697eb3177d9f8d73a4a5c5e968896eb6a689684302706",
+            1025: "effaa245f065fbf82ac186839a249707c3bddf6d3fdda22d1b95a3c970379bcb",
+            2048: "7b2945cb4fef70885cc5d78a87bf6f6207dd901ff239201351ffac04e1088a23",
+            2049: "2ea477c5515cc3dd606512ee72bb3e0e758cfae7232826f35fb98ca1bcbdf273"
+        ]
+        for (inputLength, expectedDerivedKey) in officialDeriveKeyVectors {
+            let material = Data((0..<inputLength).map { UInt8($0 % 251) })
+            XCTAssertEqual(InternalBLAKE3.deriveKey(context: context, material: material, outputByteCount: 32).hexString, expectedDerivedKey)
+        }
     }
 
     func testShadowsocksStreamRequestRejectsInvalidCredential() {

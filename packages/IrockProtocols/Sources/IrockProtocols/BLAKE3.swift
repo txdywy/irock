@@ -23,39 +23,33 @@ enum InternalBLAKE3 {
             precondition(outputByteCount >= 0)
 
             let bytes = Array(input)
-            let chunkOutputs = bytes.chunked(into: Constants.chunkLength).enumerated().map { index, chunk in
-                chunkOutput(bytes: chunk, chunkCounter: UInt64(index))
+            let chunks = bytes.chunked(into: Constants.chunkLength)
+            if chunks.isEmpty {
+                return chunkOutput(bytes: [], chunkCounter: 0).rootOutputBytes(outputByteCount: outputByteCount)
             }
-            let rootOutput: Output
-            if chunkOutputs.isEmpty {
-                rootOutput = chunkOutput(bytes: [], chunkCounter: 0)
-            } else if chunkOutputs.count == 1 {
-                rootOutput = chunkOutputs[0]
-            } else {
-                var chainingValues = chunkOutputs.map { $0.chainingValue() }
-                while chainingValues.count > 1 {
-                    var next: [[UInt32]] = []
-                    var index = 0
-                    while index < chainingValues.count {
-                        if index + 1 < chainingValues.count {
-                            next.append(parentOutput(left: chainingValues[index], right: chainingValues[index + 1]).chainingValue())
-                            index += 2
-                        } else {
-                            next.append(chainingValues[index])
-                            index += 1
-                        }
-                    }
-                    chainingValues = next
-                }
-                rootOutput = Output(
-                    inputChainingValue: keyWords(),
-                    blockWords: chainingValues[0] + Array(repeating: 0, count: 8),
-                    counter: 0,
-                    blockLength: UInt32(Constants.blockLength),
-                    flags: flagsForMode() | Flags.parent
-                )
+
+            var chainingValueStack: [[UInt32]] = []
+            for chunkIndex in chunks.indices.dropLast() {
+                let chunkChainingValue = chunkOutput(bytes: chunks[chunkIndex], chunkCounter: UInt64(chunkIndex)).chainingValue()
+                addChunkChainingValue(chunkChainingValue, totalChunks: UInt64(chunkIndex + 1), to: &chainingValueStack)
+            }
+
+            let lastChunkIndex = chunks.index(before: chunks.endIndex)
+            var rootOutput = chunkOutput(bytes: chunks[lastChunkIndex], chunkCounter: UInt64(lastChunkIndex))
+            while let leftChainingValue = chainingValueStack.popLast() {
+                rootOutput = parentOutput(left: leftChainingValue, right: rootOutput.chainingValue())
             }
             return rootOutput.rootOutputBytes(outputByteCount: outputByteCount)
+        }
+
+        private func addChunkChainingValue(_ newChainingValue: [UInt32], totalChunks: UInt64, to stack: inout [[UInt32]]) {
+            var chainingValue = newChainingValue
+            var chunksRemaining = totalChunks
+            while chunksRemaining & 1 == 0 {
+                chainingValue = parentOutput(left: stack.removeLast(), right: chainingValue).chainingValue()
+                chunksRemaining >>= 1
+            }
+            stack.append(chainingValue)
         }
 
         private func chunkOutput(bytes: [UInt8], chunkCounter: UInt64) -> Output {
