@@ -57,6 +57,16 @@ final class URIImportTests: XCTestCase {
         XCTAssertEqual(draft.serverPortText, "443")
     }
 
+    func testParsesShadowsocks2022URIWithoutExposingSecret() throws {
+        let draft = try URIImport.parseShadowsocksDraft("ss://MjAyMi1ibGFrZTMtYWVzLTEyOC1nY206dGVzdC1rZXlAZXhhbXBsZS5pbnZhbGlkOjQyODE3#Shadowsocks-2022-example")
+
+        XCTAssertEqual(draft.name, "Shadowsocks-2022-example")
+        XCTAssertEqual(draft.serverHost, "example.invalid")
+        XCTAssertEqual(draft.serverPortText, "42817")
+        XCTAssertTrue(draft.credentialAccount.hasPrefix("2022-blake3-aes-128-gcm:"))
+        XCTAssertFalse(draft.credentialAccount.contains("example.invalid"))
+    }
+
     func testParseShadowsocksRejectsNonSSScheme() {
         XCTAssertThrowsError(try URIImport.parseShadowsocksDraft("trojan://example.com")) { error in
             XCTAssertEqual(error as? URIImportError, .unsupportedScheme("trojan"))

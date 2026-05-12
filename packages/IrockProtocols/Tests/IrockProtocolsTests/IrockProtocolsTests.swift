@@ -77,6 +77,16 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testShadowsocks2022ExampleMethodIsUnsupportedUntilBlake3IsAvailable() {
+        XCTAssertThrowsError(try ShadowsocksStreamRequest(
+            credential: "2022-blake3-aes-128-gcm:credential-redacted",
+            destination: .host("example.com", port: 443),
+            salt: Data(repeating: 1, count: 32)
+        )) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("unsupported shadowsocks method"))
+        }
+    }
+
     func testShadowsocksStreamRequestRejectsInvalidCredential() {
         XCTAssertThrowsError(try ShadowsocksStreamRequest(
             credential: "aes-256-gcm",
