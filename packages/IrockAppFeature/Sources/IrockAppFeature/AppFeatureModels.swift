@@ -137,6 +137,7 @@ public struct LocalProxyState: Equatable, Sendable {
 public enum LocalProxyError: Error, Equatable, Sendable {
     case missingSelectedNode
     case missingCredential
+    case unsupportedCredential
     case unavailable
 }
 

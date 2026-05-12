@@ -76,6 +76,11 @@ public struct NodeListView: View {
                 Button("刷新运行状态") {
                     _ = viewModel.refreshRuntimeFeedback()
                 }
+                Text(viewModel.localProxyState.message)
+                if let endpoint = viewModel.localProxyState.endpoint {
+                    Text("SOCKS：\(endpoint.socksAddress)")
+                    Text("HTTP：\(endpoint.httpAddress)")
+                }
             }
             Section("节点") {
                 ForEach(viewModel.nodeListState.nodes, id: \.id) { node in

@@ -128,6 +128,11 @@ public struct ShadowsocksStreamRequest: Equatable, Sendable {
         ]
     }
 
+    public static func supportsCredential(_ credential: String) -> Bool {
+        guard let parsed = try? parseCredential(credential) else { return false }
+        return parsed.method == "aes-256-gcm"
+    }
+
     public init(credential: String, destination: ProxyDestination, salt: Data) throws {
         let parsed = try Self.parseCredential(credential)
         guard parsed.method == "aes-256-gcm" else {
