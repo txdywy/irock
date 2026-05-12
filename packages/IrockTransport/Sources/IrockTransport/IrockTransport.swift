@@ -463,7 +463,18 @@ private struct WebSocketOpenDescriptor {
     }
 
     func initialPayload(appending payload: Data?) -> Data {
-        var data = Data("websocket-foundation:\(hostHeader):\(path):\(protocolName)\n".utf8)
+        var headers = [
+            "GET \(path) HTTP/1.1",
+            "Host: \(hostHeader)",
+            "Upgrade: websocket",
+            "Connection: Upgrade",
+            "Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==",
+            "Sec-WebSocket-Version: 13"
+        ]
+        if !protocolName.isEmpty {
+            headers.append("Sec-WebSocket-Protocol: \(protocolName)")
+        }
+        var data = Data((headers.joined(separator: "\r\n") + "\r\n\r\n").utf8)
         if let payload {
             data.append(payload)
         }

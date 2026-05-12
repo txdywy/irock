@@ -460,7 +460,16 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(underlying.requests.first?.metadata["webSocketPath"], "/proxy")
         XCTAssertEqual(underlying.requests.first?.metadata["webSocketProtocol"], "vmess")
         XCTAssertEqual(underlying.requests.first?.metadata["webSocketUpgrade"], "true")
-        XCTAssertEqual(String(data: underlying.requests.first?.initialPayload ?? Data(), encoding: .utf8), "websocket-foundation:example.com:/proxy:vmess\nprotocol-open")
+        let prelude = String(data: underlying.requests.first?.initialPayload ?? Data(), encoding: .utf8)
+        XCTAssertTrue(prelude?.hasPrefix("GET /proxy HTTP/1.1\r\n") == true)
+        XCTAssertTrue(prelude?.contains("Host: example.com\r\n") == true)
+        XCTAssertTrue(prelude?.contains("Upgrade: websocket\r\n") == true)
+        XCTAssertTrue(prelude?.contains("Connection: Upgrade\r\n") == true)
+        XCTAssertTrue(prelude?.contains("Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==\r\n") == true)
+        XCTAssertTrue(prelude?.contains("Sec-WebSocket-Version: 13\r\n") == true)
+        XCTAssertTrue(prelude?.contains("Sec-WebSocket-Protocol: vmess\r\n") == true)
+        XCTAssertTrue(prelude?.hasSuffix("\r\n\r\nprotocol-open") == true)
+        XCTAssertFalse(prelude?.contains("websocket-foundation") == true)
     }
 
     func testWebSocketTransportAdapterDefaultsPathAndHostMetadata() async throws {
@@ -473,7 +482,12 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(underlying.requests.first?.metadata["webSocketHost"], "example.com")
         XCTAssertEqual(underlying.requests.first?.metadata["webSocketPath"], "/")
         XCTAssertNil(underlying.requests.first?.metadata["webSocketProtocol"])
-        XCTAssertEqual(String(data: underlying.requests.first?.initialPayload ?? Data(), encoding: .utf8), "websocket-foundation:example.com:/:\n")
+        let prelude = String(data: underlying.requests.first?.initialPayload ?? Data(), encoding: .utf8)
+        XCTAssertTrue(prelude?.hasPrefix("GET / HTTP/1.1\r\n") == true)
+        XCTAssertTrue(prelude?.contains("Host: example.com\r\n") == true)
+        XCTAssertFalse(prelude?.contains("Sec-WebSocket-Protocol:") == true)
+        XCTAssertTrue(prelude?.hasSuffix("\r\n\r\n") == true)
+        XCTAssertFalse(prelude?.contains("websocket-foundation") == true)
     }
 
     func testWebSocketTransportAdapterRejectsInvalidConfigurationBeforeOpeningUnderlying() async {
