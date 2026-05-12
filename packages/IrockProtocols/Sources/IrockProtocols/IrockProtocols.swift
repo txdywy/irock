@@ -12,17 +12,15 @@ public enum ProxyDestination: Equatable, Sendable {
 public struct ShadowsocksAEADStreamEncoder: Sendable {
     private var nonceValue: UInt64
     private let subkey: SymmetricKey
+    private let cipher: ShadowsocksCipher
 
     public init(credential: String, salt: Data, initialNonce: UInt64 = 0) throws {
         let parsed = try ShadowsocksStreamRequest.parseCredential(credential)
-        guard parsed.method == "aes-256-gcm" else {
+        guard let cipher = ShadowsocksCipher.lookup(method: parsed.method) else {
             throw ProxyProtocolError.invalidConfiguration("unsupported shadowsocks method")
         }
-        guard salt.count == 32 else {
-            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks salt")
-        }
-        let masterKey = SymmetricKey(data: ShadowsocksStreamRequest.evpBytesToKey(password: Data(parsed.password.utf8), keyLength: 32))
-        self.subkey = HKDF<Insecure.SHA1>.deriveKey(inputKeyMaterial: masterKey, salt: salt, info: Data("ss-subkey".utf8), outputByteCount: 32)
+        self.cipher = cipher
+        self.subkey = try cipher.deriveSubkey(password: parsed.password, salt: salt)
         self.nonceValue = initialNonce
     }
 
@@ -31,9 +29,9 @@ public struct ShadowsocksAEADStreamEncoder: Sendable {
             throw ProxyProtocolError.invalidConfiguration("shadowsocks payload chunk too large")
         }
         let length = Data([UInt8(payload.count >> 8), UInt8(payload.count & 0xff)])
-        let encryptedLength = try ShadowsocksStreamRequest.seal(length, using: subkey, nonceValue: nonceValue)
+        let encryptedLength = try cipher.seal(length, using: subkey, nonceValue: nonceValue)
         nonceValue += 1
-        let encryptedPayload = try ShadowsocksStreamRequest.seal(payload, using: subkey, nonceValue: nonceValue)
+        let encryptedPayload = try cipher.seal(payload, using: subkey, nonceValue: nonceValue)
         nonceValue += 1
         var frame = Data()
         frame.append(encryptedLength)
@@ -45,20 +43,25 @@ public struct ShadowsocksAEADStreamEncoder: Sendable {
 public struct ShadowsocksAEADStreamDecoder: Sendable {
     private var nonceValue: UInt64
     private let subkey: SymmetricKey
+    private let cipher: ShadowsocksCipher
     private var buffer: Data
+    private var responseRequestSalt: Data?
+    private var responseFirstPayloadLength: Int?
 
-    public init(credential: String, salt: Data, initialNonce: UInt64 = 0) throws {
+    public init(credential: String, salt: Data, initialNonce: UInt64 = 0, requestSalt: Data? = nil) throws {
         let parsed = try ShadowsocksStreamRequest.parseCredential(credential)
-        guard parsed.method == "aes-256-gcm" else {
+        guard let cipher = ShadowsocksCipher.lookup(method: parsed.method) else {
             throw ProxyProtocolError.invalidConfiguration("unsupported shadowsocks method")
         }
-        guard salt.count == 32 else {
+        if cipher.kind == .shadowsocks2022, let requestSalt, requestSalt.count != cipher.saltLength {
             throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks salt")
         }
-        let masterKey = SymmetricKey(data: ShadowsocksStreamRequest.evpBytesToKey(password: Data(parsed.password.utf8), keyLength: 32))
-        self.subkey = HKDF<Insecure.SHA1>.deriveKey(inputKeyMaterial: masterKey, salt: salt, info: Data("ss-subkey".utf8), outputByteCount: 32)
+        self.cipher = cipher
+        self.subkey = try cipher.deriveSubkey(password: parsed.password, salt: salt)
         self.nonceValue = initialNonce
         self.buffer = Data()
+        self.responseRequestSalt = cipher.kind == .shadowsocks2022 ? requestSalt : nil
+        self.responseFirstPayloadLength = nil
     }
 
     public mutating func decrypt(_ frame: Data) throws -> Data {
@@ -87,10 +90,17 @@ public struct ShadowsocksAEADStreamDecoder: Sendable {
     }
 
     private mutating func decryptNextBufferedFrame() throws -> Data? {
+        if let requestSalt = responseRequestSalt {
+            try decryptResponseHeader(requestSalt: requestSalt)
+        }
+        if let payloadLength = responseFirstPayloadLength {
+            return try decryptFirstResponsePayload(length: payloadLength)
+        }
+
         let lengthFrameSize = 2 + 16
         guard buffer.count >= lengthFrameSize else { return nil }
         let encryptedLength = buffer.prefix(lengthFrameSize)
-        let lengthData = try ShadowsocksStreamRequest.open(Data(encryptedLength), using: subkey, nonceValue: nonceValue)
+        let lengthData = try cipher.open(Data(encryptedLength), using: subkey, nonceValue: nonceValue)
         nonceValue += 1
         let payloadLength = Int(lengthData[0]) << 8 | Int(lengthData[1])
         let payloadFrameSize = payloadLength + 16
@@ -100,9 +110,38 @@ public struct ShadowsocksAEADStreamDecoder: Sendable {
         }
         buffer.removeFirst(lengthFrameSize)
         let encryptedPayload = buffer.prefix(payloadFrameSize)
-        let payload = try ShadowsocksStreamRequest.open(Data(encryptedPayload), using: subkey, nonceValue: nonceValue)
+        let payload = try cipher.open(Data(encryptedPayload), using: subkey, nonceValue: nonceValue)
         nonceValue += 1
         buffer.removeFirst(payloadFrameSize)
+        return payload
+    }
+
+    private mutating func decryptResponseHeader(requestSalt: Data) throws {
+        let headerSize = 1 + 8 + cipher.saltLength + 2
+        let encryptedHeaderSize = headerSize + 16
+        guard buffer.count >= encryptedHeaderSize else { return }
+        let header = try cipher.open(Data(buffer.prefix(encryptedHeaderSize)), using: subkey, nonceValue: nonceValue)
+        guard header.count == headerSize, header[0] == 1 else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks 2022 response header")
+        }
+        let saltRange = 9..<(9 + cipher.saltLength)
+        guard Data(header[saltRange]) == requestSalt else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks 2022 response salt")
+        }
+        let lengthIndex = 9 + cipher.saltLength
+        responseFirstPayloadLength = Int(header[lengthIndex]) << 8 | Int(header[lengthIndex + 1])
+        responseRequestSalt = nil
+        nonceValue += 1
+        buffer.removeFirst(encryptedHeaderSize)
+    }
+
+    private mutating func decryptFirstResponsePayload(length: Int) throws -> Data? {
+        let payloadFrameSize = length + 16
+        guard buffer.count >= payloadFrameSize else { return nil }
+        let payload = try cipher.open(Data(buffer.prefix(payloadFrameSize)), using: subkey, nonceValue: nonceValue)
+        nonceValue += 1
+        buffer.removeFirst(payloadFrameSize)
+        responseFirstPayloadLength = nil
         return payload
     }
 }
@@ -128,23 +167,86 @@ public struct ShadowsocksStreamRequest: Equatable, Sendable {
         ]
     }
 
-    public init(credential: String, destination: ProxyDestination, salt: Data) throws {
-        let parsed = try Self.parseCredential(credential)
-        guard parsed.method == "aes-256-gcm" else {
+    public static func supportsCredential(_ credential: String) -> Bool {
+        (try? ShadowsocksCipher.supportsKnownCredential(credential)) == true
+    }
+
+    public static func saltLength(forCredential credential: String) throws -> Int {
+        let parsed = try parseCredential(credential)
+        guard let cipher = ShadowsocksCipher.lookup(method: parsed.method) else {
             throw ProxyProtocolError.invalidConfiguration("unsupported shadowsocks method")
         }
-        guard salt.count == 32 else {
-            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks salt")
+        return cipher.saltLength
+    }
+
+    public init(
+        credential: String,
+        destination: ProxyDestination,
+        salt: Data,
+        timestamp: Date = Date(),
+        padding: Data? = nil
+    ) throws {
+        let parsed = try Self.parseCredential(credential)
+        guard let cipher = ShadowsocksCipher.lookup(method: parsed.method) else {
+            throw ProxyProtocolError.invalidConfiguration("unsupported shadowsocks method")
         }
 
-        self.cipher = parsed.method
+        self.cipher = cipher.method
         self.addressFrame = try Self.addressFrame(for: destination)
-        let masterKey = SymmetricKey(data: Self.evpBytesToKey(password: Data(parsed.password.utf8), keyLength: 32))
-        let subkey = HKDF<Insecure.SHA1>.deriveKey(inputKeyMaterial: masterKey, salt: salt, info: Data("ss-subkey".utf8), outputByteCount: 32)
-        let length = Data([UInt8(addressFrame.count >> 8), UInt8(addressFrame.count & 0xff)])
-        let encryptedLength = try Self.seal(length, using: subkey, nonceValue: 0)
-        let encryptedPayload = try Self.seal(addressFrame, using: subkey, nonceValue: 1)
-        self.openBytes = salt + encryptedLength + encryptedPayload
+        let subkey = try cipher.deriveSubkey(password: parsed.password, salt: salt)
+
+        switch cipher.kind {
+        case .legacyAEAD:
+            let length = Data([UInt8(addressFrame.count >> 8), UInt8(addressFrame.count & 0xff)])
+            let encryptedLength = try cipher.seal(length, using: subkey, nonceValue: 0)
+            let encryptedPayload = try cipher.seal(addressFrame, using: subkey, nonceValue: 1)
+            self.openBytes = salt + encryptedLength + encryptedPayload
+        case .shadowsocks2022:
+            self.openBytes = try Self.shadowsocks2022OpenBytes(
+                addressFrame: addressFrame,
+                salt: salt,
+                subkey: subkey,
+                cipher: cipher,
+                timestamp: timestamp,
+                padding: padding ?? Data([0])
+            )
+        }
+    }
+
+    private static func shadowsocks2022OpenBytes(
+        addressFrame: Data,
+        salt: Data,
+        subkey: SymmetricKey,
+        cipher: ShadowsocksCipher,
+        timestamp: Date,
+        padding: Data
+    ) throws -> Data {
+        guard !padding.isEmpty, padding.count <= 900 else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks 2022 padding")
+        }
+        let timestampValue = UInt64(timestamp.timeIntervalSince1970)
+        var fixedHeader = Data([0])
+        fixedHeader.append(UInt8((timestampValue >> 56) & 0xff))
+        fixedHeader.append(UInt8((timestampValue >> 48) & 0xff))
+        fixedHeader.append(UInt8((timestampValue >> 40) & 0xff))
+        fixedHeader.append(UInt8((timestampValue >> 32) & 0xff))
+        fixedHeader.append(UInt8((timestampValue >> 24) & 0xff))
+        fixedHeader.append(UInt8((timestampValue >> 16) & 0xff))
+        fixedHeader.append(UInt8((timestampValue >> 8) & 0xff))
+        fixedHeader.append(UInt8(timestampValue & 0xff))
+
+        var variableHeader = Data()
+        variableHeader.append(addressFrame)
+        variableHeader.append(UInt8((padding.count >> 8) & 0xff))
+        variableHeader.append(UInt8(padding.count & 0xff))
+        variableHeader.append(padding)
+
+        fixedHeader.append(UInt8((variableHeader.count >> 8) & 0xff))
+        fixedHeader.append(UInt8(variableHeader.count & 0xff))
+
+        let encryptedFixed = try cipher.seal(fixedHeader, using: subkey, nonceValue: 0)
+        let encryptedVariable = try cipher.seal(variableHeader, using: subkey, nonceValue: 1)
+        return salt + encryptedFixed + encryptedVariable
     }
 
     static func seal(_ data: Data, using key: SymmetricKey, nonceValue: UInt64) throws -> Data {
@@ -1059,10 +1161,11 @@ public struct ShadowsocksProxyAdapter<CredentialResolver: ShadowsocksCredentialR
 
     public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
         try validate(request.node)
+        let credential = try credentialResolver.credential(for: request.node.credentialReference)
         let streamRequest = try ShadowsocksStreamRequest(
-            credential: credentialResolver.credential(for: request.node.credentialReference),
+            credential: credential,
             destination: request.destination,
-            salt: Data.random(count: 32)
+            salt: Data.random(count: try ShadowsocksStreamRequest.saltLength(forCredential: credential))
         )
         let transportRequest = TransportRequest(
             host: request.node.serverHost,

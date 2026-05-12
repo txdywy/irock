@@ -91,7 +91,7 @@ let package = Package(
         ),
         .target(
             name: "IrockAppFeature",
-            dependencies: ["IrockCore", "IrockRouting", "IrockStorage", "IrockDiagnostics"],
+            dependencies: ["IrockCore", "IrockRouting", "IrockStorage", "IrockDiagnostics", "IrockProtocols"],
             path: "packages/IrockAppFeature/Sources/IrockAppFeature"
         ),
         .testTarget(

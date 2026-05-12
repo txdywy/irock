@@ -1,6 +1,7 @@
 import Foundation
 import IrockCore
 import IrockDiagnostics
+import IrockProtocols
 import IrockRouting
 import IrockStorage
 
@@ -85,6 +86,11 @@ public final class AppViewModel: ObservableObject {
             appendLog("本地代理缺少节点凭据")
             throw LocalProxyError.missingCredential
         }
+        guard ShadowsocksStreamRequest.supportsCredential(credential) else {
+            localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前 Shadowsocks 加密方法暂不支持本地代理")
+            appendLog("当前 Shadowsocks 加密方法暂不支持本地代理")
+            throw LocalProxyError.unsupportedCredential
+        }
         let endpoint = try localProxyController.start(node: node, credential: credential)
         localProxyState = LocalProxyState(phase: .running, endpoint: endpoint, message: "本地代理已启动：\(endpoint.displayAddress)")
         systemProxyGuidance = SystemProxyGuidance(endpoint: endpoint)
@@ -102,6 +108,11 @@ public final class AppViewModel: ObservableObject {
                 appendLog("连接已就绪：\(endpoint.displayAddress)")
                 return .localProxyStarted(endpoint)
             } catch {
+                if localProxyState.phase == .failed {
+                    return .localProxyFailed(localProxyState.message)
+                }
+                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "本地代理启动失败")
+                appendLog("本地代理启动失败")
                 return .localProxyFailed(localProxyState.message)
             }
         case .missingSelectedNode:
