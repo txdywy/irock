@@ -97,6 +97,46 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testShadowsocksAEADStreamCodecEncryptsAndDecryptsPayloadChunks() throws {
+        var encoder = try ShadowsocksAEADStreamEncoder(credential: "aes-256-gcm:pass", salt: Data(repeating: 4, count: 32))
+        var decoder = try ShadowsocksAEADStreamDecoder(credential: "aes-256-gcm:pass", salt: Data(repeating: 4, count: 32))
+        let firstPlaintext = Data("GET / HTTP/1.1\r\n".utf8)
+        let secondPlaintext = Data("Host: apple.com\r\n\r\n".utf8)
+
+        let firstCiphertext = try encoder.encrypt(firstPlaintext)
+        let secondCiphertext = try encoder.encrypt(secondPlaintext)
+
+        XCTAssertNotEqual(firstCiphertext.suffix(firstPlaintext.count), firstPlaintext)
+        XCTAssertEqual(try decoder.decrypt(firstCiphertext), firstPlaintext)
+        XCTAssertEqual(try decoder.decrypt(secondCiphertext), secondPlaintext)
+    }
+
+    func testShadowsocksAEADStreamDecoderBuffersFragmentedFrames() throws {
+        var encoder = try ShadowsocksAEADStreamEncoder(credential: "aes-256-gcm:pass", salt: Data(repeating: 5, count: 32))
+        var decoder = try ShadowsocksAEADStreamDecoder(credential: "aes-256-gcm:pass", salt: Data(repeating: 5, count: 32))
+        let ciphertext = try encoder.encrypt(Data("fragmented payload".utf8))
+        let splitIndex = ciphertext.index(ciphertext.startIndex, offsetBy: 5)
+
+        XCTAssertNil(try decoder.appendAndDecrypt(ciphertext[..<splitIndex]))
+        XCTAssertEqual(try decoder.appendAndDecrypt(ciphertext[splitIndex...]), Data("fragmented payload".utf8))
+    }
+
+    func testShadowsocksAEADStreamRejectsWrongCredential() throws {
+        var encoder = try ShadowsocksAEADStreamEncoder(credential: "aes-256-gcm:pass", salt: Data(repeating: 6, count: 32))
+        var decoder = try ShadowsocksAEADStreamDecoder(credential: "aes-256-gcm:wrong", salt: Data(repeating: 6, count: 32))
+        let ciphertext = try encoder.encrypt(Data("secret".utf8))
+
+        XCTAssertThrowsError(try decoder.decrypt(ciphertext))
+    }
+
+    func testShadowsocksAEADStreamEncoderCanContinueAfterOpenFrameNonces() throws {
+        var encoder = try ShadowsocksAEADStreamEncoder(credential: "aes-256-gcm:pass", salt: Data(repeating: 7, count: 32), initialNonce: 2)
+        var decoder = try ShadowsocksAEADStreamDecoder(credential: "aes-256-gcm:pass", salt: Data(repeating: 7, count: 32), initialNonce: 2)
+        let frame = try encoder.encrypt(Data("after-open".utf8))
+
+        XCTAssertEqual(try decoder.decrypt(frame), Data("after-open".utf8))
+    }
+
     func testVMessOpenRequestBuildsStableMetadataAndPayload() throws {
         let request = try VMessOpenRequest(
             userID: "00000000-0000-0000-0000-000000000001",

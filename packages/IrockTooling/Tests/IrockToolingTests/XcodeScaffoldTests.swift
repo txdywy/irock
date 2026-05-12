@@ -177,6 +177,39 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(project.contains("relativePath = ../.."))
     }
 
+    func testMacOSAppIconAssetCatalogIsWired() throws {
+        let project = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irock-macOS.xcodeproj/project.pbxproj"))
+        let appIconContents = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irockMacApp/Assets.xcassets/AppIcon.appiconset/Contents.json"))
+
+        XCTAssertTrue(project.contains("Assets.xcassets in Resources"))
+        XCTAssertTrue(project.contains("ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon"))
+        XCTAssertTrue(appIconContents.contains("icon_512x512@2x.png"))
+        XCTAssertTrue(appIconContents.contains("\"idiom\" : \"mac\""))
+    }
+
+    func testMacOSAppWiresLocalProxyControllerForUnsignedUsability() throws {
+        let project = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irock-macOS.xcodeproj/project.pbxproj"))
+        let contentView = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irockMacApp/ContentView.swift"))
+        let controller = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irockMacApp/MacOSLocalProxyController.swift"))
+        let buildScript = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/build-unsigned-app.sh"))
+        let readme = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/README.md"))
+
+        XCTAssertTrue(project.contains("MacOSLocalProxyController.swift in Sources"))
+        XCTAssertTrue(project.contains("IROCKPKGPROTOCOLS0000001 /* IrockProtocols */"))
+        XCTAssertTrue(project.contains("IROCKPKGTRANSPORT0000001 /* IrockTransport */"))
+        XCTAssertTrue(contentView.contains("localProxyController: MacOSLocalProxyController()"))
+        XCTAssertTrue(controller.contains("final class MacOSLocalProxyController: LocalProxyControlling"))
+        XCTAssertTrue(controller.contains("NWListener"))
+        XCTAssertTrue(controller.contains("ShadowsocksStreamRequest"))
+        XCTAssertTrue(controller.contains("HTTP/1.1 501 Not Implemented"))
+        XCTAssertTrue(controller.contains("requiredLocalEndpoint"))
+        XCTAssertTrue(buildScript.contains("-scheme irockMacApp"))
+        XCTAssertTrue(buildScript.contains("CODE_SIGNING_ALLOWED=NO"))
+        XCTAssertTrue(readme.contains("build/unsigned/irockMacApp.app"))
+        XCTAssertTrue(readme.contains("127.0.0.1:10808"))
+        XCTAssertTrue(readme.contains("Unsigned builds cannot install or start the Network Extension Packet Tunnel"))
+    }
+
     func testMacOSPacketTunnelRuntimeIntegrationUsesSharedRuntimeAndPlatformTCPDialer() throws {
         let smokeRunner = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irockMacTunnelExtension/MacOSPacketTunnelSmokeRunner.swift"))
         let dialer = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irockMacTunnelExtension/MacOSPlatformTCPDialer.swift"))
@@ -454,6 +487,8 @@ final class XcodeScaffoldTests: XCTestCase {
     private var requiredMacOSScaffoldPaths: [String] {
         [
             "apps/irock-macOS/irock-macOS.xcodeproj/project.pbxproj",
+            "apps/irock-macOS/irock-macOS.xcodeproj/xcshareddata/xcschemes/irockMacApp.xcscheme",
+            "apps/irock-macOS/build-unsigned-app.sh",
             "apps/irock-macOS/Signing/LocalSigning.xcconfig.example",
             "apps/irock-macOS/Signing/DEVICE-SMOKE.md",
             "apps/irock-macOS/irockMacApp/IrockMacApp.swift",
@@ -461,6 +496,7 @@ final class XcodeScaffoldTests: XCTestCase {
             "apps/irock-macOS/irockMacApp/MacOSVPNManagerConfiguration.swift",
             "apps/irock-macOS/irockMacApp/MacOSVPNManager.swift",
             "apps/irock-macOS/irockMacApp/MacOSAppGroupRuntimeStoreResolver.swift",
+            "apps/irock-macOS/irockMacApp/MacOSLocalProxyController.swift",
             "apps/irock-macOS/irockMacApp/Info.plist",
             "apps/irock-macOS/irockMacApp/irockMacApp.entitlements",
             "apps/irock-macOS/irockMacTunnelExtension/PacketTunnelProvider.swift",
