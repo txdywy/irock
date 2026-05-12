@@ -122,7 +122,7 @@ final class IrockProtocolsTests: XCTestCase {
         let thousandTwentyFour = Data((0..<1024).map { UInt8($0 % 251) })
         XCTAssertEqual(
             InternalBLAKE3.deriveKey(context: context, material: thousandTwentyFour, outputByteCount: 32).hexString,
-            "7356cd7720d5b66b6d0697eb3177d9f8d73a4a5c5e968896eb6a68968430270"
+            "7356cd7720d5b66b6d0697eb3177d9f8d73a4a5c5e968896eb6a689684302706"
         )
     }
 
