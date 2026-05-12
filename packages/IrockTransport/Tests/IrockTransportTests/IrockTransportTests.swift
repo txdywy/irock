@@ -2,7 +2,46 @@ import XCTest
 import IrockCore
 @testable import IrockTransport
 
+private let plannedFoundationMarkers = [
+    "vmess-foundation",
+    "vless-foundation",
+    "trojan-foundation",
+    "hysteria2-foundation",
+    "tuic-foundation",
+    "websocket-foundation",
+    "http2-foundation",
+    "grpc-foundation",
+    "quic-foundation",
+    "reality-foundation"
+]
+
 final class IrockTransportTests: XCTestCase {
+    func testPlannedFoundationMarkersAreNotEmittedByProtocolOrTransportSources() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceRoots = [
+            root.appendingPathComponent("packages/IrockProtocols/Sources"),
+            root.appendingPathComponent("packages/IrockTransport/Sources")
+        ]
+        let sourceFiles = sourceRoots.flatMap { root in
+            FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
+                .compactMap { $0 as? URL }
+                .filter { $0.pathExtension == "swift" } ?? []
+        }
+        XCTAssertFalse(sourceFiles.isEmpty)
+
+        for file in sourceFiles {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            for marker in plannedFoundationMarkers {
+                XCTAssertFalse(source.contains(marker), "\(file.path) still contains \(marker)")
+            }
+        }
+    }
+
     func testTransportRequestStoresEndpointTLSMetadataAndInitialPayload() {
         let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil)
         let payload = Data([0xde, 0xad, 0xbe, 0xef])
