@@ -119,6 +119,114 @@ final class AppViewModelsTests: XCTestCase {
     }
 
     @MainActor
+    func testAppViewModelStartsUserModeTunForImportedNode() throws {
+        let store = InMemoryRuntimeSnapshotStore()
+        let endpoint = UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500)
+        let controller = RecordingUserModeTunController(endpoint: endpoint)
+        let model = AppViewModel(nodes: [], runtimeSnapshotStore: store, userModeTunController: controller)
+        let node = try model.importShadowsocksURI("ss://YWVzLTI1Ni1nY206cGFzcw@example.com:8388#Demo")
+
+        let result = try model.startUserModeTunMode()
+
+        XCTAssertEqual(result, endpoint)
+        XCTAssertEqual(controller.startedNode, node)
+        XCTAssertEqual(controller.startedCredential, "aes-256-gcm:pass")
+        XCTAssertEqual(try store.load()?.selectedNode.id, node.id)
+        XCTAssertEqual(model.userModeTunState.phase, .running)
+        XCTAssertEqual(model.userModeTunState.endpoint, endpoint)
+        XCTAssertTrue(model.overviewState.recentLogMessages.contains("用户态 TUN 已启动：utun9 10.255.0.2/1500"))
+    }
+
+    @MainActor
+    func testAppViewModelExposesUserModeTunAuthorizationFailure() throws {
+        let controller = ThrowingUserModeTunController(error: UserModeTunError.authorizationRequired)
+        let model = AppViewModel(nodes: [], userModeTunController: controller)
+        try model.importShadowsocksURI("ss://YWVzLTI1Ni1nY206cGFzcw@example.com:8388#Demo")
+
+        XCTAssertThrowsError(try model.startUserModeTunMode())
+
+        XCTAssertEqual(model.userModeTunState.phase, .failed)
+        XCTAssertEqual(model.userModeTunState.message, "用户态 TUN 需要管理员权限")
+        XCTAssertTrue(model.overviewState.recentLogMessages.contains("用户态 TUN 需要管理员权限"))
+    }
+
+    @MainActor
+    func testAppViewModelRejectsUserModeTunWithoutSelectedNode() {
+        let controller = RecordingUserModeTunController(endpoint: UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500))
+        let model = AppViewModel(nodes: [], userModeTunController: controller)
+
+        XCTAssertThrowsError(try model.startUserModeTunMode())
+
+        XCTAssertNil(controller.startedNode)
+        XCTAssertEqual(model.userModeTunState.phase, .failed)
+        XCTAssertEqual(model.userModeTunState.message, "请选择节点后再启动用户态 TUN")
+        XCTAssertTrue(model.overviewState.recentLogMessages.contains("请选择节点后再启动用户态 TUN"))
+    }
+
+    @MainActor
+    func testAppViewModelRejectsUserModeTunWithoutImportedCredential() {
+        let node = makeNode(id: "node-1", name: "Manual")
+        let controller = RecordingUserModeTunController(endpoint: UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500))
+        let model = AppViewModel(nodes: [node], userModeTunController: controller)
+        model.selectNode(id: node.id)
+
+        XCTAssertThrowsError(try model.startUserModeTunMode())
+
+        XCTAssertNil(controller.startedNode)
+        XCTAssertEqual(model.userModeTunState.phase, .failed)
+        XCTAssertEqual(model.userModeTunState.message, "用户态 TUN 缺少节点凭据")
+        XCTAssertTrue(model.overviewState.recentLogMessages.contains("用户态 TUN 缺少节点凭据"))
+    }
+
+    @MainActor
+    func testAppViewModelMapsGenericUserModeTunFailure() throws {
+        let controller = ThrowingUserModeTunController(error: UserModeTunError.unavailable)
+        let model = AppViewModel(nodes: [], userModeTunController: controller)
+        try model.importShadowsocksURI("ss://YWVzLTI1Ni1nY206cGFzcw@example.com:8388#Demo")
+
+        XCTAssertThrowsError(try model.startUserModeTunMode()) { error in
+            XCTAssertEqual(error as? UserModeTunError, .unavailable)
+        }
+
+        XCTAssertEqual(model.userModeTunState.phase, .failed)
+        XCTAssertEqual(model.userModeTunState.message, "用户态 TUN 启动失败")
+        XCTAssertTrue(model.overviewState.recentLogMessages.contains("用户态 TUN 启动失败"))
+    }
+
+    @MainActor
+    func testAppViewModelStopsUserModeTun() throws {
+        let endpoint = UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500)
+        let controller = RecordingUserModeTunController(endpoint: endpoint)
+        let model = AppViewModel(nodes: [], userModeTunController: controller)
+        try model.importShadowsocksURI("ss://YWVzLTI1Ni1nY206cGFzcw@example.com:8388#Demo")
+        _ = try model.startUserModeTunMode()
+
+        model.stopUserModeTunMode()
+
+        XCTAssertTrue(controller.didStop)
+        XCTAssertEqual(model.userModeTunState.phase, .stopped)
+        XCTAssertNil(model.userModeTunState.endpoint)
+        XCTAssertEqual(model.userModeTunState.message, "用户态 TUN 已停止")
+        XCTAssertTrue(model.overviewState.recentLogMessages.contains("用户态 TUN 已停止"))
+    }
+
+    @MainActor
+    func testAppViewModelPreservesUserModeTunEndpointWhenStopFails() throws {
+        let endpoint = UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500)
+        let controller = StopThrowingUserModeTunController(endpoint: endpoint)
+        let model = AppViewModel(nodes: [], userModeTunController: controller)
+        try model.importShadowsocksURI("ss://YWVzLTI1Ni1nY206cGFzcw@example.com:8388#Demo")
+        _ = try model.startUserModeTunMode()
+
+        model.stopUserModeTunMode()
+
+        XCTAssertEqual(model.userModeTunState.phase, .failed)
+        XCTAssertEqual(model.userModeTunState.endpoint, endpoint)
+        XCTAssertEqual(model.userModeTunState.message, "用户态 TUN 停止失败")
+        XCTAssertTrue(model.overviewState.recentLogMessages.contains("用户态 TUN 停止失败"))
+    }
+
+    @MainActor
     func testAppViewModelAppendsBoundedLogs() {
         let model = AppViewModel(nodes: [], logLimit: 2)
 
@@ -320,12 +428,63 @@ final class AppViewModelsTests: XCTestCase {
         func stop() throws {}
     }
 
+    private final class RecordingUserModeTunController: UserModeTunControlling {
+        let endpoint: UserModeTunEndpoint
+        private(set) var startedNode: ProxyNode?
+        private(set) var startedCredential: String?
+        private(set) var didStop = false
+
+        init(endpoint: UserModeTunEndpoint) {
+            self.endpoint = endpoint
+        }
+
+        func start(node: ProxyNode, credential: String) throws -> UserModeTunEndpoint {
+            startedNode = node
+            startedCredential = credential
+            return endpoint
+        }
+
+        func stop() throws {
+            didStop = true
+        }
+    }
+
     private final class ThrowingLocalProxyController: LocalProxyControlling {
         func start(node: ProxyNode, credential: String) throws -> LocalProxyEndpoint {
             throw LocalProxyError.unavailable
         }
 
         func stop() throws {}
+    }
+
+    private final class ThrowingUserModeTunController: UserModeTunControlling {
+        let error: UserModeTunError
+
+        init(error: UserModeTunError) {
+            self.error = error
+        }
+
+        func start(node: ProxyNode, credential: String) throws -> UserModeTunEndpoint {
+            throw error
+        }
+
+        func stop() throws {}
+    }
+
+    private final class StopThrowingUserModeTunController: UserModeTunControlling {
+        let endpoint: UserModeTunEndpoint
+
+        init(endpoint: UserModeTunEndpoint) {
+            self.endpoint = endpoint
+        }
+
+        func start(node: ProxyNode, credential: String) throws -> UserModeTunEndpoint {
+            endpoint
+        }
+
+        func stop() throws {
+            throw UserModeTunError.unavailable
+        }
     }
 
     private struct ThrowingRuntimeLogStore: RuntimeLogStore {

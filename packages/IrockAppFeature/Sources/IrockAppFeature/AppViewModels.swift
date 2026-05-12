@@ -19,6 +19,7 @@ public final class AppViewModel: ObservableObject {
     @Published public private(set) var runtimeConnectionStatus: RuntimeConnectionStatus?
     @Published public private(set) var runtimeLogs: [RuntimeLogEntry]
     @Published public private(set) var localProxyState: LocalProxyState
+    @Published public private(set) var userModeTunState: UserModeTunState
     @Published public private(set) var systemProxyGuidance: SystemProxyGuidance
     @Published public private(set) var packetTunnelGuidance: PacketTunnelGuidance
 
@@ -27,6 +28,7 @@ public final class AppViewModel: ObservableObject {
     private let runtimeStatusStore: RuntimeStatusStore
     private let runtimeLogStore: RuntimeLogStore
     private let localProxyController: LocalProxyControlling
+    private let userModeTunController: UserModeTunControlling
     private var importedCredentials: [NodeID: String]
     private var routingRuleText: String
 
@@ -36,18 +38,21 @@ public final class AppViewModel: ObservableObject {
         runtimeSnapshotStore: RuntimeSnapshotStore = InMemoryRuntimeSnapshotStore(),
         runtimeStatusStore: RuntimeStatusStore = InMemoryRuntimeStatusStore(),
         runtimeLogStore: RuntimeLogStore = InMemoryRuntimeLogStore(),
-        localProxyController: LocalProxyControlling = DisabledLocalProxyController()
+        localProxyController: LocalProxyControlling = DisabledLocalProxyController(),
+        userModeTunController: UserModeTunControlling = DisabledUserModeTunController()
     ) {
         self.logLimit = max(0, logLimit)
         self.runtimeSnapshotPublisher = RuntimeSnapshotPublisher(store: runtimeSnapshotStore)
         self.runtimeStatusStore = runtimeStatusStore
         self.runtimeLogStore = runtimeLogStore
         self.localProxyController = localProxyController
+        self.userModeTunController = userModeTunController
         self.importedCredentials = [:]
         self.routingRuleText = ""
         self.runtimeConnectionStatus = nil
         self.runtimeLogs = []
         self.localProxyState = LocalProxyState(phase: .stopped, endpoint: nil, message: "本地代理未启动")
+        self.userModeTunState = UserModeTunState(phase: .stopped, endpoint: nil, message: "用户态 TUN 未启动")
         self.systemProxyGuidance = SystemProxyGuidance()
         self.packetTunnelGuidance = PacketTunnelGuidance()
         self.nodeListState = NodeListState(nodes: nodes, selectedNodeID: nil)
@@ -130,6 +135,50 @@ public final class AppViewModel: ObservableObject {
         } catch {
             localProxyState = LocalProxyState(phase: .failed, endpoint: localProxyState.endpoint, message: "本地代理停止失败")
             appendLog("本地代理停止失败")
+        }
+    }
+
+    @discardableResult
+    public func startUserModeTunMode() throws -> UserModeTunEndpoint {
+        guard let node = overviewState.selectedNode else {
+            userModeTunState = UserModeTunState(phase: .failed, endpoint: nil, message: "请选择节点后再启动用户态 TUN")
+            appendLog("请选择节点后再启动用户态 TUN")
+            throw UserModeTunError.missingSelectedNode
+        }
+        guard let credential = importedCredentials[node.id] else {
+            userModeTunState = UserModeTunState(phase: .failed, endpoint: nil, message: "用户态 TUN 缺少节点凭据")
+            appendLog("用户态 TUN 缺少节点凭据")
+            throw UserModeTunError.missingCredential
+        }
+        guard case .published = publishRuntimeSnapshot() else {
+            userModeTunState = UserModeTunState(phase: .failed, endpoint: nil, message: "用户态 TUN 运行配置发布失败")
+            appendLog("用户态 TUN 运行配置发布失败")
+            throw UserModeTunError.unavailable
+        }
+        do {
+            let endpoint = try userModeTunController.start(node: node, credential: credential)
+            userModeTunState = UserModeTunState(phase: .running, endpoint: endpoint, message: "用户态 TUN 已启动：\(endpoint.displayAddress)")
+            appendLog("用户态 TUN 已启动：\(endpoint.displayAddress)")
+            return endpoint
+        } catch UserModeTunError.authorizationRequired {
+            userModeTunState = UserModeTunState(phase: .failed, endpoint: nil, message: "用户态 TUN 需要管理员权限")
+            appendLog("用户态 TUN 需要管理员权限")
+            throw UserModeTunError.authorizationRequired
+        } catch {
+            userModeTunState = UserModeTunState(phase: .failed, endpoint: nil, message: "用户态 TUN 启动失败")
+            appendLog("用户态 TUN 启动失败")
+            throw UserModeTunError.unavailable
+        }
+    }
+
+    public func stopUserModeTunMode() {
+        do {
+            try userModeTunController.stop()
+            userModeTunState = UserModeTunState(phase: .stopped, endpoint: nil, message: "用户态 TUN 已停止")
+            appendLog("用户态 TUN 已停止")
+        } catch {
+            userModeTunState = UserModeTunState(phase: .failed, endpoint: userModeTunState.endpoint, message: "用户态 TUN 停止失败")
+            appendLog("用户态 TUN 停止失败")
         }
     }
 

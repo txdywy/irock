@@ -116,6 +116,62 @@ public enum ConnectResult: Equatable, Sendable {
     case localProxyFailed(String)
 }
 
+public struct UserModeTunEndpoint: Equatable, Sendable {
+    public let interfaceName: String
+    public let address: String
+    public let gateway: String
+    public let mtu: Int
+
+    public var displayAddress: String { "\(interfaceName) \(address)/\(mtu)" }
+
+    public init(interfaceName: String, address: String, gateway: String, mtu: Int) {
+        self.interfaceName = interfaceName
+        self.address = address
+        self.gateway = gateway
+        self.mtu = mtu
+    }
+}
+
+public enum UserModeTunPhase: Equatable, Sendable {
+    case stopped
+    case running
+    case failed
+}
+
+public struct UserModeTunState: Equatable, Sendable {
+    public let phase: UserModeTunPhase
+    public let endpoint: UserModeTunEndpoint?
+    public let message: String
+
+    public init(phase: UserModeTunPhase, endpoint: UserModeTunEndpoint?, message: String) {
+        self.phase = phase
+        self.endpoint = endpoint
+        self.message = message
+    }
+}
+
+public enum UserModeTunError: Error, Equatable, Sendable {
+    case missingSelectedNode
+    case missingCredential
+    case authorizationRequired
+    case unavailable
+}
+
+public protocol UserModeTunControlling: AnyObject {
+    func start(node: ProxyNode, credential: String) throws -> UserModeTunEndpoint
+    func stop() throws
+}
+
+public final class DisabledUserModeTunController: UserModeTunControlling {
+    public init() {}
+
+    public func start(node: ProxyNode, credential: String) throws -> UserModeTunEndpoint {
+        throw UserModeTunError.unavailable
+    }
+
+    public func stop() throws {}
+}
+
 public enum LocalProxyPhase: Equatable, Sendable {
     case stopped
     case running

@@ -30,6 +30,6 @@ Required local capabilities before Packet Tunnel device or distribution validati
 - App Groups: `group.dev.irock.shared` by default, replace locally for real signing
 - Keychain Sharing: node credentials when credential storage is wired into platform targets
 
-Unsigned builds cannot install or start the Network Extension Packet Tunnel. User-mode TUN alternatives require root/admin authorization to create and configure a tun device; when that authorization or signed entitlement is unavailable, use local SOCKS/HTTP proxy mode instead.
+Unsigned builds cannot install or start the Network Extension Packet Tunnel. The app also exposes a 用户态 TUN entry point for local testing without Apple signing; it follows the same root/admin boundary as tools such as v2rayN/sing-box user-mode TUN and must be launched with `sudo` or another administrator-authorized wrapper before it can configure `utun`, `ifconfig`, `route`, and DNS settings. When that authorization is unavailable, use local SOCKS/HTTP proxy mode instead.
 
 Signing files in this directory are placeholders only. Copy `Signing/LocalSigning.xcconfig.example` locally and do not commit real Team IDs, provisioning profiles, certificates, or private keys.

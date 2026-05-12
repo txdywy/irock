@@ -9,7 +9,7 @@ public struct IrockRootView: View {
 
     public var body: some View {
         TabView {
-            OverviewView(state: viewModel.overviewState, localProxyState: viewModel.localProxyState)
+            OverviewView(state: viewModel.overviewState, localProxyState: viewModel.localProxyState, userModeTunState: viewModel.userModeTunState)
                 .tabItem { Text("概览") }
             NodeListView(viewModel: viewModel)
                 .tabItem { Text("节点") }
@@ -24,10 +24,16 @@ public struct IrockRootView: View {
 public struct OverviewView: View {
     public let state: OverviewState
     public let localProxyState: LocalProxyState
+    public let userModeTunState: UserModeTunState
 
-    public init(state: OverviewState, localProxyState: LocalProxyState = LocalProxyState(phase: .stopped, endpoint: nil, message: "本地代理未启动")) {
+    public init(
+        state: OverviewState,
+        localProxyState: LocalProxyState = LocalProxyState(phase: .stopped, endpoint: nil, message: "本地代理未启动"),
+        userModeTunState: UserModeTunState = UserModeTunState(phase: .stopped, endpoint: nil, message: "用户态 TUN 未启动")
+    ) {
         self.state = state
         self.localProxyState = localProxyState
+        self.userModeTunState = userModeTunState
     }
 
     public var body: some View {
@@ -39,6 +45,10 @@ public struct OverviewView: View {
             if let endpoint = localProxyState.endpoint {
                 Text("SOCKS：\(endpoint.socksAddress)")
                 Text("HTTP：\(endpoint.httpAddress)")
+            }
+            Text(userModeTunState.message)
+            if let endpoint = userModeTunState.endpoint {
+                Text("TUN：\(endpoint.displayAddress)")
             }
         }
     }
@@ -73,6 +83,14 @@ public struct NodeListView: View {
                 Button("停止本地代理") {
                     viewModel.stopLocalProxyMode()
                 }
+                Button("启动用户态 TUN") {
+                    do {
+                        _ = try viewModel.startUserModeTunMode()
+                    } catch {}
+                }
+                Button("停止用户态 TUN") {
+                    viewModel.stopUserModeTunMode()
+                }
                 Button("刷新运行状态") {
                     _ = viewModel.refreshRuntimeFeedback()
                 }
@@ -80,6 +98,10 @@ public struct NodeListView: View {
                 if let endpoint = viewModel.localProxyState.endpoint {
                     Text("SOCKS：\(endpoint.socksAddress)")
                     Text("HTTP：\(endpoint.httpAddress)")
+                }
+                Text(viewModel.userModeTunState.message)
+                if let endpoint = viewModel.userModeTunState.endpoint {
+                    Text("TUN：\(endpoint.displayAddress)")
                 }
             }
             Section("节点") {

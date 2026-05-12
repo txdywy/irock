@@ -191,13 +191,26 @@ final class XcodeScaffoldTests: XCTestCase {
         let project = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irock-macOS.xcodeproj/project.pbxproj"))
         let contentView = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irockMacApp/ContentView.swift"))
         let controller = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irockMacApp/MacOSLocalProxyController.swift"))
+        let tunController = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irockMacApp/MacOSUserModeTunController.swift"))
+        let tunDevice = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irockMacApp/MacOSUserModeTunDevice.swift"))
+        let tunRouteCommands = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irockMacApp/MacOSUserModeTunRouteCommands.swift"))
+        let tunPacketFlow = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irockMacApp/MacOSUserModeTunPacketFlowIO.swift"))
+        let tunCredentialResolver = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/irockMacApp/MacOSImportedShadowsocksCredentialResolver.swift"))
         let buildScript = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/build-unsigned-app.sh"))
         let readme = try String(contentsOf: repositoryRoot.appendingPathComponent("apps/irock-macOS/README.md"))
 
         XCTAssertTrue(project.contains("MacOSLocalProxyController.swift in Sources"))
+        XCTAssertTrue(project.contains("MacOSUserModeTunController.swift in Sources"))
+        XCTAssertTrue(project.contains("MacOSUserModeTunDevice.swift in Sources"))
+        XCTAssertTrue(project.contains("MacOSUserModeTunRouteCommands.swift in Sources"))
+        XCTAssertTrue(project.contains("MacOSUserModeTunPacketFlowIO.swift in Sources"))
+        XCTAssertTrue(project.contains("MacOSImportedShadowsocksCredentialResolver.swift in Sources"))
+        XCTAssertTrue(project.contains("MacOSPlatformTCPDialer.swift in Sources"))
         XCTAssertTrue(project.contains("IROCKPKGPROTOCOLS0000001 /* IrockProtocols */"))
         XCTAssertTrue(project.contains("IROCKPKGTRANSPORT0000001 /* IrockTransport */"))
+        XCTAssertTrue(project.contains("IROCKPKGTUNNELCORE000001 /* IrockTunnelCore */"))
         XCTAssertTrue(contentView.contains("localProxyController: MacOSLocalProxyController()"))
+        XCTAssertTrue(contentView.contains("userModeTunController: MacOSUserModeTunController(runtimeStores: stores)"))
         XCTAssertTrue(controller.contains("final class MacOSLocalProxyController: LocalProxyControlling"))
         XCTAssertTrue(controller.contains("Darwin.socket"))
         XCTAssertTrue(controller.contains("Darwin.accept"))
@@ -208,10 +221,28 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(controller.contains("saltLength(forCredential:"))
         XCTAssertFalse(controller.contains("2022-blake3-aes-128-gcm"))
         XCTAssertTrue(controller.contains("HTTP/1.1 501 Not Implemented"))
+        XCTAssertTrue(tunController.contains("final class MacOSUserModeTunController: UserModeTunControlling"))
+        XCTAssertTrue(tunController.contains("MacOSUserModeTunDevice"))
+        XCTAssertTrue(tunController.contains("MacOSUserModeTunRouteCommands"))
+        XCTAssertTrue(tunController.contains("TunnelRuntimeController.runShadowsocksTCPBatch"))
+        XCTAssertTrue(tunController.contains("authorizationRequired"))
+        XCTAssertTrue(tunDevice.contains("PF_SYSTEM"))
+        XCTAssertTrue(tunDevice.contains("UTUN_OPT_IFNAME"))
+        XCTAssertTrue(tunDevice.contains("com.apple.net.utun_control"))
+        XCTAssertTrue(tunRouteCommands.contains("ifconfig"))
+        XCTAssertTrue(tunRouteCommands.contains("route"))
+        XCTAssertTrue(tunRouteCommands.contains("delete"))
+        XCTAssertTrue(tunRouteCommands.contains("utun"))
+        XCTAssertTrue(tunPacketFlow.contains("struct MacOSUserModeTunPacketFlowIO: PacketFlowIO"))
+        XCTAssertTrue(tunPacketFlow.contains("Darwin.read"))
+        XCTAssertTrue(tunPacketFlow.contains("Darwin.write"))
+        XCTAssertTrue(tunCredentialResolver.contains("struct MacOSImportedShadowsocksCredentialResolver: ShadowsocksCredentialResolver"))
         XCTAssertTrue(buildScript.contains("-scheme irockMacApp"))
         XCTAssertTrue(buildScript.contains("CODE_SIGNING_ALLOWED=NO"))
         XCTAssertTrue(readme.contains("build/unsigned/irockMacApp.app"))
         XCTAssertTrue(readme.contains("127.0.0.1:10808"))
+        XCTAssertTrue(readme.contains("用户态 TUN"))
+        XCTAssertTrue(readme.contains("sudo"))
         XCTAssertTrue(readme.contains("Unsigned builds cannot install or start the Network Extension Packet Tunnel"))
     }
 
@@ -502,6 +533,11 @@ final class XcodeScaffoldTests: XCTestCase {
             "apps/irock-macOS/irockMacApp/MacOSVPNManager.swift",
             "apps/irock-macOS/irockMacApp/MacOSAppGroupRuntimeStoreResolver.swift",
             "apps/irock-macOS/irockMacApp/MacOSLocalProxyController.swift",
+            "apps/irock-macOS/irockMacApp/MacOSUserModeTunController.swift",
+            "apps/irock-macOS/irockMacApp/MacOSUserModeTunDevice.swift",
+            "apps/irock-macOS/irockMacApp/MacOSUserModeTunRouteCommands.swift",
+            "apps/irock-macOS/irockMacApp/MacOSUserModeTunPacketFlowIO.swift",
+            "apps/irock-macOS/irockMacApp/MacOSImportedShadowsocksCredentialResolver.swift",
             "apps/irock-macOS/irockMacApp/Info.plist",
             "apps/irock-macOS/irockMacApp/irockMacApp.entitlements",
             "apps/irock-macOS/irockMacTunnelExtension/PacketTunnelProvider.swift",
