@@ -430,7 +430,10 @@ final class IrockProtocolsTests: XCTestCase {
 
         XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
         XCTAssertEqual(request.serverName, "trojan.example.com")
-        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "trojan-foundation:host:apple.com:443:trojan.example.com")
+        let expectedHash = Data("869ce74cceadfb55774ed4ff96cdb65be71412e3d669878bec160955\r\n".utf8)
+        let expectedAddress = Data([0x01, 0x03, 0x09]) + Data("apple.com".utf8) + Data([0x01, 0xbb, 0x0d, 0x0a])
+        XCTAssertEqual(request.openBytes, expectedHash + expectedAddress)
+        XCTAssertFalse(String(data: request.openBytes, encoding: .utf8)?.contains("trojan-foundation") == true)
         XCTAssertEqual(request.metadata["trojanPasswordPresent"], "true")
         XCTAssertNil(request.metadata["trojanPassword"])
         XCTAssertEqual(request.metadata["trojanDestination"], "host:apple.com:443")
@@ -928,8 +931,10 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertNil(transport.requests.first?.metadata["trojanPassword"])
         XCTAssertEqual(transport.requests.first?.metadata["trojanDestination"], "host:apple.com:443")
         XCTAssertEqual(transport.requests.first?.metadata["trojanServerName"], "trojan.example.com")
-        XCTAssertEqual(String(data: transport.requests.first?.initialPayload ?? Data(), encoding: .utf8), "trojan-foundation:host:apple.com:443:trojan.example.com")
-        XCTAssertFalse((transport.requests.first?.initialPayload ?? Data()).contains(Data("secret-password".utf8)))
+        let payload = transport.requests.first?.initialPayload ?? Data()
+        XCTAssertTrue(payload.starts(with: Data("869ce74cceadfb55774ed4ff96cdb65be71412e3d669878bec160955\r\n".utf8)))
+        XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("trojan-foundation") == true)
+        XCTAssertFalse(payload.contains(Data("secret-password".utf8)))
     }
 
     func testTrojanProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {

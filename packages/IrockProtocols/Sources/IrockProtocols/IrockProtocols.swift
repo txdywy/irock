@@ -520,10 +520,14 @@ public struct TrojanOpenRequest: Equatable, Sendable {
             throw ProxyProtocolError.invalidConfiguration("missing trojan password")
         }
 
-        let destinationDescription = Self.destinationDescription(destination)
-        self.destinationDescription = destinationDescription
+        let frame = try ProtocolAddressFrame(destination: destination, domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04)
+        self.destinationDescription = frame.description
         self.serverName = serverName.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.openBytes = Data("trojan-foundation:\(destinationDescription):\(self.serverName)".utf8)
+        var bytes = Data(SHA224.hashHex(password.trimmingCharacters(in: .whitespacesAndNewlines)).utf8)
+        bytes.append(Data([0x0d, 0x0a, 0x01]))
+        bytes.append(frame.bytes)
+        bytes.append(Data([0x0d, 0x0a]))
+        self.openBytes = bytes
     }
 
     private static func destinationDescription(_ destination: ProxyDestination) -> String {
