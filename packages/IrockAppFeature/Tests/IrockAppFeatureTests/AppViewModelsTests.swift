@@ -31,6 +31,20 @@ final class AppViewModelsTests: XCTestCase {
     }
 
     @MainActor
+    func testAppViewModelImportsGenericProtocolURI() throws {
+        let model = AppViewModel(nodes: [])
+
+        let node = try model.importURI("trojan://secret-password@trojan.example.com:443?type=grpc&serviceName=%2FService%2FTun#Trojan")
+
+        XCTAssertEqual(node.name, "Trojan")
+        XCTAssertEqual(node.protocolType, .trojan)
+        XCTAssertEqual(node.transport, .grpc)
+        XCTAssertEqual(node.transportOptions.grpc?.service, "/Service/Tun")
+        XCTAssertEqual(model.nodeListState.nodes, [node])
+        XCTAssertEqual(model.nodeListState.selectedNodeID, node.id)
+    }
+
+    @MainActor
     func testAppViewModelStartsLocalProxyForImportedNode() throws {
         let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
         let controller = RecordingLocalProxyController(endpoint: endpoint)

@@ -558,9 +558,41 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testHysteria2ProxyAdapterPassesRealmMetadataWithoutRealmSecret() async throws {
+        let transport = RecordingTransportAdapter(transport: .quic)
+        let adapter = Hysteria2ProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: "hysteria-secret"))
+        let realm = Hysteria2Options(
+            realm: Hysteria2RealmOptions(
+                tokenReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1.hysteria2.realm-token"),
+                rendezvousHost: "realm.hy2.io",
+                rendezvousPort: 8443,
+                name: "demo-realm",
+                useTLS: true,
+                stunServers: ["stun1.example.com:3478", "stun2.example.com:3478"],
+                localPort: 43210
+            )
+        )
+        let node = makeNode(protocolType: .hysteria2, transport: .quic, credentialAccount: "hysteria-secret", hysteria2: realm)
+
+        _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .ipv4("93.184.216.34", port: 443)))
+
+        XCTAssertEqual(transport.requests.first?.metadata["hysteria2RealmPresent"], "true")
+        XCTAssertEqual(transport.requests.first?.metadata["hysteria2RealmNamePresent"], "true")
+        XCTAssertEqual(transport.requests.first?.metadata["hysteria2RealmTLS"], "true")
+        XCTAssertEqual(transport.requests.first?.metadata["hysteria2RealmStunServerCount"], "2")
+        XCTAssertNil(transport.requests.first?.metadata["hysteria2RealmHost"])
+        XCTAssertNil(transport.requests.first?.metadata["hysteria2RealmPort"])
+        XCTAssertNil(transport.requests.first?.metadata["hysteria2RealmStunServers"])
+        XCTAssertNil(transport.requests.first?.metadata["hysteria2RealmLocalPort"])
+        XCTAssertFalse(transport.requests.first?.metadata.values.contains("demo-realm") == true)
+        XCTAssertFalse(transport.requests.first?.metadata.values.contains("node-1.hysteria2.realm-token") == true)
+        XCTAssertFalse(transport.requests.first?.metadata.values.contains("realm.hy2.io") == true)
+        XCTAssertFalse(transport.requests.first?.metadata.values.contains("stun1.example.com:3478,stun2.example.com:3478") == true)
+    }
+
     func testHysteria2ProxyAdapterOpensQUICTransportAndReturnsProxyConnection() async throws {
         let transport = RecordingTransportAdapter(transport: .quic)
-        let adapter = Hysteria2ProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let adapter = Hysteria2ProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: "hysteria-secret"))
         let node = makeNode(protocolType: .hysteria2, transport: .quic, credentialAccount: "hysteria-secret")
         let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
 
@@ -593,7 +625,7 @@ final class IrockProtocolsTests: XCTestCase {
 
         for (node, expectedError) in cases {
             let transport = RecordingTransportAdapter(transport: .quic)
-            let adapter = Hysteria2ProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+            let adapter = Hysteria2ProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: node.credentialReference.account))
             do {
                 _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
                 XCTFail("Expected Hysteria2 validation failure")
@@ -608,7 +640,7 @@ final class IrockProtocolsTests: XCTestCase {
 
     func testTUICProxyAdapterOpensQUICTransportAndReturnsProxyConnection() async throws {
         let transport = RecordingTransportAdapter(transport: .quic)
-        let adapter = TUICProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let adapter = TUICProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000003:tuic-password"))
         let node = makeNode(protocolType: .tuic, transport: .quic, credentialAccount: "00000000-0000-0000-0000-000000000003:tuic-password")
         let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
 
@@ -644,7 +676,7 @@ final class IrockProtocolsTests: XCTestCase {
 
         for (node, expectedError) in cases {
             let transport = RecordingTransportAdapter(transport: .quic)
-            let adapter = TUICProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+            let adapter = TUICProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: node.credentialReference.account))
             do {
                 _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
                 XCTFail("Expected TUIC validation failure")
@@ -790,9 +822,62 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testProtocolAdaptersResolveCredentialMaterialOutOfBand() async throws {
+        let cases: [(ProxyProtocolType, TransportType, String)] = [
+            (.vmess, .tcp, "00000000-0000-0000-0000-000000000001"),
+            (.vless, .tcp, "00000000-0000-0000-0000-000000000002"),
+            (.trojan, .tcp, "secret-password"),
+            (.hysteria2, .quic, "hysteria-secret"),
+            (.tuic, .quic, "00000000-0000-0000-0000-000000000003:tuic-password")
+        ]
+
+        for (protocolType, transportType, credential) in cases {
+            let transport = RecordingTransportAdapter(transport: transportType)
+            let registry = TransportAdapterRegistry(adapters: [transport])
+            let node = makeNode(protocolType: protocolType, transport: transportType, credentialAccount: "node-1")
+            let adapter: any ProxyAdapter
+            switch protocolType {
+            case .vmess:
+                adapter = VMessProxyAdapter(transportRegistry: registry, credentialResolver: StaticProxyCredentialResolver(credential: credential))
+            case .vless:
+                adapter = VLESSProxyAdapter(transportRegistry: registry, credentialResolver: StaticProxyCredentialResolver(credential: credential))
+            case .trojan:
+                adapter = TrojanProxyAdapter(transportRegistry: registry, credentialResolver: StaticProxyCredentialResolver(credential: credential))
+            case .hysteria2:
+                adapter = Hysteria2ProxyAdapter(transportRegistry: registry, credentialResolver: StaticProxyCredentialResolver(credential: credential))
+            case .tuic:
+                adapter = TUICProxyAdapter(transportRegistry: registry, credentialResolver: StaticProxyCredentialResolver(credential: credential))
+            case .shadowsocks:
+                XCTFail("Unexpected protocol type")
+                return
+            }
+
+            _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
+
+            XCTAssertEqual(transport.requests.count, 1)
+            XCTAssertFalse(transport.requests.first?.metadata.values.contains("node-1") == true)
+        }
+    }
+
+    func testVMessProxyAdapterPassesImportedWebSocketOptionsToTransport() async throws {
+        let transport = RecordingTransportAdapter(transport: .webSocket)
+        let adapter = VMessProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000001"))
+        let node = makeNode(
+            protocolType: .vmess,
+            transport: .webSocket,
+            credentialAccount: "00000000-0000-0000-0000-000000000001",
+            transportOptions: TransportOptions(webSocket: WebSocketTransportOptions(host: "edge.example.com", path: "/ray"))
+        )
+
+        _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
+
+        XCTAssertEqual(transport.requests.first?.metadata["webSocketHost"], "edge.example.com")
+        XCTAssertEqual(transport.requests.first?.metadata["webSocketPath"], "/ray")
+    }
+
     func testVMessProxyAdapterOpensTCPTransportAndReturnsProxyConnection() async throws {
         let transport = RecordingTransportAdapter(transport: .tcp)
-        let adapter = VMessProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let adapter = VMessProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000001"))
         let node = makeNode(protocolType: .vmess, transport: .tcp, credentialAccount: "00000000-0000-0000-0000-000000000001")
         let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
 
@@ -817,7 +902,7 @@ final class IrockProtocolsTests: XCTestCase {
 
     func testVMessProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {
         let transport = RecordingTransportAdapter(transport: .tcp)
-        let adapter = VMessProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let adapter = VMessProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000001"))
         let request = ProxyRequest(node: makeNode(protocolType: .trojan, transport: .tcp), destination: .host("apple.com", port: 443))
 
         do {
@@ -841,7 +926,7 @@ final class IrockProtocolsTests: XCTestCase {
 
         for (node, expectedError) in cases {
             let transport = RecordingTransportAdapter(transport: .tcp)
-            let adapter = VMessProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+            let adapter = VMessProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: node.credentialReference.account))
             do {
                 _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
                 XCTFail("Expected VMess validation failure")
@@ -856,7 +941,7 @@ final class IrockProtocolsTests: XCTestCase {
 
     func testVLESSProxyAdapterOpensTCPTransportAndReturnsProxyConnection() async throws {
         let transport = RecordingTransportAdapter(transport: .tcp)
-        let adapter = VLESSProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let adapter = VLESSProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000002"))
         let node = makeNode(protocolType: .vless, transport: .tcp, credentialAccount: "00000000-0000-0000-0000-000000000002")
         let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
 
@@ -881,7 +966,7 @@ final class IrockProtocolsTests: XCTestCase {
 
     func testVLESSProxyAdapterOpensRealityTCPTransportWithCredentialSafePayload() async throws {
         let transport = RecordingTransportAdapter(transport: .tcp)
-        let adapter = VLESSProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let adapter = VLESSProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000002"))
         let reality = RealityOptions(publicKey: "reality-public-key", shortID: "abc123", spiderX: "/")
         let tls = TLSOptions(enabled: true, serverName: "reality.example.com", allowInsecure: false, alpn: ["h2"], fingerprint: "chrome", reality: reality)
         let node = makeNode(protocolType: .vless, transport: .tcp, tls: tls, credentialAccount: "00000000-0000-0000-0000-000000000002")
@@ -905,7 +990,7 @@ final class IrockProtocolsTests: XCTestCase {
 
     func testVLESSProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {
         let transport = RecordingTransportAdapter(transport: .tcp)
-        let adapter = VLESSProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let adapter = VLESSProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000002"))
         let request = ProxyRequest(node: makeNode(protocolType: .trojan, transport: .tcp), destination: .host("apple.com", port: 443))
 
         do {
@@ -929,7 +1014,7 @@ final class IrockProtocolsTests: XCTestCase {
 
         for (node, expectedError) in cases {
             let transport = RecordingTransportAdapter(transport: .tcp)
-            let adapter = VLESSProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+            let adapter = VLESSProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: node.credentialReference.account))
             do {
                 _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
                 XCTFail("Expected VLESS validation failure")
@@ -944,7 +1029,7 @@ final class IrockProtocolsTests: XCTestCase {
 
     func testTrojanProxyAdapterOpensTCPTransportAndReturnsProxyConnection() async throws {
         let transport = RecordingTransportAdapter(transport: .tcp)
-        let adapter = TrojanProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let adapter = TrojanProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: "secret-password"))
         let tls = TLSOptions(enabled: true, serverName: "trojan.example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
         let node = makeNode(protocolType: .trojan, transport: .tcp, tls: tls, credentialAccount: "secret-password")
         let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
@@ -972,7 +1057,7 @@ final class IrockProtocolsTests: XCTestCase {
 
     func testTrojanProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {
         let transport = RecordingTransportAdapter(transport: .tcp)
-        let adapter = TrojanProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+        let adapter = TrojanProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: "secret-password"))
         let request = ProxyRequest(node: makeNode(protocolType: .vmess, transport: .tcp), destination: .host("apple.com", port: 443))
 
         do {
@@ -996,7 +1081,7 @@ final class IrockProtocolsTests: XCTestCase {
 
         for (node, expectedError) in cases {
             let transport = RecordingTransportAdapter(transport: .tcp)
-            let adapter = TrojanProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]))
+            let adapter = TrojanProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: node.credentialReference.account))
             do {
                 _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
                 XCTFail("Expected Trojan validation failure")
@@ -1034,11 +1119,11 @@ final class IrockProtocolsTests: XCTestCase {
             let adapter: any ProxyAdapter
             switch protocolType {
             case .vmess:
-                adapter = VMessProxyAdapter(transportRegistry: registry)
+                adapter = VMessProxyAdapter(transportRegistry: registry, credentialResolver: StaticProxyCredentialResolver(credential: credentialAccount))
             case .vless:
-                adapter = VLESSProxyAdapter(transportRegistry: registry)
+                adapter = VLESSProxyAdapter(transportRegistry: registry, credentialResolver: StaticProxyCredentialResolver(credential: credentialAccount))
             case .trojan:
-                adapter = TrojanProxyAdapter(transportRegistry: registry)
+                adapter = TrojanProxyAdapter(transportRegistry: registry, credentialResolver: StaticProxyCredentialResolver(credential: credentialAccount))
             default:
                 XCTFail("Unexpected protocol type")
                 return
@@ -1338,7 +1423,9 @@ final class IrockProtocolsTests: XCTestCase {
         tls: TLSOptions = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil),
         serverHost: String = "example.com",
         serverPort: Int = 443,
-        credentialAccount: String = "node-1"
+        credentialAccount: String = "node-1",
+        transportOptions: TransportOptions = TransportOptions(),
+        hysteria2: Hysteria2Options? = nil
     ) -> ProxyNode {
         ProxyNode(
             id: NodeID(rawValue: "node-1"),
@@ -1348,8 +1435,10 @@ final class IrockProtocolsTests: XCTestCase {
             serverPort: serverPort,
             credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: credentialAccount),
             transport: transport,
+            transportOptions: transportOptions,
             tls: tls,
-            udpPolicy: .disabled
+            udpPolicy: .disabled,
+            hysteria2: hysteria2
         )
     }
 
@@ -1368,13 +1457,15 @@ final class IrockProtocolsTests: XCTestCase {
     }
 }
 
-private struct StaticShadowsocksCredentialResolver: ShadowsocksCredentialResolver {
+private struct StaticProxyCredentialResolver: ProxyCredentialResolver {
     let credential: String
 
     func credential(for reference: CredentialReference) throws -> String {
         credential
     }
 }
+
+private typealias StaticShadowsocksCredentialResolver = StaticProxyCredentialResolver
 
 private final class RecordingTransportAdapter: TransportAdapter, @unchecked Sendable {
     let supportedTransport: TransportType

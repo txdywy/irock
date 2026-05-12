@@ -1,8 +1,16 @@
 import IrockCore
 import IrockProtocols
 
-struct TestShadowsocksCredentialResolver: ShadowsocksCredentialResolver {
+struct TestProxyCredentialResolver: ProxyCredentialResolver {
+    let storedCredential: String
+
+    init(credential: String = "aes-256-gcm:pass") {
+        self.storedCredential = credential
+    }
+
     func credential(for reference: CredentialReference) throws -> String {
-        "aes-256-gcm:pass"
+        storedCredential
     }
 }
+
+typealias TestShadowsocksCredentialResolver = TestProxyCredentialResolver

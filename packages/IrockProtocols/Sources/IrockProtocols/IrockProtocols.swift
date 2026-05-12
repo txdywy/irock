@@ -983,17 +983,41 @@ public struct TransportBackedProxyAdapter: ProxyAdapter {
     }
 }
 
-public struct VMessProxyAdapter: ProxyAdapter {
+private func applyTransportOptions(from node: ProxyNode, to metadata: inout [String: String]) {
+    if let webSocket = node.transportOptions.webSocket {
+        if let host = webSocket.host, !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            metadata["webSocketHost"] = host
+        }
+        metadata["webSocketPath"] = webSocket.path
+    }
+    if let http2 = node.transportOptions.http2 {
+        if let authority = http2.authority, !authority.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            metadata["http2Authority"] = authority
+        }
+        metadata["http2Path"] = http2.path
+    }
+    if let grpc = node.transportOptions.grpc {
+        if let authority = grpc.authority, !authority.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            metadata["grpcAuthority"] = authority
+        }
+        metadata["grpcService"] = grpc.service
+    }
+}
+
+public struct VMessProxyAdapter<CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
     public let supportedProtocol: ProxyProtocolType = .vmess
     private let transportRegistry: TransportAdapterRegistry
+    private let credentialResolver: CredentialResolver
 
-    public init(transportRegistry: TransportAdapterRegistry) {
+    public init(transportRegistry: TransportAdapterRegistry, credentialResolver: CredentialResolver) {
         self.transportRegistry = transportRegistry
+        self.credentialResolver = credentialResolver
     }
 
     public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
         try validate(request.node)
-        let openRequest = try VMessOpenRequest(userID: request.node.credentialReference.account, destination: request.destination)
+        let credential = try credentialResolver.credential(for: request.node.credentialReference)
+        let openRequest = try VMessOpenRequest(userID: credential, destination: request.destination)
         let transportRequest = TransportRequest(
             host: request.node.serverHost,
             port: request.node.serverPort,
@@ -1023,12 +1047,12 @@ public struct VMessProxyAdapter: ProxyAdapter {
         guard node.transport == .tcp || node.transport == .webSocket || node.transport == .http2 || node.transport == .grpc else {
             throw ProxyProtocolError.unsupportedTransport(node.transport)
         }
-        _ = try VMessOpenRequest(userID: node.credentialReference.account, destination: .host("validation.local", port: 1))
     }
 
     private func transportMetadata(for request: ProxyRequest, openRequest: VMessOpenRequest) -> [String: String] {
         var metadata = request.metadata
         metadata["proxyProtocol"] = request.node.protocolType.rawValue
+        applyTransportOptions(from: request.node, to: &metadata)
         for (key, value) in openRequest.metadata {
             metadata[key] = value
         }
@@ -1057,17 +1081,20 @@ public struct VMessProxyAdapter: ProxyAdapter {
     }
 }
 
-public struct VLESSProxyAdapter: ProxyAdapter {
+public struct VLESSProxyAdapter<CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
     public let supportedProtocol: ProxyProtocolType = .vless
     private let transportRegistry: TransportAdapterRegistry
+    private let credentialResolver: CredentialResolver
 
-    public init(transportRegistry: TransportAdapterRegistry) {
+    public init(transportRegistry: TransportAdapterRegistry, credentialResolver: CredentialResolver) {
         self.transportRegistry = transportRegistry
+        self.credentialResolver = credentialResolver
     }
 
     public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
         try validate(request.node)
-        let openRequest = try VLESSOpenRequest(userID: request.node.credentialReference.account, destination: request.destination)
+        let credential = try credentialResolver.credential(for: request.node.credentialReference)
+        let openRequest = try VLESSOpenRequest(userID: credential, destination: request.destination)
         let transportRequest = TransportRequest(
             host: request.node.serverHost,
             port: request.node.serverPort,
@@ -1097,12 +1124,12 @@ public struct VLESSProxyAdapter: ProxyAdapter {
         guard node.transport == .tcp || node.transport == .webSocket || node.transport == .http2 || node.transport == .grpc else {
             throw ProxyProtocolError.unsupportedTransport(node.transport)
         }
-        _ = try VLESSOpenRequest(userID: node.credentialReference.account, destination: .host("validation.local", port: 1))
     }
 
     private func transportMetadata(for request: ProxyRequest, openRequest: VLESSOpenRequest) -> [String: String] {
         var metadata = request.metadata
         metadata["proxyProtocol"] = request.node.protocolType.rawValue
+        applyTransportOptions(from: request.node, to: &metadata)
         for (key, value) in openRequest.metadata {
             metadata[key] = value
         }
@@ -1131,18 +1158,21 @@ public struct VLESSProxyAdapter: ProxyAdapter {
     }
 }
 
-public struct TrojanProxyAdapter: ProxyAdapter {
+public struct TrojanProxyAdapter<CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
     public let supportedProtocol: ProxyProtocolType = .trojan
     private let transportRegistry: TransportAdapterRegistry
+    private let credentialResolver: CredentialResolver
 
-    public init(transportRegistry: TransportAdapterRegistry) {
+    public init(transportRegistry: TransportAdapterRegistry, credentialResolver: CredentialResolver) {
         self.transportRegistry = transportRegistry
+        self.credentialResolver = credentialResolver
     }
 
     public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
         try validate(request.node)
+        let credential = try credentialResolver.credential(for: request.node.credentialReference)
         let openRequest = try TrojanOpenRequest(
-            password: request.node.credentialReference.account,
+            password: credential,
             destination: request.destination,
             serverName: request.node.tls.serverName ?? ""
         )
@@ -1175,12 +1205,12 @@ public struct TrojanProxyAdapter: ProxyAdapter {
         guard node.transport == .tcp || node.transport == .webSocket || node.transport == .http2 || node.transport == .grpc else {
             throw ProxyProtocolError.unsupportedTransport(node.transport)
         }
-        _ = try TrojanOpenRequest(password: node.credentialReference.account, destination: .host("validation.local", port: 1), serverName: node.tls.serverName ?? "")
     }
 
     private func transportMetadata(for request: ProxyRequest, openRequest: TrojanOpenRequest) -> [String: String] {
         var metadata = request.metadata
         metadata["proxyProtocol"] = request.node.protocolType.rawValue
+        applyTransportOptions(from: request.node, to: &metadata)
         for (key, value) in openRequest.metadata {
             metadata[key] = value
         }
@@ -1209,18 +1239,21 @@ public struct TrojanProxyAdapter: ProxyAdapter {
     }
 }
 
-public struct Hysteria2ProxyAdapter: ProxyAdapter {
+public struct Hysteria2ProxyAdapter<CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
     public let supportedProtocol: ProxyProtocolType = .hysteria2
     private let transportRegistry: TransportAdapterRegistry
+    private let credentialResolver: CredentialResolver
 
-    public init(transportRegistry: TransportAdapterRegistry) {
+    public init(transportRegistry: TransportAdapterRegistry, credentialResolver: CredentialResolver) {
         self.transportRegistry = transportRegistry
+        self.credentialResolver = credentialResolver
     }
 
     public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
         try validate(request.node)
+        let credential = try credentialResolver.credential(for: request.node.credentialReference)
         let openRequest = try Hysteria2OpenRequest(
-            authentication: request.node.credentialReference.account,
+            authentication: credential,
             destination: request.destination,
             sni: request.node.tls.serverName ?? request.node.serverHost
         )
@@ -1253,12 +1286,17 @@ public struct Hysteria2ProxyAdapter: ProxyAdapter {
         guard (1...65_535).contains(node.serverPort) else {
             throw ProxyProtocolError.invalidConfiguration("invalid hysteria2 server port")
         }
-        _ = try Hysteria2OpenRequest(authentication: node.credentialReference.account, destination: .host("validation.local", port: 1), sni: node.tls.serverName ?? node.serverHost)
     }
 
     private func transportMetadata(for request: ProxyRequest, openRequest: Hysteria2OpenRequest) -> [String: String] {
         var metadata = request.metadata
         metadata["proxyProtocol"] = request.node.protocolType.rawValue
+        if let realm = request.node.hysteria2?.realm {
+            metadata["hysteria2RealmPresent"] = "true"
+            metadata["hysteria2RealmNamePresent"] = "true"
+            metadata["hysteria2RealmTLS"] = realm.useTLS ? "true" : "false"
+            metadata["hysteria2RealmStunServerCount"] = String(realm.stunServers.count)
+        }
         for (key, value) in openRequest.metadata {
             metadata[key] = value
         }
@@ -1287,18 +1325,21 @@ public struct Hysteria2ProxyAdapter: ProxyAdapter {
     }
 }
 
-public struct TUICProxyAdapter: ProxyAdapter {
+public struct TUICProxyAdapter<CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
     public let supportedProtocol: ProxyProtocolType = .tuic
     private let transportRegistry: TransportAdapterRegistry
+    private let credentialResolver: CredentialResolver
 
-    public init(transportRegistry: TransportAdapterRegistry) {
+    public init(transportRegistry: TransportAdapterRegistry, credentialResolver: CredentialResolver) {
         self.transportRegistry = transportRegistry
+        self.credentialResolver = credentialResolver
     }
 
     public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
         try validate(request.node)
+        let credential = try credentialResolver.credential(for: request.node.credentialReference)
         let openRequest = try TUICOpenRequest(
-            credential: request.node.credentialReference.account,
+            credential: credential,
             destination: request.destination,
             sni: request.node.tls.serverName ?? request.node.serverHost
         )
@@ -1331,7 +1372,6 @@ public struct TUICProxyAdapter: ProxyAdapter {
         guard (1...65_535).contains(node.serverPort) else {
             throw ProxyProtocolError.invalidConfiguration("invalid tuic server port")
         }
-        _ = try TUICOpenRequest(credential: node.credentialReference.account, destination: .host("validation.local", port: 1), sni: node.tls.serverName ?? node.serverHost)
     }
 
     private func transportMetadata(for request: ProxyRequest, openRequest: TUICOpenRequest) -> [String: String] {
@@ -1365,19 +1405,23 @@ public struct TUICProxyAdapter: ProxyAdapter {
     }
 }
 
-public protocol ShadowsocksCredentialResolver: Sendable {
+public protocol ProxyCredentialResolver: Sendable {
     func credential(for reference: CredentialReference) throws -> String
 }
 
-public struct MissingShadowsocksCredentialResolver: ShadowsocksCredentialResolver {
+public typealias ShadowsocksCredentialResolver = ProxyCredentialResolver
+
+public struct MissingProxyCredentialResolver: ProxyCredentialResolver {
     public init() {}
 
     public func credential(for reference: CredentialReference) throws -> String {
-        throw ProxyProtocolError.invalidConfiguration("missing shadowsocks credential material")
+        throw ProxyProtocolError.invalidConfiguration("missing proxy credential material")
     }
 }
 
-public struct ShadowsocksProxyAdapter<CredentialResolver: ShadowsocksCredentialResolver>: ProxyAdapter {
+public typealias MissingShadowsocksCredentialResolver = MissingProxyCredentialResolver
+
+public struct ShadowsocksProxyAdapter<CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
     public let supportedProtocol: ProxyProtocolType = .shadowsocks
     private let transportRegistry: TransportAdapterRegistry
     private let credentialResolver: CredentialResolver
@@ -1472,8 +1516,8 @@ public struct ShadowsocksProxyAdapter<CredentialResolver: ShadowsocksCredentialR
     }
 }
 
-public extension ShadowsocksProxyAdapter where CredentialResolver == MissingShadowsocksCredentialResolver {
+public extension ShadowsocksProxyAdapter where CredentialResolver == MissingProxyCredentialResolver {
     init(transportRegistry: TransportAdapterRegistry) {
-        self.init(transportRegistry: transportRegistry, credentialResolver: MissingShadowsocksCredentialResolver())
+        self.init(transportRegistry: transportRegistry, credentialResolver: MissingProxyCredentialResolver())
     }
 }

@@ -443,7 +443,7 @@ private struct NodeActionPanel: View {
     }
 
     private var importField: some View {
-        TextField("粘贴 ss:// 节点链接", text: $uriText)
+        TextField("粘贴 ss://、vmess://、vless://、trojan://、hy2:// 或 tuic:// 节点链接", text: $uriText)
             .textFieldStyle(.roundedBorder)
             .font(.callout.monospaced())
     }
@@ -451,7 +451,7 @@ private struct NodeActionPanel: View {
     private var importButton: some View {
         Button("导入") {
             do {
-                _ = try viewModel.importShadowsocksURI(uriText)
+                _ = try viewModel.importURI(uriText)
                 uriText = ""
             } catch {
                 viewModel.appendLog("节点导入失败")
