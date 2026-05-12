@@ -131,10 +131,29 @@ public final class AppViewModel: ObservableObject {
         do {
             try localProxyController.stop()
             localProxyState = LocalProxyState(phase: .stopped, endpoint: nil, message: "本地代理已停止")
+            overviewState = OverviewState(connectionStatus: .disconnected, selectedNode: overviewState.selectedNode, routeMode: overviewState.routeMode, recentLogMessages: overviewState.recentLogMessages)
             appendLog("本地代理已停止")
         } catch {
             localProxyState = LocalProxyState(phase: .failed, endpoint: localProxyState.endpoint, message: "本地代理停止失败")
+            overviewState = OverviewState(connectionStatus: .failed, selectedNode: overviewState.selectedNode, routeMode: overviewState.routeMode, recentLogMessages: overviewState.recentLogMessages)
             appendLog("本地代理停止失败")
+        }
+    }
+
+    public func stopConnection() {
+        let shouldStopLocalProxy = localProxyState.phase == .running
+        let shouldStopUserModeTun = userModeTunState.phase == .running
+        if shouldStopLocalProxy {
+            stopLocalProxyMode()
+        }
+        let localProxyFailed = localProxyState.phase == .failed
+        if shouldStopUserModeTun {
+            stopUserModeTunMode()
+        }
+        if localProxyFailed || userModeTunState.phase == .failed {
+            overviewState = OverviewState(connectionStatus: .failed, selectedNode: overviewState.selectedNode, routeMode: overviewState.routeMode, recentLogMessages: overviewState.recentLogMessages)
+        } else if !shouldStopLocalProxy && !shouldStopUserModeTun {
+            overviewState = OverviewState(connectionStatus: .disconnected, selectedNode: overviewState.selectedNode, routeMode: overviewState.routeMode, recentLogMessages: overviewState.recentLogMessages)
         }
     }
 
@@ -158,6 +177,7 @@ public final class AppViewModel: ObservableObject {
         do {
             let endpoint = try userModeTunController.start(node: node, credential: credential)
             userModeTunState = UserModeTunState(phase: .running, endpoint: endpoint, message: "用户态 TUN 已启动：\(endpoint.displayAddress)")
+            overviewState = OverviewState(connectionStatus: .connected, selectedNode: overviewState.selectedNode, routeMode: overviewState.routeMode, recentLogMessages: overviewState.recentLogMessages)
             appendLog("用户态 TUN 已启动：\(endpoint.displayAddress)")
             return endpoint
         } catch UserModeTunError.authorizationRequired {
@@ -175,9 +195,11 @@ public final class AppViewModel: ObservableObject {
         do {
             try userModeTunController.stop()
             userModeTunState = UserModeTunState(phase: .stopped, endpoint: nil, message: "用户态 TUN 已停止")
+            overviewState = OverviewState(connectionStatus: localProxyState.phase == .running ? .connected : .disconnected, selectedNode: overviewState.selectedNode, routeMode: overviewState.routeMode, recentLogMessages: overviewState.recentLogMessages)
             appendLog("用户态 TUN 已停止")
         } catch {
             userModeTunState = UserModeTunState(phase: .failed, endpoint: userModeTunState.endpoint, message: "用户态 TUN 停止失败")
+            overviewState = OverviewState(connectionStatus: .failed, selectedNode: overviewState.selectedNode, routeMode: overviewState.routeMode, recentLogMessages: overviewState.recentLogMessages)
             appendLog("用户态 TUN 停止失败")
         }
     }

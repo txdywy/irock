@@ -66,6 +66,39 @@ final class AppViewModelsTests: XCTestCase {
     }
 
     @MainActor
+    func testAppViewModelStopConnectionStopsLocalProxyAndUpdatesConnectionStatus() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let controller = RecordingLocalProxyController(endpoint: endpoint)
+        let model = AppViewModel(nodes: [], localProxyController: controller)
+        try model.importShadowsocksURI("ss://YWVzLTI1Ni1nY206cGFzcw@example.com:8388#Demo")
+        _ = model.connect()
+
+        model.stopConnection()
+
+        XCTAssertEqual(model.overviewState.connectionStatus, .disconnected)
+        XCTAssertEqual(model.localProxyState.phase, .stopped)
+        XCTAssertEqual(model.localProxyState.endpoint, nil)
+        XCTAssertTrue(controller.didStop)
+    }
+
+    @MainActor
+    func testAppViewModelStopConnectionPreservesFailureWhenLocalProxyStopFails() throws {
+        let localProxyController = StopThrowingLocalProxyController(endpoint: LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809))
+        let tunController = RecordingUserModeTunController(endpoint: UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500))
+        let model = AppViewModel(nodes: [], localProxyController: localProxyController, userModeTunController: tunController)
+        try model.importShadowsocksURI("ss://YWVzLTI1Ni1nY206cGFzcw@example.com:8388#Demo")
+        _ = model.connect()
+        _ = try model.startUserModeTunMode()
+
+        model.stopConnection()
+
+        XCTAssertEqual(model.localProxyState.phase, .failed)
+        XCTAssertEqual(model.userModeTunState.phase, .stopped)
+        XCTAssertEqual(model.overviewState.connectionStatus, .failed)
+        XCTAssertTrue(tunController.didStop)
+    }
+
+    @MainActor
     func testAppViewModelConnectExposesLocalProxyStartupFailure() throws {
         let controller = ThrowingLocalProxyController()
         let model = AppViewModel(nodes: [], localProxyController: controller)
@@ -134,6 +167,7 @@ final class AppViewModelsTests: XCTestCase {
         XCTAssertEqual(try store.load()?.selectedNode.id, node.id)
         XCTAssertEqual(model.userModeTunState.phase, .running)
         XCTAssertEqual(model.userModeTunState.endpoint, endpoint)
+        XCTAssertEqual(model.overviewState.connectionStatus, .connected)
         XCTAssertTrue(model.overviewState.recentLogMessages.contains("用户态 TUN 已启动：utun9 10.255.0.2/1500"))
     }
 
@@ -207,6 +241,7 @@ final class AppViewModelsTests: XCTestCase {
         XCTAssertEqual(model.userModeTunState.phase, .stopped)
         XCTAssertNil(model.userModeTunState.endpoint)
         XCTAssertEqual(model.userModeTunState.message, "用户态 TUN 已停止")
+        XCTAssertEqual(model.overviewState.connectionStatus, .disconnected)
         XCTAssertTrue(model.overviewState.recentLogMessages.contains("用户态 TUN 已停止"))
     }
 
@@ -414,6 +449,7 @@ final class AppViewModelsTests: XCTestCase {
         let endpoint: LocalProxyEndpoint
         private(set) var startedNode: ProxyNode?
         private(set) var startedCredential: String?
+        private(set) var didStop = false
 
         init(endpoint: LocalProxyEndpoint) {
             self.endpoint = endpoint
@@ -425,7 +461,9 @@ final class AppViewModelsTests: XCTestCase {
             return endpoint
         }
 
-        func stop() throws {}
+        func stop() throws {
+            didStop = true
+        }
     }
 
     private final class RecordingUserModeTunController: UserModeTunControlling {
@@ -455,6 +493,22 @@ final class AppViewModelsTests: XCTestCase {
         }
 
         func stop() throws {}
+    }
+
+    private final class StopThrowingLocalProxyController: LocalProxyControlling {
+        let endpoint: LocalProxyEndpoint
+
+        init(endpoint: LocalProxyEndpoint) {
+            self.endpoint = endpoint
+        }
+
+        func start(node: ProxyNode, credential: String) throws -> LocalProxyEndpoint {
+            endpoint
+        }
+
+        func stop() throws {
+            throw LocalProxyError.unavailable
+        }
     }
 
     private final class ThrowingUserModeTunController: UserModeTunControlling {

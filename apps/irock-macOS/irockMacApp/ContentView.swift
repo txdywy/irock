@@ -6,6 +6,7 @@ struct ContentView: View {
 
     var body: some View {
         IrockRootView(viewModel: viewModel)
+            .frame(minWidth: 980, minHeight: 680)
     }
 
     private static func makeViewModel() -> AppViewModel {
