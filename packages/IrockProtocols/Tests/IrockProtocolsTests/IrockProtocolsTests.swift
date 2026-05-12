@@ -87,6 +87,45 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testBLAKE3MatchesOfficialVectors() throws {
+        let empty = Data()
+        XCTAssertEqual(
+            InternalBLAKE3.hash(empty, outputByteCount: 32).hexString,
+            "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+        )
+
+        let one = Data([0])
+        XCTAssertEqual(
+            InternalBLAKE3.hash(one, outputByteCount: 32).hexString,
+            "2d3adedff11b61f14c886e35afa036736dcd87a74d27b5c1510225d0f592e213"
+        )
+
+        let thousandTwentyFour = Data((0..<1024).map { UInt8($0 % 251) })
+        XCTAssertEqual(
+            InternalBLAKE3.hash(thousandTwentyFour, outputByteCount: 32).hexString,
+            "42214739f095a406f3fc83deb889744ac00df831c10daa55189b5d121c855af7"
+        )
+    }
+
+    func testBLAKE3DeriveKeyMatchesOfficialVectors() throws {
+        let context = "BLAKE3 2019-12-27 16:29:52 test vectors context"
+        XCTAssertEqual(
+            InternalBLAKE3.deriveKey(context: context, material: Data(), outputByteCount: 32).hexString,
+            "2cc39783c223154fea8dfb7c1b1660f2ac2dcbd1c1de8277b0b0dd39b7e50d7d"
+        )
+
+        XCTAssertEqual(
+            InternalBLAKE3.deriveKey(context: context, material: Data([0]), outputByteCount: 32).hexString,
+            "b3e2e340a117a499c6cf2398a19ee0d29cca2bb7404c73063382693bf66cb06c"
+        )
+
+        let thousandTwentyFour = Data((0..<1024).map { UInt8($0 % 251) })
+        XCTAssertEqual(
+            InternalBLAKE3.deriveKey(context: context, material: thousandTwentyFour, outputByteCount: 32).hexString,
+            "7356cd7720d5b66b6d0697eb3177d9f8d73a4a5c5e968896eb6a68968430270"
+        )
+    }
+
     func testShadowsocksStreamRequestRejectsInvalidCredential() {
         XCTAssertThrowsError(try ShadowsocksStreamRequest(
             credential: "aes-256-gcm",
@@ -1135,5 +1174,11 @@ private struct FailingTransportAdapter: TransportAdapter {
 
     func open(request: TransportRequest) async throws -> any TransportConnection {
         throw error
+    }
+}
+
+private extension Data {
+    var hexString: String {
+        map { String(format: "%02x", $0) }.joined()
     }
 }
