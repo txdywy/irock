@@ -597,11 +597,15 @@ public struct Hysteria2OpenRequest: Equatable, Sendable {
         guard !authentication.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ProxyProtocolError.invalidConfiguration("missing hysteria2 authentication")
         }
-        let destinationDescription = Self.destinationDescription(destination)
-        self.destinationDescription = destinationDescription
-        self.sni = sni.trimmingCharacters(in: .whitespacesAndNewlines)
+        let frame = try ProtocolAddressFrame(destination: destination, domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04)
+        let trimmedSNI = sni.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.destinationDescription = frame.description
+        self.sni = trimmedSNI
         self.obfuscationPresent = obfuscation?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        self.openBytes = Data("hysteria2-foundation:\(destinationDescription):\(self.sni):auth-present:\(obfuscationPresent ? "true" : "false")".utf8)
+        var bytes = Data([0x48, 0x59, 0x32, 0x01, obfuscationPresent ? 0x01 : 0x00, UInt8(trimmedSNI.utf8.count)])
+        bytes.append(Data(trimmedSNI.utf8))
+        bytes.append(frame.bytes)
+        self.openBytes = bytes
     }
 
     private static func destinationDescription(_ destination: ProxyDestination) -> String {
@@ -635,17 +639,29 @@ public struct TUICOpenRequest: Equatable, Sendable {
         guard parts.count == 2 else {
             throw ProxyProtocolError.invalidConfiguration("invalid tuic credential")
         }
-        guard UUID(uuidString: String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines)) != nil else {
-            throw ProxyProtocolError.invalidConfiguration("invalid tuic uuid")
-        }
+        let uuid = try Self.uuidBytes(String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines))
         guard !String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ProxyProtocolError.invalidConfiguration("missing tuic password")
         }
 
-        let destinationDescription = Self.destinationDescription(destination)
-        self.destinationDescription = destinationDescription
-        self.sni = sni.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.openBytes = Data("tuic-foundation:\(destinationDescription):\(self.sni):uuid-present:password-present".utf8)
+        let frame = try ProtocolAddressFrame(destination: destination, domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04)
+        let trimmedSNI = sni.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.destinationDescription = frame.description
+        self.sni = trimmedSNI
+        var bytes = Data([0x54, 0x55, 0x49, 0x43, 0x05])
+        bytes.append(contentsOf: uuid)
+        bytes.append(UInt8(trimmedSNI.utf8.count))
+        bytes.append(Data(trimmedSNI.utf8))
+        bytes.append(frame.bytes)
+        self.openBytes = bytes
+    }
+
+    private static func uuidBytes(_ value: String) throws -> [UInt8] {
+        guard let uuid = UUID(uuidString: value) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid tuic uuid")
+        }
+        let tuple = uuid.uuid
+        return [tuple.0, tuple.1, tuple.2, tuple.3, tuple.4, tuple.5, tuple.6, tuple.7, tuple.8, tuple.9, tuple.10, tuple.11, tuple.12, tuple.13, tuple.14, tuple.15]
     }
 
     private static func destinationDescription(_ destination: ProxyDestination) -> String {

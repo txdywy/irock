@@ -480,7 +480,9 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
         XCTAssertEqual(request.sni, "hysteria.example.com")
         XCTAssertTrue(request.obfuscationPresent)
-        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "hysteria2-foundation:host:apple.com:443:hysteria.example.com:auth-present:true")
+        XCTAssertEqual(request.openBytes.prefix(5), Data([0x48, 0x59, 0x32, 0x01, 0x01]))
+        XCTAssertTrue(request.openBytes.contains(Data("hysteria.example.com".utf8)))
+        XCTAssertFalse(String(data: request.openBytes, encoding: .utf8)?.contains("hysteria2-foundation") == true)
         XCTAssertEqual(request.metadata["hysteria2AuthPresent"], "true")
         XCTAssertEqual(request.metadata["hysteria2Destination"], "host:apple.com:443")
         XCTAssertEqual(request.metadata["hysteria2SNI"], "hysteria.example.com")
@@ -504,7 +506,9 @@ final class IrockProtocolsTests: XCTestCase {
 
         XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
         XCTAssertEqual(request.sni, "tuic.example.com")
-        XCTAssertEqual(String(data: request.openBytes, encoding: .utf8), "tuic-foundation:host:apple.com:443:tuic.example.com:uuid-present:password-present")
+        XCTAssertEqual(request.openBytes.prefix(5), Data([0x54, 0x55, 0x49, 0x43, 0x05]))
+        XCTAssertTrue(request.openBytes.contains(Data("tuic.example.com".utf8)))
+        XCTAssertFalse(String(data: request.openBytes, encoding: .utf8)?.contains("tuic-foundation") == true)
         XCTAssertEqual(request.metadata["tuicUUIDPresent"], "true")
         XCTAssertEqual(request.metadata["tuicPasswordPresent"], "true")
         XCTAssertEqual(request.metadata["tuicDestination"], "host:apple.com:443")
@@ -573,7 +577,8 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["hysteria2AuthPresent"], "true")
         XCTAssertEqual(transport.requests.first?.metadata["hysteria2Destination"], "host:apple.com:443")
         let payload = transport.requests.first?.initialPayload ?? Data()
-        XCTAssertEqual(String(data: payload, encoding: .utf8), "hysteria2-foundation:host:apple.com:443:example.com:auth-present:false")
+        XCTAssertEqual(payload.prefix(5), Data([0x48, 0x59, 0x32, 0x01, 0x00]))
+        XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("hysteria2-foundation") == true)
         XCTAssertFalse(payload.contains(Data("hysteria-secret".utf8)))
     }
 
@@ -621,7 +626,8 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["tuicPasswordPresent"], "true")
         XCTAssertEqual(transport.requests.first?.metadata["tuicDestination"], "host:apple.com:443")
         let payload = transport.requests.first?.initialPayload ?? Data()
-        XCTAssertEqual(String(data: payload, encoding: .utf8), "tuic-foundation:host:apple.com:443:example.com:uuid-present:password-present")
+        XCTAssertEqual(payload.prefix(5), Data([0x54, 0x55, 0x49, 0x43, 0x05]))
+        XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("tuic-foundation") == true)
         XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000003".utf8)))
         XCTAssertFalse(payload.contains(Data("tuic-password".utf8)))
     }
