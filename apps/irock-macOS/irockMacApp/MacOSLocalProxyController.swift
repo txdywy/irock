@@ -182,7 +182,7 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         }
         group.enter()
         connectionQueue.async {
-            self.relayRemoteToLocal(remote: remote, local: local, credential: credential)
+            self.relayRemoteToLocal(remote: remote, local: local, credential: credential, clientSalt: clientSalt)
             group.leave()
         }
         group.wait()
@@ -199,7 +199,7 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         shutdown(remote, SHUT_WR)
     }
 
-    private func relayRemoteToLocal(remote: Int32, local: Int32, credential: String) {
+    private func relayRemoteToLocal(remote: Int32, local: Int32, credential: String, clientSalt: Data) {
         do {
             var remoteBuffer = Data()
             var decoder: ShadowsocksAEADStreamDecoder?
