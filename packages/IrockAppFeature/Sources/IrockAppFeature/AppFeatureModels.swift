@@ -137,6 +137,8 @@ public struct UserModeTunEndpoint: Equatable, Sendable {
 public enum UserModeTunPhase: Equatable, Sendable {
     case stopped
     case running
+    case authorizationRequired
+    case authorizing
     case failed
 }
 
@@ -157,6 +159,23 @@ public enum UserModeTunError: Error, Equatable, Sendable {
     case missingCredential
     case authorizationRequired
     case unavailable
+}
+
+public enum UserModeTunAuthorizationResult: Equatable, Sendable {
+    case instructionsReady(String)
+    case unavailable(String)
+}
+
+public protocol UserModeTunAuthorizationControlling: AnyObject {
+    func requestAuthorization() -> UserModeTunAuthorizationResult
+}
+
+public final class DisabledUserModeTunAuthorizationController: UserModeTunAuthorizationControlling {
+    public init() {}
+
+    public func requestAuthorization() -> UserModeTunAuthorizationResult {
+        .unavailable("当前平台不支持自动请求用户态 TUN 管理员授权")
+    }
 }
 
 public protocol UserModeTunControlling: AnyObject {

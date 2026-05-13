@@ -29,6 +29,7 @@ public final class AppViewModel: ObservableObject {
     private let runtimeLogStore: RuntimeLogStore
     private let localProxyController: LocalProxyControlling
     private let userModeTunController: UserModeTunControlling
+    private let userModeTunAuthorizationController: UserModeTunAuthorizationControlling
     private var importedCredentials: [NodeID: String]
     private var routingRuleText: String
 
@@ -39,7 +40,8 @@ public final class AppViewModel: ObservableObject {
         runtimeStatusStore: RuntimeStatusStore = InMemoryRuntimeStatusStore(),
         runtimeLogStore: RuntimeLogStore = InMemoryRuntimeLogStore(),
         localProxyController: LocalProxyControlling = DisabledLocalProxyController(),
-        userModeTunController: UserModeTunControlling = DisabledUserModeTunController()
+        userModeTunController: UserModeTunControlling = DisabledUserModeTunController(),
+        userModeTunAuthorizationController: UserModeTunAuthorizationControlling = DisabledUserModeTunAuthorizationController()
     ) {
         self.logLimit = max(0, logLimit)
         self.runtimeSnapshotPublisher = RuntimeSnapshotPublisher(store: runtimeSnapshotStore)
@@ -47,6 +49,7 @@ public final class AppViewModel: ObservableObject {
         self.runtimeLogStore = runtimeLogStore
         self.localProxyController = localProxyController
         self.userModeTunController = userModeTunController
+        self.userModeTunAuthorizationController = userModeTunAuthorizationController
         self.importedCredentials = [:]
         self.routingRuleText = ""
         self.runtimeConnectionStatus = nil
@@ -98,6 +101,11 @@ public final class AppViewModel: ObservableObject {
             localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "本地代理缺少节点凭据")
             appendLog("本地代理缺少节点凭据")
             throw LocalProxyError.missingCredential
+        }
+        guard node.protocolType == .shadowsocks else {
+            localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前协议请使用用户态 TUN 连接")
+            appendLog("当前协议请使用用户态 TUN 连接")
+            throw LocalProxyError.unsupportedCredential
         }
         guard ShadowsocksStreamRequest.supportsCredential(credential) else {
             localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前 Shadowsocks 加密方法暂不支持本地代理")
@@ -201,13 +209,26 @@ public final class AppViewModel: ObservableObject {
             appendLog("用户态 TUN 已启动：\(endpoint.displayAddress)")
             return endpoint
         } catch UserModeTunError.authorizationRequired {
-            userModeTunState = UserModeTunState(phase: .failed, endpoint: nil, message: "用户态 TUN 需要管理员权限")
-            appendLog("用户态 TUN 需要管理员权限")
+            userModeTunState = UserModeTunState(phase: .authorizationRequired, endpoint: nil, message: "用户态 TUN 需要管理员授权")
+            appendLog("用户态 TUN 需要管理员授权")
             throw UserModeTunError.authorizationRequired
         } catch {
             userModeTunState = UserModeTunState(phase: .failed, endpoint: nil, message: "用户态 TUN 启动失败")
             appendLog("用户态 TUN 启动失败")
             throw UserModeTunError.unavailable
+        }
+    }
+
+    public func requestUserModeTunAuthorization() {
+        userModeTunState = UserModeTunState(phase: .authorizing, endpoint: nil, message: "正在请求管理员授权…")
+        appendLog("正在请求管理员授权…")
+        switch userModeTunAuthorizationController.requestAuthorization() {
+        case let .instructionsReady(command):
+            userModeTunState = UserModeTunState(phase: .authorizationRequired, endpoint: nil, message: "请在终端手动运行管理员启动命令：\(command)")
+            appendLog("请在终端手动运行管理员启动命令：\(command)")
+        case let .unavailable(message):
+            userModeTunState = UserModeTunState(phase: .authorizationRequired, endpoint: nil, message: message)
+            appendLog(message)
         }
     }
 

@@ -6,6 +6,14 @@ import IrockStorage
 import IrockTransport
 import IrockTunnelCore
 
+final class MacOSUserModeTunAuthorizationController: UserModeTunAuthorizationControlling {
+    func requestAuthorization() -> UserModeTunAuthorizationResult {
+        let executablePath = Bundle.main.executablePath ?? Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/irockMacApp").path
+        let escapedPath = executablePath.replacingOccurrences(of: "'", with: "'\\''")
+        return .instructionsReady("sudo '\(escapedPath)'")
+    }
+}
+
 final class MacOSUserModeTunController: UserModeTunControlling {
     private let address: String
     private let gateway: String

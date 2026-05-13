@@ -80,6 +80,21 @@ final class AppViewModelsTests: XCTestCase {
     }
 
     @MainActor
+    func testAppViewModelRejectsLocalProxyForNonShadowsocksNode() throws {
+        let localProxy = RecordingLocalProxyController(endpoint: LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809))
+        let model = AppViewModel(nodes: [], localProxyController: localProxy)
+        try model.importURI("hysteria2://hysteria-password@hy2.example.com:19991/?insecure=1&pinSHA256=pin-value&sni=hy2.example.com#HY2")
+
+        XCTAssertThrowsError(try model.startLocalProxyMode()) { error in
+            XCTAssertEqual(error as? LocalProxyError, .unsupportedCredential)
+        }
+
+        XCTAssertNil(localProxy.startedNode)
+        XCTAssertEqual(model.localProxyState.phase, .failed)
+        XCTAssertEqual(model.localProxyState.message, "当前协议请使用用户态 TUN 连接")
+    }
+
+    @MainActor
     func testAppViewModelConnectStartsUserModeTunForImportedHysteria2Node() throws {
         let localProxy = RecordingLocalProxyController(endpoint: LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809))
         let tunEndpoint = UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500)
@@ -212,9 +227,35 @@ final class AppViewModelsTests: XCTestCase {
 
         XCTAssertThrowsError(try model.startUserModeTunMode())
 
-        XCTAssertEqual(model.userModeTunState.phase, .failed)
-        XCTAssertEqual(model.userModeTunState.message, "用户态 TUN 需要管理员权限")
-        XCTAssertTrue(model.overviewState.recentLogMessages.contains("用户态 TUN 需要管理员权限"))
+        XCTAssertEqual(model.userModeTunState.phase, .authorizationRequired)
+        XCTAssertEqual(model.userModeTunState.message, "用户态 TUN 需要管理员授权")
+        XCTAssertTrue(model.overviewState.recentLogMessages.contains("用户态 TUN 需要管理员授权"))
+    }
+
+    @MainActor
+    func testAppViewModelRequestsUserModeTunAuthorization() throws {
+        let authorization = RecordingUserModeTunAuthorizationController(result: .instructionsReady("sudo '/Applications/irockMacApp.app/Contents/MacOS/irockMacApp'"))
+        let model = AppViewModel(nodes: [], userModeTunAuthorizationController: authorization)
+
+        model.requestUserModeTunAuthorization()
+
+        XCTAssertTrue(authorization.didRequest)
+        XCTAssertEqual(model.userModeTunState.phase, .authorizationRequired)
+        XCTAssertEqual(model.userModeTunState.message, "请在终端手动运行管理员启动命令：sudo '/Applications/irockMacApp.app/Contents/MacOS/irockMacApp'")
+        XCTAssertTrue(model.overviewState.recentLogMessages.contains("正在请求管理员授权…"))
+    }
+
+    @MainActor
+    func testAppViewModelReportsUnavailableUserModeTunAuthorization() throws {
+        let authorization = RecordingUserModeTunAuthorizationController(result: .unavailable("无法打开管理员授权对话框"))
+        let model = AppViewModel(nodes: [], userModeTunAuthorizationController: authorization)
+
+        model.requestUserModeTunAuthorization()
+
+        XCTAssertTrue(authorization.didRequest)
+        XCTAssertEqual(model.userModeTunState.phase, .authorizationRequired)
+        XCTAssertEqual(model.userModeTunState.message, "无法打开管理员授权对话框")
+        XCTAssertTrue(model.overviewState.recentLogMessages.contains("无法打开管理员授权对话框"))
     }
 
     @MainActor
@@ -496,6 +537,20 @@ final class AppViewModelsTests: XCTestCase {
 
         func stop() throws {
             didStop = true
+        }
+    }
+
+    private final class RecordingUserModeTunAuthorizationController: UserModeTunAuthorizationControlling {
+        let result: UserModeTunAuthorizationResult
+        private(set) var didRequest = false
+
+        init(result: UserModeTunAuthorizationResult) {
+            self.result = result
+        }
+
+        func requestAuthorization() -> UserModeTunAuthorizationResult {
+            didRequest = true
+            return result
         }
     }
 

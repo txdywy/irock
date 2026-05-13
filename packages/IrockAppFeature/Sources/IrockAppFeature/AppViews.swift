@@ -461,14 +461,12 @@ private struct NodeActionPanel: View {
         .disabled(uriText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
-    private var primaryConnectTitle: String {
-        viewModel.overviewState.selectedNode?.protocolType == .shadowsocks ? "连接本地代理" : "连接用户态 TUN"
-    }
-
     private var primaryActionRow: some View {
         HStack(spacing: 10) {
-            Button(primaryConnectTitle) { _ = viewModel.connect() }
-                .buttonStyle(.borderedProminent)
+            Button("连接本地代理") {
+                do { _ = try viewModel.startLocalProxyMode() } catch {}
+            }
+            .buttonStyle(.borderedProminent)
             Button("停止代理") { viewModel.stopLocalProxyMode() }
             tunnelControls
         }
@@ -478,8 +476,11 @@ private struct NodeActionPanel: View {
 
     @ViewBuilder
     private var tunnelControls: some View {
-        Button("启动用户态 TUN") {
+        Button("连接用户态 TUN") {
             do { _ = try viewModel.startUserModeTunMode() } catch {}
+        }
+        if viewModel.userModeTunState.phase == .authorizationRequired {
+            Button("授权启动 TUN") { viewModel.requestUserModeTunAuthorization() }
         }
         Button("停止 TUN") { viewModel.stopUserModeTunMode() }
         Menu("高级") {
@@ -873,6 +874,8 @@ private extension UserModeTunPhase {
         switch self {
         case .stopped: "未启动"
         case .running: "运行中"
+        case .authorizationRequired: "需要授权"
+        case .authorizing: "授权中"
         case .failed: "失败"
         }
     }
@@ -881,6 +884,8 @@ private extension UserModeTunPhase {
         switch self {
         case .stopped: IrockDesign.muted
         case .running: IrockDesign.success
+        case .authorizationRequired: IrockDesign.warning
+        case .authorizing: IrockDesign.info
         case .failed: IrockDesign.error
         }
     }

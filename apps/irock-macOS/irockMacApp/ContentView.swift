@@ -18,10 +18,11 @@ struct ContentView: View {
                 runtimeStatusStore: stores.statusStore,
                 runtimeLogStore: stores.logStore,
                 localProxyController: MacOSLocalProxyController(),
-                userModeTunController: MacOSUserModeTunController(runtimeStores: stores)
+                userModeTunController: MacOSUserModeTunController(runtimeStores: stores),
+                userModeTunAuthorizationController: MacOSUserModeTunAuthorizationController()
             )
         } catch {
-            return AppViewModel(nodes: [], localProxyController: MacOSLocalProxyController(), userModeTunController: MacOSUserModeTunController())
+            return AppViewModel(nodes: [], localProxyController: MacOSLocalProxyController(), userModeTunController: MacOSUserModeTunController(), userModeTunAuthorizationController: MacOSUserModeTunAuthorizationController())
         }
     }
 }
