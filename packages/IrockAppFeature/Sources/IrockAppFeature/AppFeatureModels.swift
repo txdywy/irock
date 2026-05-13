@@ -111,9 +111,11 @@ public struct PacketTunnelGuidance: Equatable, Sendable {
 
 public enum ConnectResult: Equatable, Sendable {
     case localProxyStarted(LocalProxyEndpoint)
+    case userModeTunStarted(UserModeTunEndpoint)
     case missingSelectedNode
     case runtimeSnapshotFailed(String)
     case localProxyFailed(String)
+    case userModeTunFailed(String)
 }
 
 public struct UserModeTunEndpoint: Equatable, Sendable {

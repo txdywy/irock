@@ -461,9 +461,13 @@ private struct NodeActionPanel: View {
         .disabled(uriText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
+    private var primaryConnectTitle: String {
+        viewModel.overviewState.selectedNode?.protocolType == .shadowsocks ? "连接本地代理" : "连接用户态 TUN"
+    }
+
     private var primaryActionRow: some View {
         HStack(spacing: 10) {
-            Button("连接本地代理") { _ = viewModel.connect() }
+            Button(primaryConnectTitle) { _ = viewModel.connect() }
                 .buttonStyle(.borderedProminent)
             Button("停止代理") { viewModel.stopLocalProxyMode() }
             tunnelControls

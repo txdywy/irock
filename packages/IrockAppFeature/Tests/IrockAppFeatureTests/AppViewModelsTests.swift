@@ -80,6 +80,25 @@ final class AppViewModelsTests: XCTestCase {
     }
 
     @MainActor
+    func testAppViewModelConnectStartsUserModeTunForImportedHysteria2Node() throws {
+        let localProxy = RecordingLocalProxyController(endpoint: LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809))
+        let tunEndpoint = UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500)
+        let tun = RecordingUserModeTunController(endpoint: tunEndpoint)
+        let model = AppViewModel(nodes: [], localProxyController: localProxy, userModeTunController: tun)
+        let node = try model.importURI("hysteria2://hysteria-password@hy2.example.com:19991/?insecure=1&pinSHA256=pin-value&sni=hy2.example.com#HY2")
+
+        let result = model.connect()
+
+        XCTAssertEqual(result, .userModeTunStarted(tunEndpoint))
+        XCTAssertNil(localProxy.startedNode)
+        XCTAssertEqual(tun.startedNode, node)
+        XCTAssertEqual(tun.startedCredential, "hysteria-password")
+        XCTAssertEqual(model.userModeTunState.phase, .running)
+        XCTAssertEqual(model.overviewState.connectionStatus, .connected)
+        XCTAssertTrue(model.overviewState.recentLogMessages.contains("连接已就绪：utun9 10.255.0.2/1500"))
+    }
+
+    @MainActor
     func testAppViewModelStopConnectionStopsLocalProxyAndUpdatesConnectionStatus() throws {
         let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
         let controller = RecordingLocalProxyController(endpoint: endpoint)

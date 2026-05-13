@@ -115,18 +115,30 @@ public final class AppViewModel: ObservableObject {
     public func connect() -> ConnectResult {
         switch publishRuntimeSnapshot() {
         case .published:
-            do {
-                let endpoint = try startLocalProxyMode()
-                overviewState = OverviewState(connectionStatus: .connected, selectedNode: overviewState.selectedNode, routeMode: overviewState.routeMode, recentLogMessages: overviewState.recentLogMessages)
-                appendLog("连接已就绪：\(endpoint.displayAddress)")
-                return .localProxyStarted(endpoint)
-            } catch {
-                if localProxyState.phase == .failed {
+            guard let node = overviewState.selectedNode else {
+                return .missingSelectedNode
+            }
+            if node.protocolType == .shadowsocks {
+                do {
+                    let endpoint = try startLocalProxyMode()
+                    overviewState = OverviewState(connectionStatus: .connected, selectedNode: overviewState.selectedNode, routeMode: overviewState.routeMode, recentLogMessages: overviewState.recentLogMessages)
+                    appendLog("连接已就绪：\(endpoint.displayAddress)")
+                    return .localProxyStarted(endpoint)
+                } catch {
+                    if localProxyState.phase == .failed {
+                        return .localProxyFailed(localProxyState.message)
+                    }
+                    localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "本地代理启动失败")
+                    appendLog("本地代理启动失败")
                     return .localProxyFailed(localProxyState.message)
                 }
-                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "本地代理启动失败")
-                appendLog("本地代理启动失败")
-                return .localProxyFailed(localProxyState.message)
+            }
+            do {
+                let endpoint = try startUserModeTunMode()
+                appendLog("连接已就绪：\(endpoint.displayAddress)")
+                return .userModeTunStarted(endpoint)
+            } catch {
+                return .userModeTunFailed(userModeTunState.message)
             }
         case .missingSelectedNode:
             return .missingSelectedNode
