@@ -969,6 +969,48 @@ final class IrockTransportTests: XCTestCase {
         }
     }
 
+    func testQUICStreamTransportAdapterOpensBidirectionalStreamWithMetadataAndPayload() async throws {
+        let stream = RecordingTransportByteStream(reads: [Data("server-data".utf8), nil])
+        let dialer = RecordingQUICStreamDialer(stream: stream)
+        let adapter = QUICStreamTransportAdapter(dialer: dialer)
+        let tls = TLSOptions(enabled: true, serverName: nil, allowInsecure: false, alpn: ["h3"], fingerprint: nil, reality: nil)
+        let payload = Data("hy2-open".utf8)
+        let request = TransportRequest(
+            host: " example.com ",
+            port: 443,
+            transport: .quic,
+            tls: tls,
+            metadata: ["quicServerName": " hy2.example.com ", "quicProtocol": "hysteria2", "quicALPN": "h3"],
+            initialPayload: payload
+        )
+
+        let opened = try await adapter.openStream(request: request)
+        try await opened.write(Data("client-data".utf8))
+        let received = try await opened.read(maxLength: 1024)
+        await opened.closeWrite()
+        await opened.close()
+
+        XCTAssertEqual(received, Data("server-data".utf8))
+        XCTAssertEqual(stream.writes, [Data("client-data".utf8)])
+        XCTAssertTrue(stream.didCloseWrite)
+        XCTAssertTrue(stream.didClose)
+        XCTAssertEqual(dialer.requests.count, 1)
+        XCTAssertEqual(dialer.requests.first?.host, "example.com")
+        XCTAssertEqual(dialer.requests.first?.port, 443)
+        XCTAssertEqual(dialer.requests.first?.tls, tls)
+        XCTAssertEqual(dialer.requests.first?.metadata["quicServerName"], "hy2.example.com")
+        XCTAssertEqual(dialer.requests.first?.metadata["quicProtocol"], "hysteria2")
+        XCTAssertEqual(dialer.requests.first?.metadata["quicALPN"], "h3")
+        XCTAssertEqual(dialer.requests.first?.metadata["quicHandshake"], "local-prelude")
+        let initialPayload = dialer.requests.first?.initialPayload ?? Data()
+        XCTAssertTrue(initialPayload.starts(with: Data([0x49, 0x52, 0x4c, 0x51, 0x01])))
+        XCTAssertNotNil(initialPayload.range(of: Data([0x01, UInt8("hy2.example.com".utf8.count)]) + Data("hy2.example.com".utf8)))
+        XCTAssertNotNil(initialPayload.range(of: Data([0x02, UInt8("hysteria2".utf8.count)]) + Data("hysteria2".utf8)))
+        XCTAssertNotNil(initialPayload.range(of: Data([0x03, UInt8("h3".utf8.count)]) + Data("h3".utf8)))
+        XCTAssertEqual(initialPayload.dropLast(payload.count).last, 0x00)
+        XCTAssertTrue(initialPayload.suffix(payload.count).elementsEqual(payload))
+    }
+
     func testTransportAdapterRegistryCanSelectQUICTransportAdapter() async throws {
         let dialer = RecordingQUICDialer(connectionHost: "quic.example.com")
         let adapter = QUICTransportAdapter(dialer: dialer)
@@ -1085,6 +1127,62 @@ private struct FailingQUICDialer: QUICDialer {
 
     func open(host: String, port: Int, metadata: [String: String], initialPayload: Data?) async throws -> QUICDialResult {
         throw error
+    }
+}
+
+private struct QUICStreamDialRequest: Equatable {
+    let host: String
+    let port: Int
+    let tls: TLSOptions?
+    let metadata: [String: String]
+    let initialPayload: Data?
+}
+
+private final class RecordingQUICStreamDialer: QUICStreamDialer, @unchecked Sendable {
+    private let stream: RecordingTransportByteStream
+    private var storedRequests: [QUICStreamDialRequest] = []
+
+    init(stream: RecordingTransportByteStream) {
+        self.stream = stream
+    }
+
+    var requests: [QUICStreamDialRequest] { storedRequests }
+
+    func openBidirectionalStream(host: String, port: Int, tls: TLSOptions?, metadata: [String: String], initialPayload: Data?) async throws -> any TransportByteStream {
+        storedRequests.append(QUICStreamDialRequest(host: host, port: port, tls: tls, metadata: metadata, initialPayload: initialPayload))
+        return stream
+    }
+}
+
+private final class RecordingTransportByteStream: TransportByteStream, @unchecked Sendable {
+    private var reads: [Data?]
+    private var storedWrites: [Data] = []
+    private var closeWriteCalled = false
+    private var closeCalled = false
+
+    init(reads: [Data?]) {
+        self.reads = reads
+    }
+
+    var writes: [Data] { storedWrites }
+    var didCloseWrite: Bool { closeWriteCalled }
+    var didClose: Bool { closeCalled }
+
+    func read(maxLength: Int) async throws -> Data? {
+        guard !reads.isEmpty else { return nil }
+        return reads.removeFirst()
+    }
+
+    func write(_ data: Data) async throws {
+        storedWrites.append(data)
+    }
+
+    func closeWrite() async {
+        closeWriteCalled = true
+    }
+
+    func close() async {
+        closeCalled = true
     }
 }
 

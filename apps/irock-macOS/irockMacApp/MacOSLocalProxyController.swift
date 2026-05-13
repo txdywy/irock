@@ -103,12 +103,9 @@ final class MacOSLocalProxyController: LocalProxyControlling {
                 return
             }
             let destination = try readSOCKSDestination(atyp: header[3], from: client)
-            let remote = try connectRemote(host: node.serverHost, port: node.serverPort)
-            track(remote)
-            defer { closeTrackedSocket(remote) }
-            let clientSalt = try sendShadowsocksOpen(destination: destination, remote: remote, credential: credential)
-            try writeAll(Data([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]), to: client)
-            relay(local: client, remote: remote, credential: credential, clientSalt: clientSalt)
+            try openOutboundAndRelay(client: client, destination: destination, node: node, credential: credential) {
+                try self.writeAll(Data([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]), to: client)
+            }
         } catch {
             try? sendSOCKSFailure(to: client)
         }
@@ -143,12 +140,9 @@ final class MacOSLocalProxyController: LocalProxyControlling {
                 try sendUnsupportedHTTPResponse(to: client)
                 return
             }
-            let remote = try connectRemote(host: node.serverHost, port: node.serverPort)
-            track(remote)
-            defer { closeTrackedSocket(remote) }
-            let clientSalt = try sendShadowsocksOpen(destination: destination, remote: remote, credential: credential)
-            try writeAll(Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8), to: client)
-            relay(local: client, remote: remote, credential: credential, clientSalt: clientSalt)
+            try openOutboundAndRelay(client: client, destination: destination, node: node, credential: credential) {
+                try self.writeAll(Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8), to: client)
+            }
         } catch {
             try? sendUnsupportedHTTPResponse(to: client)
         }
@@ -164,6 +158,24 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             }
         }
         throw LocalProxyError.unavailable
+    }
+
+    private func openOutboundAndRelay(client: Int32, destination: ProxyDestination, node: ProxyNode, credential: String, sendSuccess: () throws -> Void) throws {
+        switch node.protocolType {
+        case .shadowsocks:
+            try openShadowsocksOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
+        default:
+            throw LocalProxyError.unavailable
+        }
+    }
+
+    private func openShadowsocksOutboundAndRelay(client: Int32, destination: ProxyDestination, node: ProxyNode, credential: String, sendSuccess: () throws -> Void) throws {
+        let remote = try connectRemote(host: node.serverHost, port: node.serverPort)
+        track(remote)
+        defer { closeTrackedSocket(remote) }
+        let clientSalt = try sendShadowsocksOpen(destination: destination, remote: remote, credential: credential)
+        try sendSuccess()
+        relay(local: client, remote: remote, credential: credential, clientSalt: clientSalt)
     }
 
     private func sendShadowsocksOpen(destination: ProxyDestination, remote: Int32, credential: String) throws -> Data {

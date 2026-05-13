@@ -25,6 +25,13 @@ public protocol TransportConnection: Sendable {
     var transport: TransportType { get }
 }
 
+public protocol TransportByteStream: Sendable {
+    func read(maxLength: Int) async throws -> Data?
+    func write(_ data: Data) async throws
+    func closeWrite() async
+    func close() async
+}
+
 public struct EstablishedTransportConnection: TransportConnection, Equatable, Sendable {
     public let host: String
     public let port: Int
@@ -142,6 +149,10 @@ public protocol QUICDialer: Sendable {
     func open(host: String, port: Int, metadata: [String: String], initialPayload: Data?) async throws -> QUICDialResult
 }
 
+public protocol QUICStreamDialer: Sendable {
+    func openBidirectionalStream(host: String, port: Int, tls: TLSOptions?, metadata: [String: String], initialPayload: Data?) async throws -> any TransportByteStream
+}
+
 public struct TCPTransportAdapter<Dialer: TCPDialer>: TransportAdapter {
     public let supportedTransport: TransportType = .tcp
     private let dialer: Dialer
@@ -241,17 +252,43 @@ public struct QUICTransportAdapter<Dialer: QUICDialer>: TransportAdapter {
     }
 
     public func open(request: TransportRequest) async throws -> any TransportConnection {
-        let descriptor = try descriptor(for: request)
+        let descriptor = try QUICOpenDescriptor(request: request)
         let result = try await dialer.open(
             host: descriptor.host,
             port: request.port,
-            metadata: descriptor.metadata,
+            metadata: descriptor.metadata(merging: request.metadata),
             initialPayload: try descriptor.initialPayload(appending: request.initialPayload)
         )
         return EstablishedTransportConnection(host: result.host, port: result.port, transport: .quic)
     }
+}
 
-    private func descriptor(for request: TransportRequest) throws -> QUICOpenDescriptor {
+public struct QUICStreamTransportAdapter<Dialer: QUICStreamDialer>: Sendable {
+    private let dialer: Dialer
+
+    public init(dialer: Dialer) {
+        self.dialer = dialer
+    }
+
+    public func openStream(request: TransportRequest) async throws -> any TransportByteStream {
+        let descriptor = try QUICOpenDescriptor(request: request)
+        return try await dialer.openBidirectionalStream(
+            host: descriptor.host,
+            port: request.port,
+            tls: request.tls,
+            metadata: descriptor.metadata(merging: request.metadata),
+            initialPayload: try descriptor.initialPayload(appending: request.initialPayload)
+        )
+    }
+}
+
+private struct QUICOpenDescriptor {
+    let host: String
+    let serverName: String
+    let protocolName: String
+    let alpn: String
+
+    init(request: TransportRequest) throws {
         guard request.transport == .quic else {
             throw TransportError.unsupportedTransport(request.transport)
         }
@@ -274,22 +311,20 @@ public struct QUICTransportAdapter<Dialer: QUICDialer>: TransportAdapter {
         if request.metadata.keys.contains("quicALPN"), metadataALPN?.isEmpty != false {
             throw TransportError.invalidConfiguration("invalid quic alpn")
         }
-        let alpn = metadataALPN?.isEmpty == false ? metadataALPN! : request.tls?.alpn.joined(separator: ",") ?? ""
-        return QUICOpenDescriptor(host: host, serverName: serverName, protocolName: protocolName, alpn: alpn)
+        self.host = host
+        self.serverName = serverName
+        self.protocolName = protocolName
+        self.alpn = metadataALPN?.isEmpty == false ? metadataALPN! : request.tls?.alpn.joined(separator: ",") ?? ""
     }
-}
-
-private struct QUICOpenDescriptor {
-    let host: String
-    let serverName: String
-    let protocolName: String
-    let alpn: String
 
     var metadata: [String: String] {
-        var metadata = [
-            "quicServerName": serverName,
-            "quicHandshake": "local-prelude"
-        ]
+        metadata(merging: [:])
+    }
+
+    func metadata(merging extra: [String: String]) -> [String: String] {
+        var metadata = extra
+        metadata["quicServerName"] = serverName
+        metadata["quicHandshake"] = "local-prelude"
         if !protocolName.isEmpty {
             metadata["quicProtocol"] = protocolName
         }

@@ -104,9 +104,9 @@ public final class AppViewModel: ObservableObject {
         }
         guard node.protocolType == .shadowsocks else {
             if localProxyState.phase != .running {
-                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前协议请使用用户态 TUN 连接")
+                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前协议的本地代理需要 HY2/QUIC 支持，尚未完成")
             }
-            appendLog("当前协议请使用用户态 TUN 连接")
+            appendLog("当前协议的本地代理需要 HY2/QUIC 支持，尚未完成")
             throw LocalProxyError.unsupportedCredential
         }
         guard ShadowsocksStreamRequest.supportsCredential(credential) else {
@@ -134,7 +134,7 @@ public final class AppViewModel: ObservableObject {
                 if localProxyState.phase == .failed {
                     return .localProxyFailed(localProxyState.message)
                 }
-                return .localProxyFailed("当前协议请使用用户态 TUN 连接")
+                return .localProxyFailed("当前协议的本地代理需要 HY2/QUIC 支持，尚未完成")
             } catch {
                 if localProxyState.phase == .failed {
                     return .localProxyFailed(localProxyState.message)

@@ -614,6 +614,63 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertFalse(payload.contains(Data("hysteria-secret".utf8)))
     }
 
+    func testHysteria2StreamOpenerOpensQUICStreamForDestination() async throws {
+        let stream = RecordingProtocolByteStream(reads: [])
+        let dialer = RecordingProtocolQUICStreamDialer(stream: stream)
+        let opener = Hysteria2StreamOpener(streamAdapter: QUICStreamTransportAdapter(dialer: dialer))
+        let node = makeNode(protocolType: .hysteria2, transport: .quic, credentialAccount: "hysteria-secret")
+
+        let opened = try await opener.openStream(node: node, credential: "hysteria-secret", destination: .host("apple.com", port: 443), metadata: ["source": "local-proxy"])
+        try await opened.write(Data("client-data".utf8))
+
+        XCTAssertEqual(stream.writes, [Data("client-data".utf8)])
+        XCTAssertEqual(dialer.requests.count, 1)
+        XCTAssertEqual(dialer.requests.first?.host, "example.com")
+        XCTAssertEqual(dialer.requests.first?.port, 443)
+        XCTAssertEqual(dialer.requests.first?.tls, node.tls)
+        XCTAssertEqual(dialer.requests.first?.metadata["source"], "local-proxy")
+        XCTAssertEqual(dialer.requests.first?.metadata["proxyProtocol"], "hysteria2")
+        XCTAssertEqual(dialer.requests.first?.metadata["hysteria2AuthPresent"], "true")
+        XCTAssertEqual(dialer.requests.first?.metadata["hysteria2Destination"], "host:apple.com:443")
+        XCTAssertEqual(dialer.requests.first?.metadata["quicServerName"], "example.com")
+        XCTAssertEqual(dialer.requests.first?.metadata["quicProtocol"], "hysteria2")
+        XCTAssertEqual(dialer.requests.first?.metadata["quicALPN"], "h3")
+        XCTAssertEqual(dialer.requests.first?.metadata["quicHandshake"], "local-prelude")
+        let payload = dialer.requests.first?.initialPayload ?? Data()
+        XCTAssertTrue(payload.starts(with: Data([0x49, 0x52, 0x4c, 0x51, 0x01])))
+        XCTAssertNotNil(payload.range(of: Data([0x01, UInt8("example.com".utf8.count)]) + Data("example.com".utf8)))
+        XCTAssertNotNil(payload.range(of: Data([0x02, UInt8("hysteria2".utf8.count)]) + Data("hysteria2".utf8)))
+        XCTAssertNotNil(payload.range(of: Data([0x03, UInt8("h3".utf8.count)]) + Data("h3".utf8)))
+        XCTAssertNotNil(payload.range(of: Data([0x48, 0x59, 0x32, 0x01, 0x00])))
+        XCTAssertFalse(payload.contains(Data("hysteria-secret".utf8)))
+    }
+
+    func testHysteria2StreamOpenerRejectsInvalidConfigurationBeforeStreamOpen() async {
+        let cases: [(ProxyNode, ProxyProtocolError)] = [
+            (makeNode(protocolType: .vmess, transport: .quic, credentialAccount: "hysteria-secret"), .unsupportedProtocol(.vmess)),
+            (makeNode(protocolType: .hysteria2, transport: .tcp, credentialAccount: "hysteria-secret"), .unsupportedTransport(.tcp)),
+            (makeNode(protocolType: .hysteria2, transport: .quic, serverHost: "   ", credentialAccount: "hysteria-secret"), .invalidConfiguration("missing hysteria2 server host")),
+            (makeNode(protocolType: .hysteria2, transport: .quic, serverPort: 0, credentialAccount: "hysteria-secret"), .invalidConfiguration("invalid hysteria2 server port")),
+            (makeNode(protocolType: .hysteria2, transport: .quic, credentialAccount: "hysteria-secret"), .invalidConfiguration("missing hysteria2 authentication"))
+        ]
+
+        for (node, expectedError) in cases {
+            let stream = RecordingProtocolByteStream(reads: [])
+            let dialer = RecordingProtocolQUICStreamDialer(stream: stream)
+            let opener = Hysteria2StreamOpener(streamAdapter: QUICStreamTransportAdapter(dialer: dialer))
+            let credential = expectedError == .invalidConfiguration("missing hysteria2 authentication") ? "   " : "hysteria-secret"
+            do {
+                _ = try await opener.openStream(node: node, credential: credential, destination: .host("apple.com", port: 443))
+                XCTFail("Expected Hysteria2 stream validation failure")
+            } catch let error as ProxyProtocolError {
+                XCTAssertEqual(error, expectedError)
+                XCTAssertEqual(dialer.requests, [])
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
     func testHysteria2ProxyAdapterRejectsInvalidConfigurationBeforeTransportOpen() async {
         let cases: [(ProxyNode, ProxyProtocolError)] = [
             (makeNode(protocolType: .vmess, transport: .quic, credentialAccount: "hysteria-secret"), .unsupportedProtocol(.vmess)),
@@ -1506,6 +1563,53 @@ private struct FailingTransportAdapter: TransportAdapter {
     func open(request: TransportRequest) async throws -> any TransportConnection {
         throw error
     }
+}
+
+private struct ProtocolQUICStreamDialRequest: Equatable {
+    let host: String
+    let port: Int
+    let tls: TLSOptions?
+    let metadata: [String: String]
+    let initialPayload: Data?
+}
+
+private final class RecordingProtocolQUICStreamDialer: QUICStreamDialer, @unchecked Sendable {
+    private let stream: RecordingProtocolByteStream
+    private var storedRequests: [ProtocolQUICStreamDialRequest] = []
+
+    init(stream: RecordingProtocolByteStream) {
+        self.stream = stream
+    }
+
+    var requests: [ProtocolQUICStreamDialRequest] { storedRequests }
+
+    func openBidirectionalStream(host: String, port: Int, tls: TLSOptions?, metadata: [String: String], initialPayload: Data?) async throws -> any TransportByteStream {
+        storedRequests.append(ProtocolQUICStreamDialRequest(host: host, port: port, tls: tls, metadata: metadata, initialPayload: initialPayload))
+        return stream
+    }
+}
+
+private final class RecordingProtocolByteStream: TransportByteStream, @unchecked Sendable {
+    private var reads: [Data?]
+    private var storedWrites: [Data] = []
+
+    init(reads: [Data?]) {
+        self.reads = reads
+    }
+
+    var writes: [Data] { storedWrites }
+
+    func read(maxLength: Int) async throws -> Data? {
+        guard !reads.isEmpty else { return nil }
+        return reads.removeFirst()
+    }
+
+    func write(_ data: Data) async throws {
+        storedWrites.append(data)
+    }
+
+    func closeWrite() async {}
+    func close() async {}
 }
 
 fileprivate extension Data {

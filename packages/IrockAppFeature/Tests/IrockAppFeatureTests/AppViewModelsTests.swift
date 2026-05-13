@@ -91,25 +91,25 @@ final class AppViewModelsTests: XCTestCase {
 
         XCTAssertNil(localProxy.startedNode)
         XCTAssertEqual(model.localProxyState.phase, .failed)
-        XCTAssertEqual(model.localProxyState.message, "当前协议请使用用户态 TUN 连接")
+        XCTAssertEqual(model.localProxyState.message, "当前协议的本地代理需要 HY2/QUIC 支持，尚未完成")
     }
 
     @MainActor
-    func testAppViewModelConnectDoesNotStartUserModeTunForImportedHysteria2Node() throws {
+    func testAppViewModelConnectReportsHysteria2LocalProxyNeedsQUICSupport() throws {
         let localProxy = RecordingLocalProxyController(endpoint: LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809))
         let tunEndpoint = UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500)
         let tun = RecordingUserModeTunController(endpoint: tunEndpoint)
         let model = AppViewModel(nodes: [], localProxyController: localProxy, userModeTunController: tun)
-        try model.importURI("hysteria2://hysteria-password@hy2.example.com:19991/?insecure=1&pinSHA256=pin-value&sni=hy2.example.com#HY2")
+        try model.importURI("hysteria2://example-password@hy2.example.com:19991/?insecure=1&pinSHA256=example-pin&sni=hy2.example.com#HY2")
 
         let result = model.connect()
 
-        XCTAssertEqual(result, .localProxyFailed("当前协议请使用用户态 TUN 连接"))
+        XCTAssertEqual(result, .localProxyFailed("当前协议的本地代理需要 HY2/QUIC 支持，尚未完成"))
         XCTAssertNil(localProxy.startedNode)
+        XCTAssertNil(localProxy.startedCredential)
         XCTAssertNil(tun.startedNode)
         XCTAssertNil(tun.startedCredential)
         XCTAssertEqual(model.localProxyState.phase, .failed)
-        XCTAssertEqual(model.localProxyState.message, "当前协议请使用用户态 TUN 连接")
         XCTAssertEqual(model.userModeTunState.phase, .stopped)
     }
 
@@ -120,12 +120,12 @@ final class AppViewModelsTests: XCTestCase {
         let model = AppViewModel(nodes: [], localProxyController: controller)
         let shadowsocks = try model.importShadowsocksURI("ss://YWVzLTI1Ni1nY206cGFzcw@example.com:8388#Demo")
         _ = model.connect()
-        let hysteria = try model.importURI("hysteria2://hysteria-password@hy2.example.com:19991/?insecure=1&pinSHA256=pin-value&sni=hy2.example.com#HY2")
+        let hysteria = try model.importURI("hysteria2://example-password@hy2.example.com:19991/?insecure=1&pinSHA256=example-pin&sni=hy2.example.com#HY2")
         model.selectNode(id: hysteria.id)
 
         let result = model.connect()
 
-        XCTAssertEqual(result, .localProxyFailed("当前协议请使用用户态 TUN 连接"))
+        XCTAssertEqual(result, .localProxyFailed("当前协议的本地代理需要 HY2/QUIC 支持，尚未完成"))
         XCTAssertEqual(controller.startedNode, shadowsocks)
         XCTAssertEqual(model.localProxyState.phase, .running)
         XCTAssertEqual(model.localProxyState.endpoint, endpoint)

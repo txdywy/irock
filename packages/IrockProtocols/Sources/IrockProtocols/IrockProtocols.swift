@@ -620,6 +620,80 @@ public struct Hysteria2OpenRequest: Equatable, Sendable {
     }
 }
 
+public struct Hysteria2StreamOpener<Dialer: QUICStreamDialer>: Sendable {
+    private let streamAdapter: QUICStreamTransportAdapter<Dialer>
+
+    public init(streamAdapter: QUICStreamTransportAdapter<Dialer>) {
+        self.streamAdapter = streamAdapter
+    }
+
+    public func openStream(node: ProxyNode, credential: String, destination: ProxyDestination, metadata: [String: String] = [:]) async throws -> any TransportByteStream {
+        try validate(node)
+        let openRequest = try Hysteria2OpenRequest(
+            authentication: credential,
+            destination: destination,
+            sni: node.tls.serverName ?? node.serverHost
+        )
+        var requestMetadata = metadata
+        requestMetadata["proxyProtocol"] = node.protocolType.rawValue
+        requestMetadata["quicServerName"] = node.tls.serverName ?? node.serverHost
+        requestMetadata["quicProtocol"] = "hysteria2"
+        requestMetadata["quicALPN"] = node.tls.alpn.isEmpty ? "h3" : node.tls.alpn.joined(separator: ",")
+        for (key, value) in openRequest.metadata {
+            requestMetadata[key] = value
+        }
+        let request = TransportRequest(
+            host: node.serverHost,
+            port: node.serverPort,
+            transport: node.transport,
+            tls: node.tls.enabled ? node.tls : nil,
+            metadata: requestMetadata,
+            initialPayload: openRequest.openBytes
+        )
+        do {
+            return try await streamAdapter.openStream(request: request)
+        } catch let error as TransportError {
+            throw proxyProtocolError(for: error)
+        }
+    }
+
+    private func validate(_ node: ProxyNode) throws {
+        guard node.protocolType == .hysteria2 else {
+            throw ProxyProtocolError.unsupportedProtocol(node.protocolType)
+        }
+        guard node.transport == .quic else {
+            throw ProxyProtocolError.unsupportedTransport(node.transport)
+        }
+        guard !node.serverHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing hysteria2 server host")
+        }
+        guard (1...65_535).contains(node.serverPort) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid hysteria2 server port")
+        }
+    }
+
+    private func proxyProtocolError(for error: TransportError) -> ProxyProtocolError {
+        switch error {
+        case .invalidConfiguration:
+            return .invalidConfiguration("transport invalid")
+        case .dnsFailed:
+            return .dnsFailed("transport dns failed")
+        case .tcpConnectFailed:
+            return .tcpConnectFailed("transport tcp connect failed")
+        case .tlsHandshakeFailed:
+            return .tlsHandshakeFailed("transport tls handshake failed")
+        case let .unsupportedTransport(transport):
+            return .unsupportedTransport(transport)
+        case .quicHandshakeFailed:
+            return .quicHandshakeFailed("transport quic handshake failed")
+        case .remoteClosed:
+            return .remoteClosed
+        case .timeout:
+            return .timeout
+        }
+    }
+}
+
 public struct TUICOpenRequest: Equatable, Sendable {
     public let destinationDescription: String
     public let sni: String
