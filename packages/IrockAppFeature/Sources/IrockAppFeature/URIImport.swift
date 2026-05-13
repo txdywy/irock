@@ -24,7 +24,8 @@ public struct URIImportResult: Equatable, Sendable {
 
 public enum URIImport {
     public static func classify(_ text: String) throws -> URIImportResult {
-        guard let scheme = URLComponents(string: text)?.scheme?.lowercased() else {
+        let uriText = try extractSupportedURI(from: text)
+        guard let scheme = URLComponents(string: uriText)?.scheme?.lowercased() else {
             throw URIImportError.missingScheme
         }
 
@@ -47,16 +48,17 @@ public enum URIImport {
     }
 
     public static func parseDraft(_ text: String) throws -> NodeDraft {
-        guard let scheme = URLComponents(string: text)?.scheme?.lowercased() else {
+        let uriText = try extractSupportedURI(from: text)
+        guard let scheme = URLComponents(string: uriText)?.scheme?.lowercased() else {
             throw URIImportError.missingScheme
         }
         switch scheme {
-        case "ss": return try parseShadowsocksDraft(text)
-        case "vmess": return try parseVMessDraft(text)
-        case "vless": return try parseVLESSDraft(text)
-        case "trojan": return try parseTrojanDraft(text)
-        case "hysteria2", "hy2": return try parseHysteria2Draft(text)
-        case "tuic": return try parseTUICDraft(text)
+        case "ss": return try parseShadowsocksDraft(uriText)
+        case "vmess": return try parseVMessDraft(uriText)
+        case "vless": return try parseVLESSDraft(uriText)
+        case "trojan": return try parseTrojanDraft(uriText)
+        case "hysteria2", "hy2": return try parseHysteria2Draft(uriText)
+        case "tuic": return try parseTUICDraft(uriText)
         default: throw URIImportError.unsupportedScheme(scheme)
         }
     }
@@ -73,14 +75,15 @@ public enum URIImport {
     }
 
     public static func parseShadowsocksDraft(_ text: String) throws -> NodeDraft {
-        guard let components = URLComponents(string: text), let scheme = components.scheme?.lowercased() else {
+        let uriText = try extractSupportedURI(from: text)
+        guard let components = URLComponents(string: uriText), let scheme = components.scheme?.lowercased() else {
             throw URIImportError.missingScheme
         }
         guard scheme == "ss" else {
             throw URIImportError.unsupportedScheme(scheme)
         }
 
-        let payload = String(text.dropFirst("ss://".count))
+        let payload = String(uriText.dropFirst("ss://".count))
         guard !payload.isEmpty else {
             throw URIImportError.malformedURI
         }
@@ -259,6 +262,17 @@ public enum URIImport {
             stunServers: components.queryItems?.filter { $0.name == "stun" }.compactMap(\.value) ?? [],
             localPort: query["lport"].flatMap(Int.init)
         )
+    }
+
+    private static func extractSupportedURI(from text: String) throws -> String {
+        let compact = text.split(whereSeparator: \.isWhitespace).joined()
+        for scheme in ["hysteria2", "vmess", "vless", "trojan", "tuic", "hy2", "ss"] {
+            if let range = compact.range(of: "\(scheme)://", options: .caseInsensitive) {
+                let candidate = String(compact[range.lowerBound...].prefix { $0.isASCII && !$0.isWhitespace })
+                return String(candidate.split(separator: "，", maxSplits: 1, omittingEmptySubsequences: false)[0])
+            }
+        }
+        throw URLComponents(string: text)?.scheme.map { URIImportError.unsupportedScheme($0.lowercased()) } ?? URIImportError.missingScheme
     }
 
     private static func parseShadowsocksPayload(_ payload: String) throws -> (userInfo: String, host: String, port: String) {

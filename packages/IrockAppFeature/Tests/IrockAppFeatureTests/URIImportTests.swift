@@ -215,6 +215,24 @@ final class URIImportTests: XCTestCase {
         XCTAssertFalse(encoded.contains("example-password"))
     }
 
+    func testExtractsWrappedHysteria2ShareLinkFromPastedText() throws {
+        let pasted = """
+           1 hysteria2://example-password@realm-host.example:19991/?insecure=1&pinSHA256
+             =example-pin%2Bvalue%2Ffor%2Btests%3D&sni=realm-host.example#Realm_Hysteria2_19991
+
+          链接包含的信息：
+          * 协议: hysteria2://
+          """
+
+        let draft = try URIImport.parseDraft(pasted)
+
+        XCTAssertEqual(draft.name, "Realm_Hysteria2_19991")
+        XCTAssertEqual(draft.protocolType, .hysteria2)
+        XCTAssertEqual(draft.serverHost, "realm-host.example")
+        XCTAssertEqual(draft.serverPortText, "19991")
+        XCTAssertEqual(draft.tlsFingerprint, "example-pin+value/for+tests=")
+    }
+
     func testParsesTUICShareLink() throws {
         let draft = try URIImport.parseDraft("tuic://00000000-0000-0000-0000-000000000003:tuic-password@tuic.example.com:443?sni=tuic.example.com&alpn=h3#TUIC")
         let node = try draft.buildNode(id: NodeID(rawValue: "node-tuic"), keychainService: "com.irock.nodes")
