@@ -80,36 +80,42 @@ final class AppViewModelsTests: XCTestCase {
     }
 
     @MainActor
-    func testAppViewModelRejectsLocalProxyForNonShadowsocksNode() throws {
-        let localProxy = RecordingLocalProxyController(endpoint: LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809))
+    func testAppViewModelStartsHysteria2LocalProxy() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let localProxy = RecordingLocalProxyController(endpoint: endpoint)
         let model = AppViewModel(nodes: [], localProxyController: localProxy)
-        try model.importURI("hysteria2://hysteria-password@hy2.example.com:19991/?insecure=1&pinSHA256=pin-value&sni=hy2.example.com#HY2")
+        let realm = "realm://public-token@realm.hy2.io/demo-realm?stun=stun1.example.com:3478&lport=43210"
+        let node = try model.importURI("hysteria2://example-password@hy2.example.com:19991/?insecure=1&pinSHA256=example-pin&sni=hy2.example.com&realm=\(realm.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!)#HY2")
 
-        XCTAssertThrowsError(try model.startLocalProxyMode()) { error in
-            XCTAssertEqual(error as? LocalProxyError, .unsupportedCredential)
-        }
+        let startedEndpoint = try model.startLocalProxyMode()
 
-        XCTAssertNil(localProxy.startedNode)
-        XCTAssertEqual(model.localProxyState.phase, .failed)
-        XCTAssertEqual(model.localProxyState.message, "当前协议的本地代理需要 HY2/QUIC 支持，尚未完成")
+        XCTAssertEqual(startedEndpoint, endpoint)
+        XCTAssertEqual(localProxy.startedNode, node)
+        XCTAssertEqual(localProxy.startedCredential, "example-password")
+        XCTAssertEqual(localProxy.startedRealmCredential, "public-token")
+        XCTAssertEqual(model.localProxyState.phase, .running)
+        XCTAssertEqual(model.localProxyState.endpoint, endpoint)
+        XCTAssertEqual(model.localProxyState.message, "本地代理已启动：SOCKS 127.0.0.1:10808，HTTP 127.0.0.1:10809")
     }
 
     @MainActor
-    func testAppViewModelConnectReportsHysteria2LocalProxyNeedsQUICSupport() throws {
-        let localProxy = RecordingLocalProxyController(endpoint: LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809))
+    func testAppViewModelConnectStartsHysteria2LocalProxyWithoutStartingUserModeTun() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let localProxy = RecordingLocalProxyController(endpoint: endpoint)
         let tunEndpoint = UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500)
         let tun = RecordingUserModeTunController(endpoint: tunEndpoint)
         let model = AppViewModel(nodes: [], localProxyController: localProxy, userModeTunController: tun)
-        try model.importURI("hysteria2://example-password@hy2.example.com:19991/?insecure=1&pinSHA256=example-pin&sni=hy2.example.com#HY2")
+        let node = try model.importURI("hysteria2://example-password@hy2.example.com:19991/?insecure=1&pinSHA256=example-pin&sni=hy2.example.com#HY2")
 
         let result = model.connect()
 
-        XCTAssertEqual(result, .localProxyFailed("当前协议的本地代理需要 HY2/QUIC 支持，尚未完成"))
-        XCTAssertNil(localProxy.startedNode)
-        XCTAssertNil(localProxy.startedCredential)
+        XCTAssertEqual(result, .localProxyStarted(endpoint))
+        XCTAssertEqual(localProxy.startedNode, node)
+        XCTAssertEqual(localProxy.startedCredential, "example-password")
         XCTAssertNil(tun.startedNode)
         XCTAssertNil(tun.startedCredential)
-        XCTAssertEqual(model.localProxyState.phase, .failed)
+        XCTAssertEqual(model.localProxyState.phase, .running)
+        XCTAssertEqual(model.localProxyState.endpoint, endpoint)
         XCTAssertEqual(model.userModeTunState.phase, .stopped)
     }
 
@@ -118,15 +124,16 @@ final class AppViewModelsTests: XCTestCase {
         let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
         let controller = RecordingLocalProxyController(endpoint: endpoint)
         let model = AppViewModel(nodes: [], localProxyController: controller)
-        let shadowsocks = try model.importShadowsocksURI("ss://YWVzLTI1Ni1nY206cGFzcw@example.com:8388#Demo")
+        _ = try model.importShadowsocksURI("ss://YWVzLTI1Ni1nY206cGFzcw@example.com:8388#Demo")
         _ = model.connect()
         let hysteria = try model.importURI("hysteria2://example-password@hy2.example.com:19991/?insecure=1&pinSHA256=example-pin&sni=hy2.example.com#HY2")
         model.selectNode(id: hysteria.id)
 
         let result = model.connect()
 
-        XCTAssertEqual(result, .localProxyFailed("当前协议的本地代理需要 HY2/QUIC 支持，尚未完成"))
-        XCTAssertEqual(controller.startedNode, shadowsocks)
+        XCTAssertEqual(result, .localProxyStarted(endpoint))
+        XCTAssertEqual(controller.startedNode, hysteria)
+        XCTAssertEqual(controller.startedCredential, "example-password")
         XCTAssertEqual(model.localProxyState.phase, .running)
         XCTAssertEqual(model.localProxyState.endpoint, endpoint)
         XCTAssertEqual(model.localProxyState.message, "本地代理已启动：SOCKS 127.0.0.1:10808，HTTP 127.0.0.1:10809")
@@ -542,15 +549,17 @@ final class AppViewModelsTests: XCTestCase {
         let endpoint: LocalProxyEndpoint
         private(set) var startedNode: ProxyNode?
         private(set) var startedCredential: String?
+        private(set) var startedRealmCredential: String?
         private(set) var didStop = false
 
         init(endpoint: LocalProxyEndpoint) {
             self.endpoint = endpoint
         }
 
-        func start(node: ProxyNode, credential: String) throws -> LocalProxyEndpoint {
+        func start(node: ProxyNode, credential: String, realmCredential: String?) throws -> LocalProxyEndpoint {
             startedNode = node
             startedCredential = credential
+            startedRealmCredential = realmCredential
             return endpoint
         }
 
@@ -595,7 +604,7 @@ final class AppViewModelsTests: XCTestCase {
     }
 
     private final class ThrowingLocalProxyController: LocalProxyControlling {
-        func start(node: ProxyNode, credential: String) throws -> LocalProxyEndpoint {
+        func start(node: ProxyNode, credential: String, realmCredential: String?) throws -> LocalProxyEndpoint {
             throw LocalProxyError.unavailable
         }
 
@@ -609,7 +618,7 @@ final class AppViewModelsTests: XCTestCase {
             self.endpoint = endpoint
         }
 
-        func start(node: ProxyNode, credential: String) throws -> LocalProxyEndpoint {
+        func start(node: ProxyNode, credential: String, realmCredential: String?) throws -> LocalProxyEndpoint {
             endpoint
         }
 

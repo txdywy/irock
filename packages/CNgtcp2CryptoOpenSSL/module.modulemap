@@ -1,0 +1,4 @@
+module CNgtcp2CryptoOpenSSL [system] {
+  header "CNgtcp2CryptoOpenSSL.h"
+  export *
+}

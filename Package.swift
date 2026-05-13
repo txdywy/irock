@@ -17,7 +17,8 @@ let package = Package(
         .library(name: "IrockPerformanceKit", targets: ["IrockPerformanceKit"]),
         .library(name: "IrockAppFeature", targets: ["IrockAppFeature"]),
         .library(name: "IrockTunnelCore", targets: ["IrockTunnelCore"]),
-        .library(name: "IrockTooling", targets: ["IrockTooling"])
+        .library(name: "IrockTooling", targets: ["IrockTooling"]),
+        .library(name: "IrockNativeHysteria2", targets: ["IrockNativeHysteria2"])
     ],
     targets: [
         .target(
@@ -117,6 +118,42 @@ let package = Package(
             name: "IrockToolingTests",
             dependencies: ["IrockTooling"],
             path: "packages/IrockTooling/Tests/IrockToolingTests"
+        ),
+        .systemLibrary(
+            name: "CNgtcp2",
+            path: "packages/CNgtcp2",
+            pkgConfig: "libngtcp2"
+        ),
+        .systemLibrary(
+            name: "CNgtcp2CryptoOpenSSL",
+            path: "packages/CNgtcp2CryptoOpenSSL",
+            pkgConfig: "libngtcp2_crypto_ossl"
+        ),
+        .systemLibrary(
+            name: "CNghttp3",
+            path: "packages/CNghttp3",
+            pkgConfig: "libnghttp3"
+        ),
+        .systemLibrary(
+            name: "COpenSSL",
+            path: "packages/COpenSSL",
+            pkgConfig: "openssl"
+        ),
+        .target(
+            name: "CIrockNativeHysteria2Runtime",
+            dependencies: ["CNgtcp2", "CNgtcp2CryptoOpenSSL", "CNghttp3", "COpenSSL"],
+            path: "packages/IrockNativeHysteria2/Sources/CIrockNativeHysteria2Runtime",
+            publicHeadersPath: "."
+        ),
+        .target(
+            name: "IrockNativeHysteria2",
+            dependencies: ["CIrockNativeHysteria2Runtime", "CNgtcp2", "CNgtcp2CryptoOpenSSL", "CNghttp3", "COpenSSL"],
+            path: "packages/IrockNativeHysteria2/Sources/IrockNativeHysteria2"
+        ),
+        .testTarget(
+            name: "IrockNativeHysteria2Tests",
+            dependencies: ["IrockNativeHysteria2"],
+            path: "packages/IrockNativeHysteria2/Tests/IrockNativeHysteria2Tests"
         )
     ]
 )

@@ -209,16 +209,23 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(project.contains("IROCKPKGPROTOCOLS0000001 /* IrockProtocols */"))
         XCTAssertTrue(project.contains("IROCKPKGTRANSPORT0000001 /* IrockTransport */"))
         XCTAssertTrue(project.contains("IROCKPKGTUNNELCORE000001 /* IrockTunnelCore */"))
+        XCTAssertTrue(project.contains("IROCKPKGNATIVEHY20000001 /* IrockNativeHysteria2 */"))
         XCTAssertTrue(contentView.contains("localProxyController: MacOSLocalProxyController()"))
         XCTAssertTrue(contentView.contains("userModeTunController: MacOSUserModeTunController(runtimeStores: stores)"))
         XCTAssertTrue(controller.contains("final class MacOSLocalProxyController: LocalProxyControlling"))
         XCTAssertTrue(controller.contains("Darwin.socket"))
         XCTAssertTrue(controller.contains("Darwin.accept"))
+        XCTAssertTrue(controller.contains("DispatchQueue(label: \"dev.irock.macos-local-proxy.socks-listener\")"))
+        XCTAssertTrue(controller.contains("DispatchQueue(label: \"dev.irock.macos-local-proxy.http-listener\")"))
+        XCTAssertTrue(controller.contains("import IrockNativeHysteria2"))
+        XCTAssertTrue(controller.contains("NativeHysteria2ClientConfiguration"))
+        XCTAssertTrue(controller.contains("openHysteria2OutboundAndRelay"))
         XCTAssertTrue(controller.contains("ShadowsocksStreamRequest"))
         XCTAssertTrue(controller.contains("ShadowsocksAEADStreamEncoder"))
         XCTAssertTrue(controller.contains("ShadowsocksAEADStreamDecoder"))
         XCTAssertTrue(controller.contains("requestSalt: clientSalt"))
         XCTAssertTrue(controller.contains("saltLength(forCredential:"))
+        XCTAssertTrue(project.contains("MacOSPlatformQUICStreamDialer.swift in Sources"))
         XCTAssertFalse(controller.contains("2022-blake3-aes-128-gcm"))
         XCTAssertTrue(controller.contains("HTTP/1.1 501 Not Implemented"))
         XCTAssertTrue(tunController.contains("final class MacOSUserModeTunController: UserModeTunControlling"))
@@ -244,6 +251,20 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(readme.contains("用户态 TUN"))
         XCTAssertTrue(readme.contains("sudo"))
         XCTAssertTrue(readme.contains("Unsigned builds cannot install or start the Network Extension Packet Tunnel"))
+    }
+
+    func testPackageDefinesNativeHysteria2FFIBoundary() throws {
+        let package = try String(contentsOf: repositoryRoot.appendingPathComponent("Package.swift"))
+
+        XCTAssertTrue(package.contains(".library(name: \"IrockNativeHysteria2\""))
+        XCTAssertTrue(package.contains(".systemLibrary("))
+        XCTAssertTrue(package.contains("name: \"CNgtcp2\""))
+        XCTAssertTrue(package.contains("pkgConfig: \"libngtcp2\""))
+        XCTAssertTrue(package.contains("name: \"CNgtcp2CryptoOpenSSL\""))
+        XCTAssertTrue(package.contains("pkgConfig: \"libngtcp2_crypto_ossl\""))
+        XCTAssertTrue(package.contains("name: \"CNghttp3\""))
+        XCTAssertTrue(package.contains("pkgConfig: \"libnghttp3\""))
+        XCTAssertTrue(package.contains("name: \"IrockNativeHysteria2\""))
     }
 
     func testMacOSPacketTunnelRuntimeIntegrationUsesSharedRuntimeAndPlatformTCPDialer() throws {

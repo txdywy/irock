@@ -1,0 +1,4 @@
+module CNgtcp2 [system] {
+  header "CNgtcp2.h"
+  export *
+}

@@ -102,19 +102,28 @@ public final class AppViewModel: ObservableObject {
             appendLog("本地代理缺少节点凭据")
             throw LocalProxyError.missingCredential
         }
-        guard node.protocolType == .shadowsocks else {
-            if localProxyState.phase != .running {
-                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前协议的本地代理需要 HY2/QUIC 支持，尚未完成")
+        switch node.protocolType {
+        case .shadowsocks:
+            guard ShadowsocksStreamRequest.supportsCredential(credential) else {
+                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前 Shadowsocks 加密方法暂不支持本地代理")
+                appendLog("当前 Shadowsocks 加密方法暂不支持本地代理")
+                throw LocalProxyError.unsupportedCredential
             }
-            appendLog("当前协议的本地代理需要 HY2/QUIC 支持，尚未完成")
+        case .hysteria2:
+            guard node.transport == .quic else {
+                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前 Hysteria2 节点需要 QUIC 传输")
+                appendLog("当前 Hysteria2 节点需要 QUIC 传输")
+                throw LocalProxyError.unsupportedCredential
+            }
+        default:
+            if localProxyState.phase != .running {
+                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前协议暂不支持本地代理")
+            }
+            appendLog("当前协议暂不支持本地代理")
             throw LocalProxyError.unsupportedCredential
         }
-        guard ShadowsocksStreamRequest.supportsCredential(credential) else {
-            localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前 Shadowsocks 加密方法暂不支持本地代理")
-            appendLog("当前 Shadowsocks 加密方法暂不支持本地代理")
-            throw LocalProxyError.unsupportedCredential
-        }
-        let endpoint = try localProxyController.start(node: node, credential: credential)
+        let realmCredential = node.hysteria2?.realm.map { importedCredentials[NodeID(rawValue: $0.tokenReference.account)] } ?? nil
+        let endpoint = try localProxyController.start(node: node, credential: credential, realmCredential: realmCredential)
         localProxyState = LocalProxyState(phase: .running, endpoint: endpoint, message: "本地代理已启动：\(endpoint.displayAddress)")
         systemProxyGuidance = SystemProxyGuidance(endpoint: endpoint)
         appendLog("本地代理已启动：\(endpoint.displayAddress)")

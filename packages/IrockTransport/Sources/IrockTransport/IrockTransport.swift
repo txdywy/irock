@@ -272,12 +272,13 @@ public struct QUICStreamTransportAdapter<Dialer: QUICStreamDialer>: Sendable {
 
     public func openStream(request: TransportRequest) async throws -> any TransportByteStream {
         let descriptor = try QUICOpenDescriptor(request: request)
+        let usesLocalPrelude = request.metadata["quicHandshake"] != "native"
         return try await dialer.openBidirectionalStream(
             host: descriptor.host,
             port: request.port,
             tls: request.tls,
-            metadata: descriptor.metadata(merging: request.metadata),
-            initialPayload: try descriptor.initialPayload(appending: request.initialPayload)
+            metadata: descriptor.metadata(merging: request.metadata, usesLocalPrelude: usesLocalPrelude),
+            initialPayload: usesLocalPrelude ? try descriptor.initialPayload(appending: request.initialPayload) : request.initialPayload
         )
     }
 }
@@ -321,10 +322,14 @@ private struct QUICOpenDescriptor {
         metadata(merging: [:])
     }
 
-    func metadata(merging extra: [String: String]) -> [String: String] {
+    func metadata(merging extra: [String: String], usesLocalPrelude: Bool = true) -> [String: String] {
         var metadata = extra
         metadata["quicServerName"] = serverName
-        metadata["quicHandshake"] = "local-prelude"
+        if usesLocalPrelude {
+            metadata["quicHandshake"] = "local-prelude"
+        } else {
+            metadata.removeValue(forKey: "quicHandshake")
+        }
         if !protocolName.isEmpty {
             metadata["quicProtocol"] = protocolName
         }

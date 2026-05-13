@@ -217,14 +217,14 @@ public enum LocalProxyError: Error, Equatable, Sendable {
 }
 
 public protocol LocalProxyControlling: AnyObject {
-    func start(node: ProxyNode, credential: String) throws -> LocalProxyEndpoint
+    func start(node: ProxyNode, credential: String, realmCredential: String?) throws -> LocalProxyEndpoint
     func stop() throws
 }
 
 public final class DisabledLocalProxyController: LocalProxyControlling {
     public init() {}
 
-    public func start(node: ProxyNode, credential: String) throws -> LocalProxyEndpoint {
+    public func start(node: ProxyNode, credential: String, realmCredential: String?) throws -> LocalProxyEndpoint {
         throw LocalProxyError.unavailable
     }
 

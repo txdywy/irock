@@ -469,7 +469,28 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
-    func testHysteria2OpenRequestBuildsCredentialSafeMetadataAndPayload() throws {
+    func testHysteria2AuthRequestBuildsHTTP3AuthHeadersWithoutMetadataSecrets() throws {
+        let request = try Hysteria2AuthRequest(authentication: " hysteria-secret ", receiveMbps: 128, padding: "pad")
+
+        XCTAssertEqual(request.path, "/auth")
+        XCTAssertEqual(request.method, "POST")
+        XCTAssertEqual(request.headers["Hysteria-Auth"], "hysteria-secret")
+        XCTAssertEqual(request.headers["Hysteria-CC-RX"], "128")
+        XCTAssertEqual(request.headers["Hysteria-Padding"], "pad")
+        XCTAssertEqual(request.metadata["hysteria2AuthPresent"], "true")
+        XCTAssertEqual(request.metadata["hysteria2AuthMethod"], "http3-post")
+        XCTAssertNil(request.metadata["Hysteria-Auth"])
+        XCTAssertFalse(request.metadata.values.contains("hysteria-secret"))
+        XCTAssertFalse(request.metadata.values.contains("pad"))
+    }
+
+    func testHysteria2AuthRequestRejectsInvalidAuthentication() {
+        XCTAssertThrowsError(try Hysteria2AuthRequest(authentication: "   ")) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("missing hysteria2 authentication"))
+        }
+    }
+
+    func testHysteria2OpenRequestBuildsOfficialTCPRequestFrameWithoutSecrets() throws {
         let request = try Hysteria2OpenRequest(
             authentication: "hysteria-secret",
             destination: .host("apple.com", port: 443),
@@ -480,13 +501,13 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
         XCTAssertEqual(request.sni, "hysteria.example.com")
         XCTAssertTrue(request.obfuscationPresent)
-        XCTAssertEqual(request.openBytes.prefix(5), Data([0x48, 0x59, 0x32, 0x01, 0x01]))
-        XCTAssertTrue(request.openBytes.contains(Data("hysteria.example.com".utf8)))
+        XCTAssertEqual(request.openBytes, Data([0x44, 0x01, 0x0d]) + Data("apple.com:443".utf8) + Data([0x00]))
         XCTAssertFalse(String(data: request.openBytes, encoding: .utf8)?.contains("hysteria2-foundation") == true)
         XCTAssertEqual(request.metadata["hysteria2AuthPresent"], "true")
         XCTAssertEqual(request.metadata["hysteria2Destination"], "host:apple.com:443")
         XCTAssertEqual(request.metadata["hysteria2SNI"], "hysteria.example.com")
         XCTAssertEqual(request.metadata["hysteria2ObfsPresent"], "true")
+        XCTAssertEqual(request.metadata["hysteria2TCPCommand"], "connect")
         XCTAssertFalse(request.openBytes.contains(Data("hysteria-secret".utf8)))
         XCTAssertFalse(request.openBytes.contains(Data("obfs-secret".utf8)))
     }
@@ -609,13 +630,13 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.metadata["hysteria2AuthPresent"], "true")
         XCTAssertEqual(transport.requests.first?.metadata["hysteria2Destination"], "host:apple.com:443")
         let payload = transport.requests.first?.initialPayload ?? Data()
-        XCTAssertEqual(payload.prefix(5), Data([0x48, 0x59, 0x32, 0x01, 0x00]))
+        XCTAssertEqual(payload, Data([0x44, 0x01, 0x0d]) + Data("apple.com:443".utf8) + Data([0x00]))
         XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("hysteria2-foundation") == true)
         XCTAssertFalse(payload.contains(Data("hysteria-secret".utf8)))
     }
 
-    func testHysteria2StreamOpenerOpensQUICStreamForDestination() async throws {
-        let stream = RecordingProtocolByteStream(reads: [])
+    func testHysteria2StreamOpenerOpensQUICStreamAfterSuccessfulTCPResponse() async throws {
+        let stream = RecordingProtocolByteStream(reads: [Data([0x00, 0x00, 0x00])])
         let dialer = RecordingProtocolQUICStreamDialer(stream: stream)
         let opener = Hysteria2StreamOpener(streamAdapter: QUICStreamTransportAdapter(dialer: dialer))
         let node = makeNode(protocolType: .hysteria2, transport: .quic, credentialAccount: "hysteria-secret")
@@ -631,18 +652,60 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(dialer.requests.first?.metadata["source"], "local-proxy")
         XCTAssertEqual(dialer.requests.first?.metadata["proxyProtocol"], "hysteria2")
         XCTAssertEqual(dialer.requests.first?.metadata["hysteria2AuthPresent"], "true")
+        XCTAssertEqual(dialer.requests.first?.metadata["hysteria2AuthMethod"], "http3-post")
+        XCTAssertNil(dialer.requests.first?.metadata["Hysteria-Auth"])
+        XCTAssertFalse(dialer.requests.first?.metadata.values.contains("hysteria-secret") == true)
         XCTAssertEqual(dialer.requests.first?.metadata["hysteria2Destination"], "host:apple.com:443")
+        XCTAssertEqual(dialer.requests.first?.metadata["hysteria2TCPCommand"], "connect")
         XCTAssertEqual(dialer.requests.first?.metadata["quicServerName"], "example.com")
         XCTAssertEqual(dialer.requests.first?.metadata["quicProtocol"], "hysteria2")
         XCTAssertEqual(dialer.requests.first?.metadata["quicALPN"], "h3")
-        XCTAssertEqual(dialer.requests.first?.metadata["quicHandshake"], "local-prelude")
+        XCTAssertNil(dialer.requests.first?.metadata["quicHandshake"])
         let payload = dialer.requests.first?.initialPayload ?? Data()
-        XCTAssertTrue(payload.starts(with: Data([0x49, 0x52, 0x4c, 0x51, 0x01])))
-        XCTAssertNotNil(payload.range(of: Data([0x01, UInt8("example.com".utf8.count)]) + Data("example.com".utf8)))
-        XCTAssertNotNil(payload.range(of: Data([0x02, UInt8("hysteria2".utf8.count)]) + Data("hysteria2".utf8)))
-        XCTAssertNotNil(payload.range(of: Data([0x03, UInt8("h3".utf8.count)]) + Data("h3".utf8)))
-        XCTAssertNotNil(payload.range(of: Data([0x48, 0x59, 0x32, 0x01, 0x00])))
+        XCTAssertEqual(payload, Data([0x44, 0x01, 0x0d]) + Data("apple.com:443".utf8) + Data([0x00]))
+        XCTAssertFalse(payload.starts(with: Data([0x49, 0x52, 0x4c, 0x51])))
         XCTAssertFalse(payload.contains(Data("hysteria-secret".utf8)))
+    }
+
+    func testHysteria2StreamOpenerHandlesFragmentedSuccessfulTCPResponse() async throws {
+        let stream = RecordingProtocolByteStream(reads: [Data([0x00]), Data([0x00]), Data([0x00])])
+        let dialer = RecordingProtocolQUICStreamDialer(stream: stream)
+        let opener = Hysteria2StreamOpener(streamAdapter: QUICStreamTransportAdapter(dialer: dialer))
+        let node = makeNode(protocolType: .hysteria2, transport: .quic, credentialAccount: "hysteria-secret")
+
+        let opened = try await opener.openStream(node: node, credential: "hysteria-secret", destination: .host("apple.com", port: 443))
+        try await opened.write(Data("client-data".utf8))
+
+        XCTAssertEqual(stream.writes, [Data("client-data".utf8)])
+    }
+
+    func testHysteria2StreamOpenerDrainsSuccessfulTCPResponseMessageAndPaddingBeforeReturningStream() async throws {
+        let stream = RecordingProtocolByteStream(reads: [Data([0x00, 0x02]) + Data("ok".utf8) + Data([0x03, 0xaa, 0xbb, 0xcc]), Data("server-data".utf8)])
+        let dialer = RecordingProtocolQUICStreamDialer(stream: stream)
+        let opener = Hysteria2StreamOpener(streamAdapter: QUICStreamTransportAdapter(dialer: dialer))
+        let node = makeNode(protocolType: .hysteria2, transport: .quic, credentialAccount: "hysteria-secret")
+
+        let opened = try await opener.openStream(node: node, credential: "hysteria-secret", destination: .host("apple.com", port: 443))
+        let payload = try await opened.read(maxLength: 16_384)
+
+        XCTAssertEqual(payload, Data("server-data".utf8))
+    }
+
+    func testHysteria2StreamOpenerRejectsFailedTCPResponseBeforeReturningStream() async throws {
+        let stream = RecordingProtocolByteStream(reads: [Data([0x01, 0x0b]) + Data("destination".utf8) + Data([0x00])])
+        let dialer = RecordingProtocolQUICStreamDialer(stream: stream)
+        let opener = Hysteria2StreamOpener(streamAdapter: QUICStreamTransportAdapter(dialer: dialer))
+        let node = makeNode(protocolType: .hysteria2, transport: .quic, credentialAccount: "hysteria-secret")
+
+        do {
+            _ = try await opener.openStream(node: node, credential: "hysteria-secret", destination: .host("apple.com", port: 443))
+            XCTFail("Expected Hysteria2 TCP response failure")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .remoteClosed)
+            XCTAssertEqual(stream.writes, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
     }
 
     func testHysteria2StreamOpenerRejectsInvalidConfigurationBeforeStreamOpen() async {
@@ -1601,7 +1664,10 @@ private final class RecordingProtocolByteStream: TransportByteStream, @unchecked
 
     func read(maxLength: Int) async throws -> Data? {
         guard !reads.isEmpty else { return nil }
-        return reads.removeFirst()
+        guard let data = reads.removeFirst() else { return nil }
+        guard data.count > maxLength else { return data }
+        reads.insert(Data(data.dropFirst(maxLength)), at: 0)
+        return Data(data.prefix(maxLength))
     }
 
     func write(_ data: Data) async throws {

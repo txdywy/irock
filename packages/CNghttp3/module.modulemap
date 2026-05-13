@@ -1,0 +1,4 @@
+module CNghttp3 [system] {
+  header "CNghttp3.h"
+  export *
+}

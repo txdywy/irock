@@ -2,10 +2,16 @@ import Darwin
 import Foundation
 import IrockAppFeature
 import IrockCore
+import IrockNativeHysteria2
 import IrockProtocols
 
+private final class AsyncResultBox<T>: @unchecked Sendable {
+    var result: Result<T, Error>?
+}
+
 final class MacOSLocalProxyController: LocalProxyControlling {
-    private let listenerQueue = DispatchQueue(label: "dev.irock.macos-local-proxy.listeners")
+    private let socksListenerQueue = DispatchQueue(label: "dev.irock.macos-local-proxy.socks-listener")
+    private let httpListenerQueue = DispatchQueue(label: "dev.irock.macos-local-proxy.http-listener")
     private let connectionQueue = DispatchQueue(label: "dev.irock.macos-local-proxy.connections", attributes: .concurrent)
     private let endpoint: LocalProxyEndpoint
     private let lock = NSLock()
@@ -16,19 +22,19 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         self.endpoint = endpoint
     }
 
-    func start(node: ProxyNode, credential: String) throws -> LocalProxyEndpoint {
-        guard node.protocolType == .shadowsocks, node.transport == .tcp else {
+    func start(node: ProxyNode, credential: String, realmCredential: String?) throws -> LocalProxyEndpoint {
+        guard (node.protocolType == .shadowsocks && node.transport == .tcp) || (node.protocolType == .hysteria2 && node.transport == .quic) else {
             throw LocalProxyError.unavailable
         }
         stopListeners()
         let socks = try makeListenerSocket(port: endpoint.socksPort)
         let http = try makeListenerSocket(port: endpoint.httpPort)
         listenerSockets = [socks, http]
-        startAcceptLoop(socket: socks) { [weak self] client in
-            self?.handleSOCKS(client: client, node: node, credential: credential)
+        startAcceptLoop(socket: socks, queue: socksListenerQueue) { [weak self] client in
+            self?.handleSOCKS(client: client, node: node, credential: credential, realmCredential: realmCredential)
         }
-        startAcceptLoop(socket: http) { [weak self] client in
-            self?.handleHTTP(client: client, node: node, credential: credential)
+        startAcceptLoop(socket: http, queue: httpListenerQueue) { [weak self] client in
+            self?.handleHTTP(client: client, node: node, credential: credential, realmCredential: realmCredential)
         }
         return endpoint
     }
@@ -65,8 +71,8 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         return fd
     }
 
-    private func startAcceptLoop(socket: Int32, handler: @escaping (Int32) -> Void) {
-        listenerQueue.async { [weak self] in
+    private func startAcceptLoop(socket: Int32, queue: DispatchQueue, handler: @escaping (Int32) -> Void) {
+        queue.async { [weak self] in
             guard let self else { return }
             while true {
                 let client = Darwin.accept(socket, nil, nil)
@@ -86,7 +92,7 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         }
     }
 
-    private func handleSOCKS(client: Int32, node: ProxyNode, credential: String) {
+    private func handleSOCKS(client: Int32, node: ProxyNode, credential: String, realmCredential: String?) {
         do {
             let greetingHeader = try readExact(2, from: client)
             guard greetingHeader[0] == 0x05, greetingHeader[1] > 0 else { return }
@@ -103,7 +109,7 @@ final class MacOSLocalProxyController: LocalProxyControlling {
                 return
             }
             let destination = try readSOCKSDestination(atyp: header[3], from: client)
-            try openOutboundAndRelay(client: client, destination: destination, node: node, credential: credential) {
+            try openOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, realmCredential: realmCredential) {
                 try self.writeAll(Data([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]), to: client)
             }
         } catch {
@@ -133,14 +139,14 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         }
     }
 
-    private func handleHTTP(client: Int32, node: ProxyNode, credential: String) {
+    private func handleHTTP(client: Int32, node: ProxyNode, credential: String, realmCredential: String?) {
         do {
             let request = try readHTTPHeaders(from: client)
             guard let destination = Self.parseConnectDestination(request) else {
                 try sendUnsupportedHTTPResponse(to: client)
                 return
             }
-            try openOutboundAndRelay(client: client, destination: destination, node: node, credential: credential) {
+            try openOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, realmCredential: realmCredential) {
                 try self.writeAll(Data("HTTP/1.1 200 Connection Established\r\n\r\n".utf8), to: client)
             }
         } catch {
@@ -160,13 +166,41 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         throw LocalProxyError.unavailable
     }
 
-    private func openOutboundAndRelay(client: Int32, destination: ProxyDestination, node: ProxyNode, credential: String, sendSuccess: () throws -> Void) throws {
+    private func openOutboundAndRelay(client: Int32, destination: ProxyDestination, node: ProxyNode, credential: String, realmCredential: String?, sendSuccess: () throws -> Void) throws {
         switch node.protocolType {
         case .shadowsocks:
             try openShadowsocksOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
+        case .hysteria2:
+            try openHysteria2OutboundAndRelay(client: client, destination: destination, node: node, credential: credential, realmCredential: realmCredential, sendSuccess: sendSuccess)
         default:
             throw LocalProxyError.unavailable
         }
+    }
+
+    private func openHysteria2OutboundAndRelay(client: Int32, destination: ProxyDestination, node: ProxyNode, credential: String, realmCredential: String?, sendSuccess: () throws -> Void) throws {
+        let connectedUDPPath = try realmCredential.flatMap { credential in
+            try node.hysteria2?.realm.map { realm in
+                try runAsync {
+                    let configuration = try Self.nativeRealmConfiguration(for: realm, credential: credential)
+                    return try await NativeHysteria2RealmResolver(configuration: configuration).resolve(configuration: configuration)
+                }
+            }
+        } ?? nil
+        let configuration = try NativeHysteria2ClientConfiguration(
+            serverHost: node.serverHost,
+            serverPort: node.serverPort,
+            serverName: node.tls.serverName,
+            alpn: node.tls.alpn.isEmpty ? ["h3"] : node.tls.alpn,
+            allowInsecure: node.tls.allowInsecure,
+            connectedUDPPath: connectedUDPPath
+        )
+        let nativeClient = NativeHysteria2Client(configuration: configuration)
+        let stream = try runAsync {
+            let session = try await nativeClient.connect(authentication: credential)
+            return try await session.openTCPStream(address: Self.hysteria2AddressString(for: destination))
+        }
+        try sendSuccess()
+        relay(local: client, stream: stream)
     }
 
     private func openShadowsocksOutboundAndRelay(client: Int32, destination: ProxyDestination, node: ProxyNode, credential: String, sendSuccess: () throws -> Void) throws {
@@ -198,6 +232,39 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             group.leave()
         }
         group.wait()
+    }
+
+    private func relay(local: Int32, stream: any NativeHysteria2ByteStream) {
+        let group = DispatchGroup()
+        group.enter()
+        connectionQueue.async {
+            self.relayLocalToStream(local: local, stream: stream)
+            group.leave()
+        }
+        group.enter()
+        connectionQueue.async {
+            self.relayStreamToLocal(stream: stream, local: local)
+            group.leave()
+        }
+        group.wait()
+    }
+
+    private func relayLocalToStream(local: Int32, stream: any NativeHysteria2ByteStream) {
+        do {
+            while let payload = try readAvailable(from: local, maxLength: 16_384) {
+                try runAsync { try await stream.write(payload) }
+            }
+            try runAsync { try await stream.closeWrite() }
+        } catch {}
+    }
+
+    private func relayStreamToLocal(stream: any NativeHysteria2ByteStream, local: Int32) {
+        do {
+            while let payload = try runAsync({ try await stream.read(maxLength: 16_384) }) {
+                try writeAll(payload, to: local)
+            }
+        } catch {}
+        shutdown(local, SHUT_WR)
     }
 
     private func relayLocalToRemote(local: Int32, remote: Int32, credential: String, clientSalt: Data) {
@@ -234,6 +301,21 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             }
         } catch {}
         shutdown(local, SHUT_WR)
+    }
+
+    private func runAsync<T>(_ operation: @escaping () async throws -> T) throws -> T {
+        let semaphore = DispatchSemaphore(value: 0)
+        let box = AsyncResultBox<T>()
+        Task {
+            do {
+                box.result = .success(try await operation())
+            } catch {
+                box.result = .failure(error)
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return try box.result!.get()
     }
 
     private func connectRemote(host: String, port: Int) throws -> Int32 {
@@ -342,6 +424,34 @@ final class MacOSLocalProxyController: LocalProxyControlling {
 
     private func port(from bytes: [UInt8], at index: Int) -> Int {
         Int(bytes[index]) << 8 | Int(bytes[index + 1])
+    }
+
+    private static func hysteria2AddressString(for destination: ProxyDestination) -> String {
+        switch destination {
+        case let .host(host, port), let .ipv4(host, port):
+            return "\(host):\(port)"
+        case let .ipv6(address, port):
+            return "[\(address)]:\(port)"
+        }
+    }
+
+    private static func nativeRealmConfiguration(for realm: Hysteria2RealmOptions, credential: String) throws -> NativeHysteria2RealmConfiguration {
+        let scheme = realm.useTLS ? "https" : "http"
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = realm.rendezvousHost
+        components.port = realm.rendezvousPort
+        guard let baseURL = components.url else {
+            throw LocalProxyError.unavailable
+        }
+        let stunServers = realm.stunServers.isEmpty ? ["stun.nextcloud.com:3478", "stun.sip.us:3478", "global.stun.twilio.com:3478"] : realm.stunServers
+        return try NativeHysteria2RealmConfiguration(
+            rendezvousBaseURL: baseURL,
+            realmID: realm.name,
+            token: credential,
+            stunServers: stunServers,
+            localPort: realm.localPort
+        )
     }
 
     private static func parseConnectDestination(_ request: String) -> ProxyDestination? {
