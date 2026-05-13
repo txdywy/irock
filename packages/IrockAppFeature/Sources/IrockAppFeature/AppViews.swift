@@ -25,7 +25,7 @@ public struct IrockRootView: View {
                         Button("刷新") {
                             _ = viewModel.refreshRuntimeFeedback()
                         }
-                        Button(viewModel.overviewState.connectionStatus == .connected ? "停止" : "连接") {
+                        Button(viewModel.overviewState.connectionStatus == .connected ? "停止" : "连接本地代理") {
                             if viewModel.overviewState.connectionStatus == .connected {
                                 viewModel.stopConnection()
                             } else {
@@ -152,7 +152,7 @@ public struct NodeListView: View {
                                         isConnected: node.id == viewModel.overviewState.selectedNode?.id && viewModel.overviewState.connectionStatus == .connected
                                     ) {
                                         viewModel.selectNode(id: node.id)
-                                    } connect: {
+                                    } connectLocalProxy: {
                                         viewModel.selectNode(id: node.id)
                                         _ = viewModel.connect()
                                     }
@@ -417,7 +417,7 @@ private struct NodeActionPanel: View {
                         Button("连接本地代理") { _ = viewModel.connect() }
                             .buttonStyle(.borderedProminent)
                         Button("停止代理") { viewModel.stopLocalProxyMode() }
-                        Button("启动用户态 TUN") {
+                        Button("连接用户态 TUN") {
                             do { _ = try viewModel.startUserModeTunMode() } catch {}
                         }
                         Button("停止 TUN") { viewModel.stopUserModeTunMode() }
@@ -463,10 +463,8 @@ private struct NodeActionPanel: View {
 
     private var primaryActionRow: some View {
         HStack(spacing: 10) {
-            Button("连接本地代理") {
-                do { _ = try viewModel.startLocalProxyMode() } catch {}
-            }
-            .buttonStyle(.borderedProminent)
+            Button("连接本地代理") { _ = viewModel.connect() }
+                .buttonStyle(.borderedProminent)
             Button("停止代理") { viewModel.stopLocalProxyMode() }
             tunnelControls
         }
@@ -501,7 +499,7 @@ private struct NodeRowView: View {
     let isSelected: Bool
     let isConnected: Bool
     let select: () -> Void
-    let connect: () -> Void
+    let connectLocalProxy: () -> Void
 
     var body: some View {
         Button(action: select) {
@@ -544,7 +542,7 @@ private struct NodeRowView: View {
             )
         }
         .buttonStyle(.plain)
-        .onTapGesture(count: 2, perform: connect)
+        .onTapGesture(count: 2, perform: connectLocalProxy)
     }
 }
 

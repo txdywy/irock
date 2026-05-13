@@ -95,22 +95,41 @@ final class AppViewModelsTests: XCTestCase {
     }
 
     @MainActor
-    func testAppViewModelConnectStartsUserModeTunForImportedHysteria2Node() throws {
+    func testAppViewModelConnectDoesNotStartUserModeTunForImportedHysteria2Node() throws {
         let localProxy = RecordingLocalProxyController(endpoint: LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809))
         let tunEndpoint = UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500)
         let tun = RecordingUserModeTunController(endpoint: tunEndpoint)
         let model = AppViewModel(nodes: [], localProxyController: localProxy, userModeTunController: tun)
-        let node = try model.importURI("hysteria2://hysteria-password@hy2.example.com:19991/?insecure=1&pinSHA256=pin-value&sni=hy2.example.com#HY2")
+        try model.importURI("hysteria2://hysteria-password@hy2.example.com:19991/?insecure=1&pinSHA256=pin-value&sni=hy2.example.com#HY2")
 
         let result = model.connect()
 
-        XCTAssertEqual(result, .userModeTunStarted(tunEndpoint))
+        XCTAssertEqual(result, .localProxyFailed("当前协议请使用用户态 TUN 连接"))
         XCTAssertNil(localProxy.startedNode)
-        XCTAssertEqual(tun.startedNode, node)
-        XCTAssertEqual(tun.startedCredential, "hysteria-password")
-        XCTAssertEqual(model.userModeTunState.phase, .running)
-        XCTAssertEqual(model.overviewState.connectionStatus, .connected)
-        XCTAssertTrue(model.overviewState.recentLogMessages.contains("连接已就绪：utun9 10.255.0.2/1500"))
+        XCTAssertNil(tun.startedNode)
+        XCTAssertNil(tun.startedCredential)
+        XCTAssertEqual(model.localProxyState.phase, .failed)
+        XCTAssertEqual(model.localProxyState.message, "当前协议请使用用户态 TUN 连接")
+        XCTAssertEqual(model.userModeTunState.phase, .stopped)
+    }
+
+    @MainActor
+    func testAppViewModelConnectUnsupportedNodePreservesRunningLocalProxy() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let controller = RecordingLocalProxyController(endpoint: endpoint)
+        let model = AppViewModel(nodes: [], localProxyController: controller)
+        let shadowsocks = try model.importShadowsocksURI("ss://YWVzLTI1Ni1nY206cGFzcw@example.com:8388#Demo")
+        _ = model.connect()
+        let hysteria = try model.importURI("hysteria2://hysteria-password@hy2.example.com:19991/?insecure=1&pinSHA256=pin-value&sni=hy2.example.com#HY2")
+        model.selectNode(id: hysteria.id)
+
+        let result = model.connect()
+
+        XCTAssertEqual(result, .localProxyFailed("当前协议请使用用户态 TUN 连接"))
+        XCTAssertEqual(controller.startedNode, shadowsocks)
+        XCTAssertEqual(model.localProxyState.phase, .running)
+        XCTAssertEqual(model.localProxyState.endpoint, endpoint)
+        XCTAssertEqual(model.localProxyState.message, "本地代理已启动：SOCKS 127.0.0.1:10808，HTTP 127.0.0.1:10809")
     }
 
     @MainActor
