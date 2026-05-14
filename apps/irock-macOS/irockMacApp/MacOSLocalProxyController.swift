@@ -74,7 +74,7 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         case .trojan:
             return node.transport == .tcp
         case .vmess:
-            return node.transport == .tcp
+            return (node.transport == .tcp || node.transport == .webSocket)
                 && node.tls.enabled
                 && node.tls.fingerprint == nil
                 && node.tls.reality == nil
@@ -309,7 +309,35 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             fingerprint: node.tls.fingerprint,
             reality: node.tls.reality
         )
-        try openTLSOutboundAndRelay(client: client, node: node, tls: tls, initialPayload: request.openBytes, sendSuccess: sendSuccess)
+        switch node.transport {
+        case .webSocket:
+            try openWebSocketTLSOutboundAndRelay(client: client, node: node, tls: tls, initialPayload: request.openBytes, sendSuccess: sendSuccess)
+        default:
+            try openTLSOutboundAndRelay(client: client, node: node, tls: tls, initialPayload: request.openBytes, sendSuccess: sendSuccess)
+        }
+    }
+
+    private func openWebSocketTLSOutboundAndRelay(client: Int32, node: ProxyNode, tls: TLSOptions, initialPayload: Data, sendSuccess: () throws -> Void) throws {
+        guard let options = node.transportOptions.webSocket else {
+            throw TransportError.invalidConfiguration("missing websocket options")
+        }
+        let tlsStream = try MacOSTLSByteStream(host: node.serverHost, port: node.serverPort, tls: tls, initialPayload: nil)
+        let stream = WebSocketClientByteStream(
+            underlying: tlsStream,
+            host: options.host ?? node.serverHost,
+            path: options.path,
+            protocolName: "vmess",
+            initialPayload: initialPayload
+        )
+        try runAsync { try await tlsStream.start() }
+        try runAsync { try await stream.start() }
+        do {
+            try sendSuccess()
+            relay(local: client, stream: stream)
+        } catch {
+            try? runAsync { await stream.close() }
+            throw error
+        }
     }
 
     private func openTLSOutboundAndRelay(client: Int32, node: ProxyNode, tls: TLSOptions, initialPayload: Data, sendSuccess: () throws -> Void) throws {

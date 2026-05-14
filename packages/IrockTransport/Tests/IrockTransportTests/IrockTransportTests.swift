@@ -1025,6 +1025,115 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(connection.transport, .quic)
         XCTAssertEqual(dialer.requests.count, 1)
     }
+
+    func testWebSocketClientByteStreamUpgradesMasksWritesAndUnframesBinaryReads() async throws {
+        let response = Data("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ICX+Yqv66kxgM0FcWaLWlFLwTAI=\r\n\r\n".utf8)
+        let serverFrame = Data([0x82, 0x05]) + Data("reply".utf8)
+        let underlying = RecordingTransportByteStream(reads: [response + serverFrame, nil])
+        let stream = WebSocketClientByteStream(
+            underlying: underlying,
+            host: "edge.example.com",
+            path: "/ray",
+            protocolName: "vmess",
+            initialPayload: Data("open".utf8),
+            maskingKey: Data([0x01, 0x02, 0x03, 0x04])
+        )
+
+        try await stream.start()
+        try await stream.write(Data("ping".utf8))
+        let reply = try await stream.read(maxLength: 1024)
+
+        XCTAssertEqual(reply, Data("reply".utf8))
+        XCTAssertEqual(underlying.writes.count, 3)
+        let handshake = String(data: underlying.writes[0], encoding: .utf8)
+        XCTAssertTrue(handshake?.hasPrefix("GET /ray HTTP/1.1\r\n") == true)
+        XCTAssertTrue(handshake?.contains("Host: edge.example.com\r\n") == true)
+        XCTAssertTrue(handshake?.contains("Upgrade: websocket\r\n") == true)
+        XCTAssertTrue(handshake?.contains("Sec-WebSocket-Protocol: vmess\r\n") == true)
+        XCTAssertTrue(handshake?.hasSuffix("\r\n\r\n") == true)
+        XCTAssertEqual(underlying.writes[1], Data([0x82, 0x84, 0x01, 0x02, 0x03, 0x04, 0x6e, 0x72, 0x66, 0x6a]))
+        XCTAssertEqual(underlying.writes[2], Data([0x82, 0x84, 0x01, 0x02, 0x03, 0x04, 0x71, 0x6b, 0x6d, 0x63]))
+    }
+
+    func testWebSocketClientByteStreamRejectsNonSwitchingProtocolResponse() async {
+        let cases = [
+            "HTTP/1.1 403 Forbidden\r\n\r\n",
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: invalid\r\n\r\n",
+            "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ICX+Yqv66kxgM0FcWaLWlFLwTAI=\r\n\r\n"
+        ]
+
+        for response in cases {
+            let underlying = RecordingTransportByteStream(reads: [Data(response.utf8)])
+            let stream = WebSocketClientByteStream(underlying: underlying, host: "edge.example.com", path: "/ray", maskingKey: Data([0x01, 0x02, 0x03, 0x04]))
+
+            do {
+                try await stream.start()
+                XCTFail("Expected websocket upgrade failure")
+            } catch let error as TransportError {
+                XCTAssertEqual(error, .invalidConfiguration("invalid websocket upgrade response"))
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testWebSocketClientByteStreamRejectsOversizedWritesBeforeCorruptingFrame() async throws {
+        let response = Data("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ICX+Yqv66kxgM0FcWaLWlFLwTAI=\r\n\r\n".utf8)
+        let underlying = RecordingTransportByteStream(reads: [response])
+        let stream = WebSocketClientByteStream(underlying: underlying, host: "edge.example.com", path: "/ray", maskingKey: Data([0x01, 0x02, 0x03, 0x04]))
+        try await stream.start()
+
+        do {
+            try await stream.write(Data(repeating: 0x41, count: 65_536))
+            XCTFail("Expected oversized websocket frame rejection")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .invalidConfiguration("unsupported websocket frame length"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(underlying.writes.count, 1)
+    }
+
+    func testWebSocketClientByteStreamRejectsOversizedHandshakeResponse() async {
+        let underlying = RecordingTransportByteStream(reads: [Data(repeating: 0x41, count: 16_385)])
+        let stream = WebSocketClientByteStream(underlying: underlying, host: "edge.example.com", path: "/ray", maskingKey: Data([0x01, 0x02, 0x03, 0x04]))
+
+        do {
+            try await stream.start()
+            XCTFail("Expected oversized websocket upgrade response rejection")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .invalidConfiguration("invalid websocket upgrade response"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testWebSocketClientByteStreamReassemblesFragmentedBinaryFrames() async throws {
+        let response = Data("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ICX+Yqv66kxgM0FcWaLWlFLwTAI=\r\n\r\n".utf8)
+        let firstFrame = Data([0x02, 0x05]) + Data("hello".utf8)
+        let secondFrame = Data([0x80, 0x06]) + Data("-world".utf8)
+        let underlying = RecordingTransportByteStream(reads: [response + firstFrame + secondFrame, nil])
+        let stream = WebSocketClientByteStream(underlying: underlying, host: "edge.example.com", path: "/ray", maskingKey: Data([0x01, 0x02, 0x03, 0x04]))
+
+        try await stream.start()
+        let data = try await stream.read(maxLength: 64)
+
+        XCTAssertEqual(data, Data("hello-world".utf8))
+    }
+
+    func testWebSocketClientByteStreamPreservesFrameRemainderAcrossShortReads() async throws {
+        let response = Data("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ICX+Yqv66kxgM0FcWaLWlFLwTAI=\r\n\r\n".utf8)
+        let serverFrame = Data([0x82, 0x0b]) + Data("hello-world".utf8)
+        let underlying = RecordingTransportByteStream(reads: [response + serverFrame, nil])
+        let stream = WebSocketClientByteStream(underlying: underlying, host: "edge.example.com", path: "/ray", maskingKey: Data([0x01, 0x02, 0x03, 0x04]))
+
+        try await stream.start()
+        let first = try await stream.read(maxLength: 5)
+        let second = try await stream.read(maxLength: 64)
+
+        XCTAssertEqual(first, Data("hello".utf8))
+        XCTAssertEqual(second, Data("-world".utf8))
+    }
 }
 
 private struct TransportAdapterRequest: Equatable {

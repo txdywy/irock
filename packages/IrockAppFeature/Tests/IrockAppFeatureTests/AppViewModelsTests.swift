@@ -187,19 +187,43 @@ final class AppViewModelsTests: XCTestCase {
     }
 
     @MainActor
-    func testAppViewModelConnectRejectsVMessWithoutTCPTLSBeforeStartingProxy() throws {
+    func testAppViewModelConnectStartsVMessWebSocketTLSLocalProxyWithoutStartingUserModeTun() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let localProxy = RecordingLocalProxyController(endpoint: endpoint)
+        let tunEndpoint = UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500)
+        let tun = RecordingUserModeTunController(endpoint: tunEndpoint)
+        let model = AppViewModel(nodes: [], localProxyController: localProxy, userModeTunController: tun)
+        let encoded = "eyJ2IjoiMiIsInBzIjoiVk1lc3MgV1MiLCJhZGQiOiJ2bWVzcy5leGFtcGxlLmNvbSIsInBvcnQiOiI0NDMiLCJpZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMSIsIm5ldCI6IndzIiwidHlwZSI6Im5vbmUiLCJob3N0IjoiZWRnZS5leGFtcGxlLmNvbSIsInBhdGgiOiIvcmF5IiwidGxzIjoidGxzIiwic25pIjoidm1lc3MuZXhhbXBsZS5jb20ifQ"
+        let node = try model.importURI("vmess://\(encoded)")
+
+        let result = model.connect()
+
+        XCTAssertEqual(result, .localProxyStarted(endpoint))
+        XCTAssertEqual(localProxy.startedNode, node)
+        XCTAssertEqual(localProxy.startedCredential, "00000000-0000-0000-0000-000000000001")
+        XCTAssertNil(tun.startedNode)
+        XCTAssertNil(tun.startedCredential)
+        XCTAssertEqual(model.localProxyState.phase, .running)
+        XCTAssertEqual(model.userModeTunState.phase, .stopped)
+    }
+
+    @MainActor
+    func testAppViewModelConnectRejectsVMessHTTP2BeforeStartingProxy() throws {
         let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
         let localProxy = RecordingLocalProxyController(endpoint: endpoint)
         let model = AppViewModel(nodes: [], localProxyController: localProxy)
-        let encoded = "eyJ2IjoiMiIsInBzIjoiVk1lc3MgV1MiLCJhZGQiOiJ2bWVzcy5leGFtcGxlLmNvbSIsInBvcnQiOiI0NDMiLCJpZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMSIsIm5ldCI6IndzIiwidHlwZSI6Im5vbmUiLCJob3N0IjoiZWRnZS5leGFtcGxlLmNvbSIsInBhdGgiOiIvcmF5IiwidGxzIjoidGxzIiwic25pIjoidm1lc3MuZXhhbXBsZS5jb20ifQ"
+        let json = """
+        {"v":"2","ps":"VMess H2","add":"vmess.example.com","port":"443","id":"00000000-0000-0000-0000-000000000001","net":"h2","type":"none","host":"edge.example.com","path":"/ray","tls":"tls","sni":"vmess.example.com"}
+        """
+        let encoded = Data(json.utf8).base64EncodedString()
         _ = try model.importURI("vmess://\(encoded)")
 
         let result = model.connect()
 
-        XCTAssertEqual(result, .localProxyFailed("当前 VMess 节点需要 TCP+TLS 传输"))
+        XCTAssertEqual(result, .localProxyFailed("当前 VMess 节点需要 TCP/WebSocket+TLS 传输"))
         XCTAssertNil(localProxy.startedNode)
         XCTAssertEqual(model.localProxyState.phase, .failed)
-        XCTAssertEqual(model.localProxyState.message, "当前 VMess 节点需要 TCP+TLS 传输")
+        XCTAssertEqual(model.localProxyState.message, "当前 VMess 节点需要 TCP/WebSocket+TLS 传输")
     }
 
     @MainActor
