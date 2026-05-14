@@ -27,7 +27,7 @@ final class MacOSTLSByteStream: TransportByteStream, @unchecked Sendable {
             throw TransportError.invalidConfiguration("tls certificate pinning is unsupported in macOS local proxy")
         }
         if tls.reality != nil {
-            throw TransportError.invalidConfiguration("reality tls is unsupported in Trojan local proxy")
+            throw TransportError.invalidConfiguration("reality tls is unsupported in macOS local proxy")
         }
         let parameters = NWParameters(tls: options)
         self.connection = NWConnection(to: endpoint, using: parameters)
