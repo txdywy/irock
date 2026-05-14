@@ -122,9 +122,9 @@ public final class AppViewModel: ObservableObject {
                 throw LocalProxyError.unsupportedCredential
             }
         case .vmess:
-            guard node.transport == .tcp, node.tls.enabled else {
-                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前 VMess 节点需要 TCP+TLS 传输")
-                appendLog("当前 VMess 节点需要 TCP+TLS 传输")
+            guard (node.transport == .tcp || node.transport == .webSocket), node.tls.enabled else {
+                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前 VMess 节点需要 TCP/WebSocket+TLS 传输")
+                appendLog("当前 VMess 节点需要 TCP/WebSocket+TLS 传输")
                 throw LocalProxyError.unsupportedCredential
             }
             guard node.tls.fingerprint == nil, node.tls.reality == nil else {

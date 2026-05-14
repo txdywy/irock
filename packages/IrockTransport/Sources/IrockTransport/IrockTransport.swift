@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import IrockCore
 
@@ -544,6 +545,211 @@ private struct WebSocketOpenDescriptor {
             data.append(payload)
         }
         return data
+    }
+}
+
+public final class WebSocketClientByteStream<Underlying: TransportByteStream>: TransportByteStream, @unchecked Sendable {
+    private let underlying: Underlying
+    private let host: String
+    private let path: String
+    private let protocolName: String
+    private let initialPayload: Data?
+    private let handshakeKey: String
+    private static var maximumHandshakeResponseBytes: Int { 16 * 1024 }
+
+    private let maskingKey: Data?
+    private var readBuffer = Data()
+    private var payloadBuffer = Data()
+    private var fragmentedPayload = Data()
+
+    public convenience init(underlying: Underlying, host: String, path: String, protocolName: String = "", initialPayload: Data? = nil) {
+        self.init(underlying: underlying, host: host, path: path, protocolName: protocolName, initialPayload: initialPayload, handshakeKey: Self.randomHandshakeKey(), maskingKey: nil)
+    }
+
+    init(underlying: Underlying, host: String, path: String, protocolName: String = "", initialPayload: Data? = nil, handshakeKey: String = "AAAAAAAAAAAAAAAAAAAAAA==", maskingKey: Data?) {
+        self.underlying = underlying
+        self.host = host
+        self.path = path.isEmpty ? "/" : path
+        self.protocolName = protocolName
+        self.initialPayload = initialPayload
+        self.handshakeKey = handshakeKey
+        self.maskingKey = maskingKey
+    }
+
+    public func start() async throws {
+        try await underlying.write(handshakeRequest())
+        try await readHandshakeResponse()
+        if let initialPayload, !initialPayload.isEmpty {
+            try await write(initialPayload)
+        }
+    }
+
+    public func read(maxLength: Int) async throws -> Data? {
+        if !payloadBuffer.isEmpty {
+            return takePayload(maxLength: maxLength)
+        }
+        while true {
+            if let frame = try readFrameFromBuffer() {
+                payloadBuffer.append(frame)
+                return takePayload(maxLength: maxLength)
+            }
+            guard let data = try await underlying.read(maxLength: max(maxLength, 2)) else {
+                return nil
+            }
+            readBuffer.append(data)
+        }
+    }
+
+    public func write(_ data: Data) async throws {
+        try await underlying.write(try maskedBinaryFrame(data))
+    }
+
+    public func closeWrite() async {
+        await underlying.closeWrite()
+    }
+
+    public func close() async {
+        await underlying.close()
+    }
+
+    private func handshakeRequest() -> Data {
+        var headers = [
+            "GET \(path.hasPrefix("/") ? path : "/\(path)") HTTP/1.1",
+            "Host: \(host)",
+            "Upgrade: websocket",
+            "Connection: Upgrade",
+            "Sec-WebSocket-Key: \(handshakeKey)",
+            "Sec-WebSocket-Version: 13"
+        ]
+        if !protocolName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            headers.append("Sec-WebSocket-Protocol: \(protocolName.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+        return Data((headers.joined(separator: "\r\n") + "\r\n\r\n").utf8)
+    }
+
+    private func readHandshakeResponse() async throws {
+        while readBuffer.range(of: Data("\r\n\r\n".utf8)) == nil {
+            guard let data = try await underlying.read(maxLength: 4096) else {
+                throw TransportError.remoteClosed
+            }
+            readBuffer.append(data)
+            guard readBuffer.count <= Self.maximumHandshakeResponseBytes else {
+                throw TransportError.invalidConfiguration("invalid websocket upgrade response")
+            }
+        }
+        guard let end = readBuffer.range(of: Data("\r\n\r\n".utf8)) else {
+            throw TransportError.remoteClosed
+        }
+        let response = readBuffer[..<end.upperBound]
+        guard validatesHandshakeResponse(response) else {
+            throw TransportError.invalidConfiguration("invalid websocket upgrade response")
+        }
+        readBuffer.removeSubrange(..<end.upperBound)
+    }
+
+    private func validatesHandshakeResponse(_ response: Data.SubSequence) -> Bool {
+        guard let text = String(data: response, encoding: .utf8) else { return false }
+        let lines = text.components(separatedBy: "\r\n").filter { !$0.isEmpty }
+        guard lines.first?.hasPrefix("HTTP/1.1 101") == true else { return false }
+        var headers: [String: String] = [:]
+        for line in lines.dropFirst() {
+            guard let separator = line.firstIndex(of: ":") else { continue }
+            let name = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
+            headers[name] = value
+        }
+        guard headers["upgrade"]?.lowercased() == "websocket" else { return false }
+        guard headers["connection"]?.lowercased().split(separator: ",").map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }).contains("upgrade") == true else { return false }
+        return headers["sec-websocket-accept"] == Self.acceptKey(for: handshakeKey)
+    }
+
+    private func readFrameFromBuffer() throws -> Data? {
+        guard readBuffer.count >= 2 else { return nil }
+        let first = readBuffer[readBuffer.startIndex]
+        let second = readBuffer[readBuffer.index(after: readBuffer.startIndex)]
+        let fin = (first & 0x80) != 0
+        let opcode = first & 0x0f
+        let isMasked = (second & 0x80) != 0
+        var length = Int(second & 0x7f)
+        var cursor = 2
+        if length == 126 {
+            guard readBuffer.count >= cursor + 2 else { return nil }
+            length = Int(readBuffer[readBuffer.startIndex + cursor]) << 8 | Int(readBuffer[readBuffer.startIndex + cursor + 1])
+            cursor += 2
+        } else if length == 127 {
+            throw TransportError.invalidConfiguration("unsupported websocket frame length")
+        }
+        var mask = Data()
+        if isMasked {
+            guard readBuffer.count >= cursor + 4 else { return nil }
+            mask = readBuffer.subdata(in: cursor..<(cursor + 4))
+            cursor += 4
+        }
+        guard readBuffer.count >= cursor + length else { return nil }
+        var payload = readBuffer.subdata(in: cursor..<(cursor + length))
+        readBuffer.removeSubrange(..<(cursor + length))
+        if isMasked {
+            for index in payload.indices {
+                payload[index] ^= mask[index % 4]
+            }
+        }
+        switch opcode {
+        case 0x1, 0x2:
+            guard fin else {
+                fragmentedPayload.append(payload)
+                return try readFrameFromBuffer()
+            }
+            return payload
+        case 0x0:
+            guard !fragmentedPayload.isEmpty else {
+                throw TransportError.invalidConfiguration("unexpected websocket continuation")
+            }
+            fragmentedPayload.append(payload)
+            guard fin else { return try readFrameFromBuffer() }
+            let data = fragmentedPayload
+            fragmentedPayload.removeAll(keepingCapacity: true)
+            return data
+        case 0x8:
+            return nil
+        default:
+            return try readFrameFromBuffer()
+        }
+    }
+
+    private func takePayload(maxLength: Int) -> Data {
+        let count = min(maxLength, payloadBuffer.count)
+        let data = payloadBuffer.prefix(count)
+        payloadBuffer.removeSubrange(..<count)
+        return data
+    }
+
+    private func maskedBinaryFrame(_ payload: Data) throws -> Data {
+        guard payload.count <= UInt16.max else {
+            throw TransportError.invalidConfiguration("unsupported websocket frame length")
+        }
+        let mask = maskingKey ?? Data((0..<4).map { _ in UInt8.random(in: .min ... .max) })
+        var frame = Data([0x82])
+        if payload.count < 126 {
+            frame.append(0x80 | UInt8(payload.count))
+        } else {
+            frame.append(0x80 | 126)
+            frame.append(UInt8((payload.count >> 8) & 0xff))
+            frame.append(UInt8(payload.count & 0xff))
+        }
+        frame.append(mask.prefix(4))
+        for (index, byte) in payload.enumerated() {
+            frame.append(byte ^ mask[mask.startIndex + index % 4])
+        }
+        return frame
+    }
+
+    private static func randomHandshakeKey() -> String {
+        Data((0..<16).map { _ in UInt8.random(in: .min ... .max) }).base64EncodedString()
+    }
+
+    private static func acceptKey(for key: String) -> String {
+        let digest = Insecure.SHA1.hash(data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8))
+        return Data(digest).base64EncodedString()
     }
 }
 
