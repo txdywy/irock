@@ -197,7 +197,8 @@ final class RuntimeProxyStackTests: XCTestCase {
 
     func testVLESSRealityTCPStackRoutesThroughRealityAdapter() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
-        let reality = RealityOptions(publicKey: "reality-public-key", shortID: "abc123", spiderX: "/")
+        let publicKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+        let reality = RealityOptions(publicKey: publicKey, shortID: "abc123", spiderX: "/")
         let tls = TLSOptions(enabled: true, serverName: "reality.example.com", allowInsecure: false, alpn: ["h2"], fingerprint: "chrome", reality: reality)
         let registry = RuntimeProxyStack.vlessRealityTCP(plain: plain, credentialResolver: TestProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000002"))
         let outbound = ProxyOutbound(node: makeVLESSNode(tls: tls), registry: registry)
@@ -220,7 +221,7 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertNotNil(payload.range(of: Data([0x01, UInt8("reality.example.com".utf8.count)]) + Data("reality.example.com".utf8)))
         XCTAssertNotNil(payload.range(of: Data([0x02, 0x01, 0x01])))
         XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("reality-foundation") == true)
-        XCTAssertFalse(payload.contains(Data("reality-public-key".utf8)))
+        XCTAssertFalse(payload.contains(Data(publicKey.utf8)))
         XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000002".utf8)))
     }
 

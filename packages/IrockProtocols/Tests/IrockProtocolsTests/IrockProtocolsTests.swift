@@ -443,6 +443,56 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testVLESSRealityHandshakeConfigurationNormalizesCredentialSafeMetadata() throws {
+        let publicKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+        let tls = TLSOptions(
+            enabled: true,
+            serverName: " www.example.com ",
+            allowInsecure: false,
+            alpn: ["h2"],
+            fingerprint: " chrome ",
+            reality: RealityOptions(publicKey: publicKey, shortID: "0A1b2C", spiderX: nil)
+        )
+
+        let configuration = try VLESSRealityHandshakeConfiguration(tls: tls)
+
+        XCTAssertEqual(configuration.serverName, "www.example.com")
+        XCTAssertEqual(configuration.clientFingerprint, "chrome")
+        XCTAssertEqual(configuration.publicKeyBytes, Data(1...32))
+        XCTAssertEqual(configuration.shortIDBytes, Data([0x0a, 0x1b, 0x2c]))
+        XCTAssertEqual(configuration.spiderX, "/")
+        XCTAssertEqual(configuration.metadata["vlessRealityPresent"], "true")
+        XCTAssertEqual(configuration.metadata["vlessRealityServerName"], "www.example.com")
+        XCTAssertEqual(configuration.metadata["vlessRealityShortIDBytes"], "3")
+        XCTAssertEqual(configuration.metadata["vlessRealitySpiderX"], "/")
+        XCTAssertEqual(configuration.metadata["vlessRealityFingerprint"], "chrome")
+        XCTAssertNil(configuration.metadata["vlessRealityPublicKey"])
+        XCTAssertFalse(configuration.metadata.values.contains(publicKey))
+    }
+
+    func testVLESSRealityHandshakeConfigurationRejectsInvalidInputs() {
+        let validReality = RealityOptions(publicKey: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA", shortID: "abcd", spiderX: "/")
+        XCTAssertNoThrow(try VLESSRealityHandshakeConfiguration(tls: TLSOptions(enabled: true, serverName: "www.example.com", allowInsecure: false, alpn: [], fingerprint: "chrome", reality: RealityOptions(publicKey: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA", shortID: "0011223344556677", spiderX: "/"))))
+        let cases: [(TLSOptions, ProxyProtocolError)] = [
+            (TLSOptions(enabled: false, serverName: "www.example.com", allowInsecure: false, alpn: [], fingerprint: "chrome", reality: validReality), .invalidConfiguration("missing reality tls")),
+            (TLSOptions(enabled: true, serverName: "   ", allowInsecure: false, alpn: [], fingerprint: "chrome", reality: validReality), .invalidConfiguration("missing reality server name")),
+            (TLSOptions(enabled: true, serverName: "www.example.com", allowInsecure: false, alpn: [], fingerprint: "chrome", reality: nil), .invalidConfiguration("missing reality options")),
+            (TLSOptions(enabled: true, serverName: "www.example.com", allowInsecure: false, alpn: [], fingerprint: "chrome", reality: RealityOptions(publicKey: "not-base64url", shortID: "abcd", spiderX: "/")), .invalidConfiguration("invalid reality public key")),
+            (TLSOptions(enabled: true, serverName: "www.example.com", allowInsecure: false, alpn: [], fingerprint: "chrome", reality: RealityOptions(publicKey: "//////////////////////////////////////////8", shortID: "abcd", spiderX: "/")), .invalidConfiguration("invalid reality public key")),
+            (TLSOptions(enabled: true, serverName: "www.example.com", allowInsecure: false, alpn: [], fingerprint: "chrome", reality: RealityOptions(publicKey: "//////////////////////////////////////////8=", shortID: "abcd", spiderX: "/")), .invalidConfiguration("invalid reality public key")),
+            (TLSOptions(enabled: true, serverName: "www.example.com", allowInsecure: false, alpn: [], fingerprint: "chrome", reality: RealityOptions(publicKey: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA", shortID: "abc", spiderX: "/")), .invalidConfiguration("invalid reality short id")),
+            (TLSOptions(enabled: true, serverName: "www.example.com", allowInsecure: false, alpn: [], fingerprint: "chrome", reality: RealityOptions(publicKey: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA", shortID: "zz", spiderX: "/")), .invalidConfiguration("invalid reality short id")),
+            (TLSOptions(enabled: true, serverName: "www.example.com", allowInsecure: false, alpn: [], fingerprint: "chrome", reality: RealityOptions(publicKey: "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA", shortID: "001122334455667788", spiderX: "/")), .invalidConfiguration("invalid reality short id")),
+            (TLSOptions(enabled: true, serverName: "www.example.com", allowInsecure: false, alpn: [], fingerprint: "   ", reality: validReality), .invalidConfiguration("missing reality fingerprint"))
+        ]
+
+        for (tls, expectedError) in cases {
+            XCTAssertThrowsError(try VLESSRealityHandshakeConfiguration(tls: tls)) { error in
+                XCTAssertEqual(error as? ProxyProtocolError, expectedError)
+            }
+        }
+    }
+
     func testTrojanOpenRequestBuildsCredentialSafeMetadataAndPayload() throws {
         let request = try TrojanOpenRequest(
             password: "secret-password",
@@ -1087,10 +1137,11 @@ final class IrockProtocolsTests: XCTestCase {
     func testVLESSProxyAdapterOpensRealityTCPTransportWithCredentialSafePayload() async throws {
         let transport = RecordingTransportAdapter(transport: .tcp)
         let adapter = VLESSProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000002"))
-        let reality = RealityOptions(publicKey: "reality-public-key", shortID: "abc123", spiderX: "/")
+        let publicKey = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+        let reality = RealityOptions(publicKey: publicKey, shortID: "abc123", spiderX: "/")
         let tls = TLSOptions(enabled: true, serverName: "reality.example.com", allowInsecure: false, alpn: ["h2"], fingerprint: "chrome", reality: reality)
         let node = makeNode(protocolType: .vless, transport: .tcp, tls: tls, credentialAccount: "00000000-0000-0000-0000-000000000002")
-        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1", "vlessUserID": "00000000-0000-0000-0000-000000000002", "vlessRealityPublicKey": publicKey, "realityPublicKey": publicKey])
 
         let connection = try await adapter.connect(request: request)
 
@@ -1100,12 +1151,20 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.tls, tls)
         XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "vless")
         XCTAssertEqual(transport.requests.first?.metadata["vlessUserIDPresent"], "true")
+        XCTAssertEqual(transport.requests.first?.metadata["vlessRealityPresent"], "true")
+        XCTAssertEqual(transport.requests.first?.metadata["vlessRealityServerName"], "reality.example.com")
+        XCTAssertEqual(transport.requests.first?.metadata["vlessRealityShortIDBytes"], "3")
+        XCTAssertEqual(transport.requests.first?.metadata["vlessRealitySpiderX"], "/")
+        XCTAssertEqual(transport.requests.first?.metadata["vlessRealityFingerprint"], "chrome")
+        XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
         XCTAssertNil(transport.requests.first?.metadata["vlessUserID"])
+        XCTAssertNil(transport.requests.first?.metadata["vlessRealityPublicKey"])
+        XCTAssertNil(transport.requests.first?.metadata["realityPublicKey"])
         let payload = transport.requests.first?.initialPayload ?? Data()
         XCTAssertEqual(payload.prefix(4), Data([0x00, 0, 0, 0]))
         XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("vless-foundation") == true)
         XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000002".utf8)))
-        XCTAssertFalse(payload.contains(Data("reality-public-key".utf8)))
+        XCTAssertFalse(payload.contains(Data(publicKey.utf8)))
     }
 
     func testVLESSProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {
