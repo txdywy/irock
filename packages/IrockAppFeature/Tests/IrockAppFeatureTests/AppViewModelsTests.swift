@@ -142,6 +142,73 @@ final class AppViewModelsTests: XCTestCase {
     }
 
     @MainActor
+    func testAppViewModelConnectStartsVLESSTCPLocalProxyWithoutStartingUserModeTun() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let localProxy = RecordingLocalProxyController(endpoint: endpoint)
+        let tunEndpoint = UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500)
+        let tun = RecordingUserModeTunController(endpoint: tunEndpoint)
+        let model = AppViewModel(nodes: [], localProxyController: localProxy, userModeTunController: tun)
+        let node = try model.importURI("vless://00000000-0000-0000-0000-000000000002@vless.example.com:443?type=tcp&security=tls&sni=vless.example.com#VLESS")
+
+        let result = model.connect()
+
+        XCTAssertEqual(result, .localProxyStarted(endpoint))
+        XCTAssertEqual(localProxy.startedNode, node)
+        XCTAssertEqual(localProxy.startedCredential, "00000000-0000-0000-0000-000000000002")
+        XCTAssertNil(localProxy.startedRealmCredential)
+        XCTAssertNil(tun.startedNode)
+        XCTAssertNil(tun.startedCredential)
+        XCTAssertEqual(model.localProxyState.phase, .running)
+        XCTAssertEqual(model.localProxyState.endpoint, endpoint)
+        XCTAssertEqual(model.userModeTunState.phase, .stopped)
+    }
+
+    @MainActor
+    func testAppViewModelConnectRejectsVLESSWithoutPlainTLSBeforeStartingProxy() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let localProxy = RecordingLocalProxyController(endpoint: endpoint)
+        let model = AppViewModel(nodes: [], localProxyController: localProxy)
+        _ = try model.importURI("vless://00000000-0000-0000-0000-000000000002@vless.example.com:443?type=tcp&sni=vless.example.com#VLESS")
+
+        let result = model.connect()
+
+        XCTAssertEqual(result, .localProxyFailed("当前 VLESS 节点需要 TCP+TLS 传输"))
+        XCTAssertNil(localProxy.startedNode)
+        XCTAssertEqual(model.localProxyState.phase, .failed)
+        XCTAssertEqual(model.localProxyState.message, "当前 VLESS 节点需要 TCP+TLS 传输")
+    }
+
+    @MainActor
+    func testAppViewModelConnectRejectsVLESSRealityBeforeStartingProxy() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let localProxy = RecordingLocalProxyController(endpoint: endpoint)
+        let model = AppViewModel(nodes: [], localProxyController: localProxy)
+        _ = try model.importURI("vless://00000000-0000-0000-0000-000000000002@vless.example.com:443?type=tcp&security=reality&sni=vless.example.com&pbk=public-key&sid=abcd&fp=chrome#VLESS")
+
+        let result = model.connect()
+
+        XCTAssertEqual(result, .localProxyFailed("当前 VLESS 节点暂不支持证书固定或 Reality"))
+        XCTAssertNil(localProxy.startedNode)
+        XCTAssertEqual(model.localProxyState.phase, .failed)
+        XCTAssertEqual(model.localProxyState.message, "当前 VLESS 节点暂不支持证书固定或 Reality")
+    }
+
+    @MainActor
+    func testAppViewModelConnectRejectsVLESSPinnedTLSBeforeStartingProxy() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let localProxy = RecordingLocalProxyController(endpoint: endpoint)
+        let model = AppViewModel(nodes: [], localProxyController: localProxy)
+        _ = try model.importURI("vless://00000000-0000-0000-0000-000000000002@vless.example.com:443?type=tcp&security=tls&sni=vless.example.com&fp=chrome#VLESS")
+
+        let result = model.connect()
+
+        XCTAssertEqual(result, .localProxyFailed("当前 VLESS 节点暂不支持证书固定或 Reality"))
+        XCTAssertNil(localProxy.startedNode)
+        XCTAssertEqual(model.localProxyState.phase, .failed)
+        XCTAssertEqual(model.localProxyState.message, "当前 VLESS 节点暂不支持证书固定或 Reality")
+    }
+
+    @MainActor
     func testAppViewModelConnectUnsupportedNodePreservesRunningLocalProxy() throws {
         let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
         let controller = RecordingLocalProxyController(endpoint: endpoint)

@@ -45,9 +45,7 @@ final class MacOSLocalProxyController: LocalProxyControlling {
     }
 
     func start(node: ProxyNode, credential: String, realmCredential: String?) throws -> LocalProxyEndpoint {
-        guard (node.protocolType == .shadowsocks && node.transport == .tcp)
-            || (node.protocolType == .hysteria2 && node.transport == .quic)
-            || (node.protocolType == .trojan && node.transport == .tcp) else {
+        guard Self.isSupportedLocalProxyNode(node) else {
             throw LocalProxyError.unavailable
         }
         stopListeners()
@@ -65,6 +63,24 @@ final class MacOSLocalProxyController: LocalProxyControlling {
 
     func stop() throws {
         stopListeners()
+    }
+
+    private static func isSupportedLocalProxyNode(_ node: ProxyNode) -> Bool {
+        switch node.protocolType {
+        case .shadowsocks:
+            return node.transport == .tcp
+        case .hysteria2:
+            return node.transport == .quic
+        case .trojan:
+            return node.transport == .tcp
+        case .vless:
+            return node.transport == .tcp
+                && node.tls.enabled
+                && node.tls.fingerprint == nil
+                && node.tls.reality == nil
+        default:
+            return false
+        }
     }
 
     private func makeListenerSocket(port: Int) throws -> Int32 {
@@ -196,6 +212,8 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             try openShadowsocksOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
         case .trojan:
             try openTrojanOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
+        case .vless:
+            try openVLESSOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
         case .hysteria2:
             try openHysteria2OutboundAndRelay(client: client, destination: destination, node: node, credential: credential, realmCredential: realmCredential, sendSuccess: sendSuccess)
         default:
@@ -256,7 +274,25 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             fingerprint: node.tls.fingerprint,
             reality: node.tls.reality
         )
-        let stream = try MacOSTLSByteStream(host: node.serverHost, port: node.serverPort, tls: tls, initialPayload: request.openBytes)
+        try openTLSOutboundAndRelay(client: client, node: node, tls: tls, initialPayload: request.openBytes, sendSuccess: sendSuccess)
+    }
+
+    private func openVLESSOutboundAndRelay(client: Int32, destination: ProxyDestination, node: ProxyNode, credential: String, sendSuccess: () throws -> Void) throws {
+        let serverName = node.tls.serverName ?? node.serverHost
+        let request = try VLESSOpenRequest(userID: credential, destination: destination)
+        let tls = TLSOptions(
+            enabled: true,
+            serverName: serverName,
+            allowInsecure: node.tls.allowInsecure,
+            alpn: node.tls.alpn,
+            fingerprint: node.tls.fingerprint,
+            reality: node.tls.reality
+        )
+        try openTLSOutboundAndRelay(client: client, node: node, tls: tls, initialPayload: request.openBytes, sendSuccess: sendSuccess)
+    }
+
+    private func openTLSOutboundAndRelay(client: Int32, node: ProxyNode, tls: TLSOptions, initialPayload: Data, sendSuccess: () throws -> Void) throws {
+        let stream = try MacOSTLSByteStream(host: node.serverHost, port: node.serverPort, tls: tls, initialPayload: initialPayload)
         try runAsync { try await stream.start() }
         do {
             try sendSuccess()
