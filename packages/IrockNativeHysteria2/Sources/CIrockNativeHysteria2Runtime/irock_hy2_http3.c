@@ -125,6 +125,51 @@ irock_hy2_result irock_hy2_session_copy_http3_state_for_testing(irock_hy2_sessio
   return IROCK_HY2_OK;
 }
 
+static int irock_hy2_http3_stream_opened(struct irock_hy2_session *session, int64_t stream_id) {
+  for (int index = 0; index < session->http3_open_stream_count; index++) {
+    if (session->http3_open_stream_ids[index] == stream_id) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static irock_hy2_result irock_hy2_http3_open_quic_stream_if_needed(struct irock_hy2_session *session, int64_t stream_id) {
+  if (irock_hy2_http3_stream_opened(session, stream_id)) {
+    return IROCK_HY2_OK;
+  }
+  if (session->http3_open_stream_count >= (int)(sizeof(session->http3_open_stream_ids) / sizeof(session->http3_open_stream_ids[0]))) {
+    return IROCK_HY2_NETWORK_FAILED;
+  }
+
+  while (!irock_hy2_http3_stream_opened(session, stream_id)) {
+    int64_t opened_stream_id = -1;
+    int open_result;
+    if ((stream_id & 0x02) != 0) {
+      open_result = ngtcp2_conn_open_uni_stream(session->quic_conn, &opened_stream_id, 0);
+    } else {
+      open_result = ngtcp2_conn_open_bidi_stream(session->quic_conn, &opened_stream_id, 0);
+    }
+    if (open_result == NGTCP2_ERR_INVALID_STATE || open_result == NGTCP2_ERR_STREAM_ID_BLOCKED) {
+      return IROCK_HY2_BLOCKED;
+    }
+    if (open_result != 0) {
+      irock_hy2_set_last_error_for_testing("http3_open_stream", open_result);
+      return IROCK_HY2_NETWORK_FAILED;
+    }
+    if ((opened_stream_id & 0x03) != (stream_id & 0x03) || opened_stream_id > stream_id) {
+      irock_hy2_set_last_error_for_testing("http3_stream_mismatch", (int)opened_stream_id);
+      return IROCK_HY2_NETWORK_FAILED;
+    }
+    if (session->http3_open_stream_count >= (int)(sizeof(session->http3_open_stream_ids) / sizeof(session->http3_open_stream_ids[0]))) {
+      return IROCK_HY2_NETWORK_FAILED;
+    }
+    session->http3_open_stream_ids[session->http3_open_stream_count] = opened_stream_id;
+    session->http3_open_stream_count++;
+  }
+  return IROCK_HY2_OK;
+}
+
 static nghttp3_nv irock_hy2_header(const char *name, const char *value, uint8_t flags) {
   nghttp3_nv header;
   header.name = (const uint8_t *)name;
@@ -160,7 +205,7 @@ irock_hy2_result irock_hy2_session_submit_http3_auth_for_testing(irock_hy2_sessi
     irock_hy2_header(":method", "POST", NGHTTP3_NV_FLAG_NONE),
     irock_hy2_header(":scheme", "https", NGHTTP3_NV_FLAG_NONE),
     irock_hy2_header(":path", "/auth", NGHTTP3_NV_FLAG_NONE),
-    irock_hy2_header(":authority", hy2_session->server_name, NGHTTP3_NV_FLAG_NONE),
+    irock_hy2_header(":authority", "hysteria", NGHTTP3_NV_FLAG_NONE),
     irock_hy2_header("hysteria-auth", authentication, NGHTTP3_NV_FLAG_NEVER_INDEX),
     irock_hy2_header("hysteria-cc-rx", receive_mbps_text, NGHTTP3_NV_FLAG_NONE)
   };
@@ -279,12 +324,21 @@ irock_hy2_result irock_hy2_session_write_next_http3_for_testing(irock_hy2_sessio
   int fin = 0;
   int64_t local_stream_id = -1;
   nghttp3_ssize http3_vector_count = nghttp3_conn_writev_stream(hy2_session->http3_conn, &local_stream_id, &fin, http3_vectors, sizeof(http3_vectors) / sizeof(http3_vectors[0]));
-  if (http3_vector_count < 0 || local_stream_id < 0) {
+  if (http3_vector_count < 0) {
+    irock_hy2_set_last_error_for_testing("http3_write", (int)http3_vector_count);
     return IROCK_HY2_NETWORK_FAILED;
+  }
+  if (http3_vector_count == 0 || local_stream_id < 0) {
+    return IROCK_HY2_BLOCKED;
   }
   *stream_id = local_stream_id;
   if (!ngtcp2_conn_get_handshake_completed(hy2_session->quic_conn)) {
     return IROCK_HY2_BLOCKED;
+  }
+
+  irock_hy2_result open_result = irock_hy2_http3_open_quic_stream_if_needed(hy2_session, local_stream_id);
+  if (open_result != IROCK_HY2_OK) {
+    return open_result;
   }
 
   ngtcp2_vec quic_vectors[16];
@@ -320,7 +374,12 @@ irock_hy2_result irock_hy2_session_write_next_http3_for_testing(irock_hy2_sessio
   if (packet_length == 0 || accepted_length == 0 || packet_length == NGTCP2_ERR_INVALID_STATE || packet_length == NGTCP2_ERR_STREAM_DATA_BLOCKED) {
     return IROCK_HY2_BLOCKED;
   }
-  if (packet_length < 0 || accepted_length < 0) {
+  if (packet_length < 0) {
+    irock_hy2_set_last_error_for_testing("http3_quic_write", (int)packet_length);
+    return IROCK_HY2_NETWORK_FAILED;
+  }
+  if (accepted_length < 0) {
+    irock_hy2_set_last_error_for_testing("http3_quic_accept", (int)accepted_length);
     return IROCK_HY2_NETWORK_FAILED;
   }
 
@@ -381,17 +440,24 @@ irock_hy2_result irock_hy2_session_run_http3_auth_for_testing(irock_hy2_session_
     }
     if (poll_result == 0 || !(poll_fd.revents & POLLIN)) {
       *auth_status = hy2_session->auth_status;
-      return hy2_session->auth_status == 233 ? IROCK_HY2_OK : IROCK_HY2_BLOCKED;
+      if (hy2_session->auth_status == 233) {
+        return IROCK_HY2_OK;
+      }
+      continue;
     }
 
     int step_packets_read = 0;
     irock_hy2_result read_result = irock_hy2_session_receive_quic_for_testing(session, &step_packets_read);
+    if (read_result != IROCK_HY2_OK && read_result != IROCK_HY2_BLOCKED) {
+      irock_hy2_set_last_error_for_testing("http3_quic_read", read_result);
+    }
     *packets_read += step_packets_read;
     *auth_status = hy2_session->auth_status;
     if (hy2_session->auth_status == 233) {
       return IROCK_HY2_OK;
     }
     if (hy2_session->auth_status != 0) {
+      irock_hy2_set_last_error_for_testing("http3_status", hy2_session->auth_status);
       return IROCK_HY2_AUTH_FAILED;
     }
     if (read_result != IROCK_HY2_OK) {

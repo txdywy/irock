@@ -21,6 +21,9 @@ static struct irock_hy2_stream *irock_hy2_create_stream(struct irock_hy2_session
   stream->read_buffer = 0;
   stream->read_buffer_length = 0;
   stream->read_buffer_capacity = 0;
+  stream->write_buffer = 0;
+  stream->write_buffer_length = 0;
+  stream->write_buffer_sent = 0;
   stream->read_closed = 0;
   stream->next = 0;
   return stream;

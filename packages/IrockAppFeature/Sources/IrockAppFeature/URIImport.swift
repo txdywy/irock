@@ -38,7 +38,7 @@ public enum URIImport {
             return URIImportResult(protocolType: .vless, originalText: text)
         case "trojan":
             return URIImportResult(protocolType: .trojan, originalText: text)
-        case "hysteria2", "hy2":
+        case "hysteria2", "hy2", "realm":
             return URIImportResult(protocolType: .hysteria2, originalText: text)
         case "tuic":
             return URIImportResult(protocolType: .tuic, originalText: text)
@@ -57,7 +57,7 @@ public enum URIImport {
         case "vmess": return try parseVMessDraft(uriText)
         case "vless": return try parseVLESSDraft(uriText)
         case "trojan": return try parseTrojanDraft(uriText)
-        case "hysteria2", "hy2": return try parseHysteria2Draft(uriText)
+        case "hysteria2", "hy2", "realm": return try parseHysteria2Draft(uriText)
         case "tuic": return try parseTUICDraft(uriText)
         default: throw URIImportError.unsupportedScheme(scheme)
         }
@@ -196,7 +196,7 @@ public enum URIImport {
 
     private static func parseHysteria2Draft(_ text: String) throws -> NodeDraft {
         let components = try components(text)
-        guard components.scheme?.lowercased() == "hysteria2" || components.scheme?.lowercased() == "hy2" else {
+        guard ["hysteria2", "hy2", "realm"].contains(components.scheme?.lowercased() ?? "") else {
             throw URIImportError.unsupportedScheme(components.scheme ?? "")
         }
         let credential = try requiredUserInfo(components)
@@ -216,7 +216,7 @@ public enum URIImport {
             tlsAllowInsecure: query["insecure"] == "1",
             tlsALPN: splitList(query["alpn"]),
             tlsFingerprint: query["pinSHA256"],
-            hysteria2Realm: try query["realm"].map(parseRealm)
+            hysteria2Realm: try query["realm"].flatMap(parseRealmOption)
         )
     }
 
@@ -239,6 +239,13 @@ public enum URIImport {
             udpEnabled: true,
             tlsALPN: splitList(query["alpn"])
         )
+    }
+
+    private static func parseRealmOption(_ text: String) throws -> Hysteria2RealmDraft? {
+        if text == "1" || text.lowercased() == "true" {
+            return nil
+        }
+        return try parseRealm(text)
     }
 
     private static func parseRealm(_ text: String) throws -> Hysteria2RealmDraft {
@@ -266,7 +273,7 @@ public enum URIImport {
 
     private static func extractSupportedURI(from text: String) throws -> String {
         let compact = text.split(whereSeparator: \.isWhitespace).joined()
-        for scheme in ["hysteria2", "vmess", "vless", "trojan", "tuic", "hy2", "ss"] {
+        for scheme in ["hysteria2", "vmess", "vless", "trojan", "tuic", "realm", "hy2", "ss"] {
             if let range = compact.range(of: "\(scheme)://", options: .caseInsensitive) {
                 let candidate = String(compact[range.lowerBound...].prefix { $0.isASCII && !$0.isWhitespace })
                 return String(candidate.split(separator: "，", maxSplits: 1, omittingEmptySubsequences: false)[0])

@@ -22,6 +22,7 @@ typedef struct irock_hy2_client_config {
   const char *server_name;
   const char *alpn;
   int allow_insecure;
+  const char *certificate_pin_sha256;
 } irock_hy2_client_config;
 
 typedef void *irock_hy2_session_ref;
@@ -30,6 +31,10 @@ typedef void *irock_hy2_stream_ref;
 irock_hy2_result irock_hy2_connect(const irock_hy2_client_config *config, const char *authentication, irock_hy2_session_ref *session);
 
 irock_hy2_result irock_hy2_connect_with_connected_udp_socket(const irock_hy2_client_config *config, const char *authentication, int udp_fd, int remote_port, irock_hy2_session_ref *session);
+
+void irock_hy2_set_last_error_for_testing(const char *stage, int code);
+
+int irock_hy2_copy_last_error_for_testing(char *stage_buffer, int stage_buffer_length, int *code);
 
 irock_hy2_result irock_hy2_session_create_for_testing(int authenticated, irock_hy2_session_ref *session);
 
@@ -44,6 +49,8 @@ irock_hy2_result irock_hy2_session_copy_config_for_testing(
   int server_name_buffer_length,
   char *alpn_buffer,
   int alpn_buffer_length,
+  char *certificate_pin_buffer,
+  int certificate_pin_buffer_length,
   int *allow_insecure,
   int *authentication_stored
 );
@@ -57,6 +64,11 @@ irock_hy2_result irock_hy2_session_copy_tls_state_for_testing(
   int *has_crypto_context,
   int *client_session_configured
 );
+
+// Validate base64(SHA256(DER certificate)) against a Hysteria2 pin.
+irock_hy2_result irock_hy2_validate_certificate_pin_for_testing(const uint8_t *certificate_bytes, int certificate_byte_count, const char *certificate_pin_sha256);
+
+irock_hy2_result irock_hy2_session_validate_peer_certificate_pin_for_testing(irock_hy2_session_ref session);
 
 irock_hy2_result irock_hy2_session_initialize_udp_for_testing(irock_hy2_session_ref session);
 

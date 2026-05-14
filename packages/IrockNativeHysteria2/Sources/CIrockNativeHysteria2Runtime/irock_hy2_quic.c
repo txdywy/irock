@@ -198,7 +198,11 @@ irock_hy2_result irock_hy2_session_write_quic_initial_for_testing(irock_hy2_sess
   ngtcp2_pkt_info packet_info;
   memset(&packet_info, 0, sizeof(packet_info));
   ngtcp2_ssize packet_length = ngtcp2_conn_write_pkt(hy2_session->quic_conn, &path_storage.path, &packet_info, packet, sizeof(packet), irock_hy2_timestamp());
-  if (packet_length <= 0) {
+  if (packet_length == 0) {
+    return IROCK_HY2_BLOCKED;
+  }
+  if (packet_length < 0) {
+    irock_hy2_set_last_error_for_testing("quic_write", (int)packet_length);
     return IROCK_HY2_NETWORK_FAILED;
   }
 
@@ -247,6 +251,7 @@ irock_hy2_result irock_hy2_session_receive_quic_for_testing(irock_hy2_session_re
   memset(&packet_info, 0, sizeof(packet_info));
   int result = ngtcp2_conn_read_pkt(hy2_session->quic_conn, &path_storage.path, &packet_info, packet, (size_t)received_length, irock_hy2_timestamp());
   if (result != 0) {
+    irock_hy2_set_last_error_for_testing("quic_read", result);
     return IROCK_HY2_NETWORK_FAILED;
   }
 
@@ -346,7 +351,7 @@ irock_hy2_result irock_hy2_session_run_quic_handshake_until_blocked_for_testing(
   for (int step = 0; step < max_steps; step++) {
     int step_bytes_written = 0;
     irock_hy2_result write_result = irock_hy2_session_write_quic_initial_for_testing(session, &step_bytes_written);
-    if (write_result != IROCK_HY2_OK) {
+    if (write_result != IROCK_HY2_OK && write_result != IROCK_HY2_BLOCKED) {
       return write_result;
     }
     *bytes_written += step_bytes_written;
@@ -360,7 +365,7 @@ irock_hy2_result irock_hy2_session_run_quic_handshake_until_blocked_for_testing(
       return IROCK_HY2_NETWORK_FAILED;
     }
     if (poll_result == 0 || !(poll_fd.revents & POLLIN)) {
-      return IROCK_HY2_BLOCKED;
+      continue;
     }
 
     int step_packets_read = 0;
@@ -368,7 +373,7 @@ irock_hy2_result irock_hy2_session_run_quic_handshake_until_blocked_for_testing(
     *packets_read += step_packets_read;
     *handshake_completed = ngtcp2_conn_get_handshake_completed(hy2_session->quic_conn) ? 1 : 0;
     if (*handshake_completed) {
-      return IROCK_HY2_OK;
+      return irock_hy2_session_validate_peer_certificate_pin_for_testing(session);
     }
     if (read_result != IROCK_HY2_OK) {
       return read_result;

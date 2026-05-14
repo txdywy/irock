@@ -38,9 +38,10 @@ public struct NativeHysteria2ClientConfiguration: Equatable, Sendable {
     public let serverName: String
     public let alpn: [String]
     public let allowInsecure: Bool
+    public let certificatePinSHA256: String?
     public let connectedUDPPath: NativeHysteria2ConnectedUDPPath?
 
-    public init(serverHost: String, serverPort: Int, serverName: String? = nil, alpn: [String] = ["h3"], allowInsecure: Bool = false, connectedUDPPath: NativeHysteria2ConnectedUDPPath? = nil) throws {
+    public init(serverHost: String, serverPort: Int, serverName: String? = nil, alpn: [String] = ["h3"], allowInsecure: Bool = false, certificatePinSHA256: String? = nil, connectedUDPPath: NativeHysteria2ConnectedUDPPath? = nil) throws {
         let trimmedHost = serverHost.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedHost.isEmpty else {
             throw NativeHysteria2Error.invalidConfiguration("missing server host")
@@ -59,8 +60,10 @@ public struct NativeHysteria2ClientConfiguration: Equatable, Sendable {
         self.serverHost = trimmedHost
         self.serverPort = serverPort
         self.serverName = resolvedServerName
+        let resolvedCertificatePin = certificatePinSHA256?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.alpn = resolvedALPN
         self.allowInsecure = allowInsecure
+        self.certificatePinSHA256 = resolvedCertificatePin?.isEmpty == false ? resolvedCertificatePin : nil
         self.connectedUDPPath = connectedUDPPath
     }
 }
@@ -248,10 +251,15 @@ public struct NativeHysteria2RealmResolver: Sendable {
         return (0..<byteCount).map { _ in String(format: "%02x", UInt8.random(in: .min ... .max, using: &generator)) }.joined()
     }
 
-    private static func bindUDPSocket(localPort: Int?) throws -> Int32 {
+    static func bindUDPSocket(localPort: Int?) throws -> Int32 {
         let fd = Darwin.socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
         guard fd >= 0 else {
             throw NativeHysteria2Error.networkFailed("realm udp socket failed")
+        }
+        let flags = Darwin.fcntl(fd, F_GETFL, 0)
+        guard flags >= 0, Darwin.fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else {
+            Darwin.close(fd)
+            throw NativeHysteria2Error.networkFailed("realm udp nonblocking failed")
         }
         if let localPort {
             var address = sockaddr_in()
@@ -508,18 +516,34 @@ public enum NativeHysteria2Error: Error, Equatable, CustomStringConvertible, Sen
 
     public var description: String {
         switch self {
-        case .invalidConfiguration:
-            return "Invalid native Hysteria2 configuration"
-        case .authenticationFailed:
-            return "Native Hysteria2 authentication failed"
-        case .networkFailed:
-            return "Native Hysteria2 network failed"
-        case .blocked:
-            return "Native Hysteria2 operation blocked"
-        case .unsupportedRuntime:
-            return "Native Hysteria2 runtime unavailable"
+        case .invalidConfiguration(let message):
+            return safeDescription(prefix: "Invalid native Hysteria2 configuration", message: message)
+        case .authenticationFailed(let message):
+            return safeDescription(prefix: "Native Hysteria2 authentication failed", message: message)
+        case .networkFailed(let message):
+            return safeDescription(prefix: "Native Hysteria2 network failed", message: message)
+        case .blocked(let message):
+            return safeDescription(prefix: "Native Hysteria2 operation blocked", message: message)
+        case .unsupportedRuntime(let message):
+            return safeDescription(prefix: "Native Hysteria2 runtime unavailable", message: message)
         }
     }
+
+    private func safeDescription(prefix: String, message: String) -> String {
+        guard message.hasPrefix("native hysteria2 "), let suffixStart = message.firstIndex(of: "(") else {
+            return prefix
+        }
+        return "\(prefix) \(message[suffixStart...])"
+    }
+}
+
+private func nativeHysteria2DiagnosticMessage(_ base: String) -> String {
+    var stage = [CChar](repeating: 0, count: 32)
+    var code: Int32 = 0
+    if irock_hy2_copy_last_error_for_testing(&stage, Int32(stage.count), &code) == 1 {
+        return "\(base) (\(String(cString: stage)): \(code))"
+    }
+    return base
 }
 
 public enum NativeHysteria2Runtime {
@@ -547,18 +571,21 @@ public struct NativeHysteria2Client: Sendable {
         let result = configuration.serverHost.withCString { serverHost in
             configuration.serverName.withCString { serverName in
                 configuration.alpn.joined(separator: ",").withCString { alpn in
-                    trimmedAuthentication.withCString { authentication in
-                        var nativeConfiguration = irock_hy2_client_config(
-                            server_host: serverHost,
-                            server_port: UInt16(configuration.serverPort),
-                            server_name: serverName,
-                            alpn: alpn,
-                            allow_insecure: configuration.allowInsecure ? 1 : 0
-                        )
-                        if let connectedUDPPath = configuration.connectedUDPPath {
-                            return irock_hy2_connect_with_connected_udp_socket(&nativeConfiguration, authentication, connectedUDPPath.fileDescriptor, Int32(connectedUDPPath.remotePort), &session)
+                    (configuration.certificatePinSHA256 ?? "").withCString { certificatePin in
+                        trimmedAuthentication.withCString { authentication in
+                            var nativeConfiguration = irock_hy2_client_config(
+                                server_host: serverHost,
+                                server_port: UInt16(configuration.serverPort),
+                                server_name: serverName,
+                                alpn: alpn,
+                                allow_insecure: configuration.allowInsecure ? 1 : 0,
+                                certificate_pin_sha256: certificatePin
+                            )
+                            if let connectedUDPPath = configuration.connectedUDPPath {
+                                return irock_hy2_connect_with_connected_udp_socket(&nativeConfiguration, authentication, connectedUDPPath.fileDescriptor, Int32(connectedUDPPath.remotePort), &session)
+                            }
+                            return irock_hy2_connect(&nativeConfiguration, authentication, &session)
                         }
-                        return irock_hy2_connect(&nativeConfiguration, authentication, &session)
                     }
                 }
             }
@@ -572,9 +599,9 @@ public struct NativeHysteria2Client: Sendable {
         case IROCK_HY2_INVALID_CONFIGURATION:
             throw NativeHysteria2Error.invalidConfiguration("native hysteria2 configuration rejected")
         case IROCK_HY2_AUTH_FAILED:
-            throw NativeHysteria2Error.authenticationFailed("native hysteria2 authentication rejected")
+            throw NativeHysteria2Error.authenticationFailed(nativeHysteria2DiagnosticMessage("native hysteria2 authentication rejected"))
         case IROCK_HY2_NETWORK_FAILED:
-            throw NativeHysteria2Error.networkFailed("native hysteria2 connect network failed")
+            throw NativeHysteria2Error.networkFailed(nativeHysteria2DiagnosticMessage("native hysteria2 connect network failed"))
         case IROCK_HY2_BLOCKED:
             throw NativeHysteria2Error.blocked("native hysteria2 connect blocked")
         case IROCK_HY2_UNSUPPORTED:
@@ -648,6 +675,7 @@ public final class NativeHysteria2Session: @unchecked Sendable {
 final class NativeHysteria2NativeByteStream: NativeHysteria2ByteStream, @unchecked Sendable {
     private let nativeStream: irock_hy2_stream_ref
     private let session: NativeHysteria2Session
+    private var didDrainTCPResponse = false
 
     init(nativeStream: irock_hy2_stream_ref, session: NativeHysteria2Session) {
         self.nativeStream = nativeStream
@@ -664,6 +692,55 @@ final class NativeHysteria2NativeByteStream: NativeHysteria2ByteStream, @uncheck
         guard maxLength > 0 else {
             throw NativeHysteria2Error.invalidConfiguration("invalid stream read length")
         }
+        try await drainSuccessfulTCPResponse()
+        return try await readRaw(maxLength: maxLength)
+    }
+
+    func drainSuccessfulTCPResponse() async throws {
+        guard !didDrainTCPResponse else { return }
+        let status = try await readTCPResponseBytes(1)[0]
+        let messageLength = try await readQUICVariableInteger()
+        _ = try await readTCPResponseBytes(messageLength)
+        let paddingLength = try await readQUICVariableInteger()
+        _ = try await readTCPResponseBytes(paddingLength)
+        guard status == 0 else {
+            throw NativeHysteria2Error.networkFailed("native hysteria2 tcp stream rejected")
+        }
+        didDrainTCPResponse = true
+    }
+
+    private func readTCPResponseBytes(_ count: Int) async throws -> Data {
+        var data = Data()
+        while data.count < count {
+            guard let chunk = try await readRaw(maxLength: count - data.count), !chunk.isEmpty else {
+                throw NativeHysteria2Error.networkFailed("native hysteria2 tcp stream closed")
+            }
+            data.append(chunk)
+        }
+        return data
+    }
+
+    private func readQUICVariableInteger() async throws -> Int {
+        let first = try await readTCPResponseBytes(1)[0]
+        let prefix = first >> 6
+        let byteCount: Int
+        switch prefix {
+        case 0: byteCount = 1
+        case 1: byteCount = 2
+        case 2: byteCount = 4
+        default: byteCount = 8
+        }
+        var value = Int(first & 0x3f)
+        if byteCount > 1 {
+            let remaining = try await readTCPResponseBytes(byteCount - 1)
+            for byte in remaining {
+                value = (value << 8) | Int(byte)
+            }
+        }
+        return value
+    }
+
+    private func readRaw(maxLength: Int) async throws -> Data? {
         while true {
             var buffer = [UInt8](repeating: 0, count: maxLength)
             var bytesRead: Int32 = 0
@@ -691,26 +768,29 @@ final class NativeHysteria2NativeByteStream: NativeHysteria2ByteStream, @uncheck
     }
 
     func write(_ data: Data) async throws {
-        let result = session.withNativeSessionLock {
-            data.withUnsafeBytes { rawBuffer in
-                irock_hy2_stream_write(nativeStream, rawBuffer.bindMemory(to: UInt8.self).baseAddress, Int32(data.count))
+        while true {
+            let result = session.withNativeSessionLock {
+                data.withUnsafeBytes { rawBuffer in
+                    irock_hy2_stream_write(nativeStream, rawBuffer.bindMemory(to: UInt8.self).baseAddress, Int32(data.count))
+                }
             }
-        }
-        switch result {
-        case IROCK_HY2_OK:
-            return
-        case IROCK_HY2_INVALID_CONFIGURATION:
-            throw NativeHysteria2Error.invalidConfiguration("native hysteria2 stream write rejected")
-        case IROCK_HY2_AUTH_FAILED:
-            throw NativeHysteria2Error.authenticationFailed("native hysteria2 stream write authentication failed")
-        case IROCK_HY2_NETWORK_FAILED:
-            throw NativeHysteria2Error.networkFailed("native hysteria2 stream write network failed")
-        case IROCK_HY2_BLOCKED:
-            throw NativeHysteria2Error.blocked("native hysteria2 stream write blocked")
-        case IROCK_HY2_UNSUPPORTED:
-            throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream write returned unsupported")
-        default:
-            throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream write failed")
+            switch result {
+            case IROCK_HY2_OK:
+                return
+            case IROCK_HY2_INVALID_CONFIGURATION:
+                throw NativeHysteria2Error.invalidConfiguration("native hysteria2 stream write rejected")
+            case IROCK_HY2_AUTH_FAILED:
+                throw NativeHysteria2Error.authenticationFailed("native hysteria2 stream write authentication failed")
+            case IROCK_HY2_NETWORK_FAILED:
+                throw NativeHysteria2Error.networkFailed("native hysteria2 stream write network failed")
+            case IROCK_HY2_BLOCKED:
+                session.receivePendingPacketsForStreamRead()
+                try await Task.sleep(nanoseconds: 1_000_000)
+            case IROCK_HY2_UNSUPPORTED:
+                throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream write returned unsupported")
+            default:
+                throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream write failed")
+            }
         }
     }
 

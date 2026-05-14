@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import XCTest
@@ -20,6 +21,16 @@ final class IrockNativeHysteria2Tests: XCTestCase {
         XCTAssertEqual(configuration.serverName, "hy2.example.com")
         XCTAssertEqual(configuration.alpn, ["h3"])
         XCTAssertFalse(configuration.allowInsecure)
+    }
+
+    func testClientConfigurationNormalizesCertificatePin() throws {
+        let configuration = try NativeHysteria2ClientConfiguration(
+            serverHost: "hy2.example.com",
+            serverPort: 443,
+            certificatePinSHA256: " wk99051vp+rw+g5xdvxqmhwyuy90hcrcbm+xjj/tg1o= "
+        )
+
+        XCTAssertEqual(configuration.certificatePinSHA256, "wk99051vp+rw+g5xdvxqmhwyuy90hcrcbm+xjj/tg1o=")
     }
 
     func testClientConfigurationRejectsInvalidEndpointBeforeRuntimeStarts() {
@@ -56,7 +67,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &session), IROCK_HY2_OK)
                     }
@@ -102,6 +114,16 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                 XCTFail("Unexpected error: \(error)")
             }
         }
+    }
+
+    func testRealmUDPSocketBinderCreatesNonBlockingSocket() throws {
+        let fd = try NativeHysteria2RealmResolver.bindUDPSocket(localPort: nil)
+        defer { Darwin.close(fd) }
+
+        let flags = Darwin.fcntl(fd, F_GETFL, 0)
+
+        XCTAssertNotEqual(flags, -1)
+        XCTAssertNotEqual(flags & O_NONBLOCK, 0)
     }
 
     func testRealmPunchPacketEncoderMatchesUpstreamFormat() throws {
@@ -201,7 +223,7 @@ final class IrockNativeHysteria2Tests: XCTestCase {
             _ = try await client.connect(authentication: "secret-password")
             XCTFail("Expected native network failure")
         } catch let error as NativeHysteria2Error {
-            XCTAssertEqual(error, .networkFailed("native hysteria2 connect network failed"))
+            XCTAssertEqual(error, .networkFailed("native hysteria2 connect network failed (quic_handshake: 4)"))
             XCTAssertFalse(error.description.contains("secret-password"))
             XCTAssertFalse(error.description.contains("ngtcp2/nghttp3 event loop is not wired"))
         } catch {
@@ -233,7 +255,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                         server_port: 443,
                         server_name: serverName,
                         alpn: alpn,
-                        allow_insecure: 0
+                        allow_insecure: 0,
+                        certificate_pin_sha256: nil
                     )
 
                     XCTAssertEqual(irock_hy2_connect(&configuration, "", &session), IROCK_HY2_INVALID_CONFIGURATION)
@@ -266,7 +289,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(
@@ -293,7 +317,7 @@ final class IrockNativeHysteria2Tests: XCTestCase {
 
         XCTAssertEqual(String(cString: method), "POST")
         XCTAssertEqual(String(cString: path), "/auth")
-        XCTAssertEqual(String(cString: authority), "hysteria.example.com")
+        XCTAssertEqual(String(cString: authority), "hysteria")
         XCTAssertEqual(authPresent, 1)
         XCTAssertEqual(authLength, Int32("secret-password".utf8.count))
         XCTAssertEqual(receiveMbps, 250)
@@ -316,7 +340,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(
@@ -349,16 +374,19 @@ final class IrockNativeHysteria2Tests: XCTestCase {
         " hy2.example.com ".withCString { serverHost in
             " hysteria.example.com ".withCString { serverName in
                 " h3 ".withCString { alpn in
-                    "secret-password".withCString { authentication in
-                        var configuration = irock_hy2_client_config(
-                            server_host: serverHost,
-                            server_port: 443,
-                            server_name: serverName,
-                            alpn: alpn,
-                            allow_insecure: 1
-                        )
+                    " wk99051vp+rw+g5xdvxqmhwyuy90hcrcbm+xjj/tg1o= ".withCString { certificatePin in
+                        "secret-password".withCString { authentication in
+                            var configuration = irock_hy2_client_config(
+                                server_host: serverHost,
+                                server_port: 443,
+                                server_name: serverName,
+                                alpn: alpn,
+                                allow_insecure: 1,
+                                certificate_pin_sha256: certificatePin
+                            )
 
-                        XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 1, &nativeSession), IROCK_HY2_OK)
+                            XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 1, &nativeSession), IROCK_HY2_OK)
+                        }
                     }
                 }
             }
@@ -368,6 +396,7 @@ final class IrockNativeHysteria2Tests: XCTestCase {
         var host = [CChar](repeating: 0, count: 128)
         var serverName = [CChar](repeating: 0, count: 128)
         var alpn = [CChar](repeating: 0, count: 32)
+        var certificatePin = [CChar](repeating: 0, count: 128)
         var port: Int32 = 0
         var allowInsecure: Int32 = 0
         var authenticationStored: Int32 = 1
@@ -381,6 +410,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                 Int32(serverName.count),
                 &alpn,
                 Int32(alpn.count),
+                &certificatePin,
+                Int32(certificatePin.count),
                 &allowInsecure,
                 &authenticationStored
             ),
@@ -391,11 +422,35 @@ final class IrockNativeHysteria2Tests: XCTestCase {
         XCTAssertEqual(port, 443)
         XCTAssertEqual(String(cString: serverName), "hysteria.example.com")
         XCTAssertEqual(String(cString: alpn), "h3")
+        XCTAssertEqual(String(cString: certificatePin), "wk99051vp+rw+g5xdvxqmhwyuy90hcrcbm+xjj/tg1o=")
         XCTAssertEqual(allowInsecure, 1)
         XCTAssertEqual(authenticationStored, 0)
         XCTAssertFalse(String(cString: host).contains("secret-password"))
         XCTAssertFalse(String(cString: serverName).contains("secret-password"))
         XCTAssertFalse(String(cString: alpn).contains("secret-password"))
+    }
+
+    func testNativeCertificatePinValidationMatchesSHA256Base64Digest() {
+        let certificate = Data([0, 1, 2, 3, 4, 5])
+        let pin = Data(SHA256.hash(data: certificate)).base64EncodedString()
+        let result = certificate.withUnsafeBytes { bytes in
+            pin.withCString { pinPointer in
+                irock_hy2_validate_certificate_pin_for_testing(bytes.bindMemory(to: UInt8.self).baseAddress, Int32(certificate.count), pinPointer)
+            }
+        }
+
+        XCTAssertEqual(result, IROCK_HY2_OK)
+    }
+
+    func testNativeCertificatePinValidationRejectsMismatchedDigest() {
+        let certificate = Data([0, 1, 2, 3, 4, 5])
+        let result = certificate.withUnsafeBytes { bytes in
+            "not-the-right-pin".withCString { pinPointer in
+                irock_hy2_validate_certificate_pin_for_testing(bytes.bindMemory(to: UInt8.self).baseAddress, Int32(certificate.count), pinPointer)
+            }
+        }
+
+        XCTAssertEqual(result, IROCK_HY2_AUTH_FAILED)
     }
 
     func testNativeSessionInitializesOpenSSLQUICClientState() {
@@ -409,7 +464,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &nativeSession), IROCK_HY2_OK)
@@ -442,7 +498,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &nativeSession), IROCK_HY2_OK)
@@ -471,7 +528,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &nativeSession), IROCK_HY2_OK)
@@ -504,7 +562,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &nativeSession), IROCK_HY2_OK)
@@ -533,7 +592,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &nativeSession), IROCK_HY2_OK)
@@ -563,7 +623,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &nativeSession), IROCK_HY2_OK)
@@ -589,6 +650,41 @@ final class IrockNativeHysteria2Tests: XCTestCase {
         XCTAssertEqual(authenticationStored, 0)
     }
 
+    func testNativeSessionOpensQUICBidiStreamForHTTP3AuthRequest() {
+        var nativeSession: irock_hy2_session_ref?
+        "127.0.0.1".withCString { serverHost in
+            "hysteria.example.com".withCString { serverName in
+                "h3".withCString { alpn in
+                    "secret-password".withCString { authentication in
+                        var configuration = irock_hy2_client_config(
+                            server_host: serverHost,
+                            server_port: 443,
+                            server_name: serverName,
+                            alpn: alpn,
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
+                        )
+
+                        XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &nativeSession), IROCK_HY2_OK)
+                    }
+                }
+            }
+        }
+        defer { irock_hy2_session_free(nativeSession) }
+
+        XCTAssertEqual(irock_hy2_session_initialize_udp_for_testing(nativeSession), IROCK_HY2_OK)
+        XCTAssertEqual(irock_hy2_session_initialize_tls_for_testing(nativeSession), IROCK_HY2_OK)
+        XCTAssertEqual(irock_hy2_session_initialize_quic_for_testing(nativeSession), IROCK_HY2_OK)
+        XCTAssertEqual(irock_hy2_session_initialize_http3_for_testing(nativeSession), IROCK_HY2_OK)
+        "secret-password".withCString { authentication in
+            XCTAssertEqual(irock_hy2_session_submit_http3_auth_for_testing(nativeSession, authentication, 250), IROCK_HY2_OK)
+        }
+
+        var nativeStream: irock_hy2_stream_ref?
+        XCTAssertEqual(irock_hy2_session_create_tcp_stream_for_testing(nativeSession, 0, &nativeStream), IROCK_HY2_OK)
+        irock_hy2_stream_free(nativeStream)
+    }
+
     func testNativeSessionProducesHTTP3AuthStreamData() {
         var nativeSession: irock_hy2_session_ref?
         "127.0.0.1".withCString { serverHost in
@@ -600,7 +696,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &nativeSession), IROCK_HY2_OK)
@@ -636,7 +733,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &nativeSession), IROCK_HY2_OK)
@@ -673,7 +771,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &nativeSession), IROCK_HY2_OK)
@@ -702,7 +801,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &nativeSession), IROCK_HY2_OK)
@@ -735,7 +835,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &nativeSession), IROCK_HY2_OK)
@@ -792,7 +893,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: UInt16(blackholePort),
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &nativeSession), IROCK_HY2_OK)
@@ -814,14 +916,73 @@ final class IrockNativeHysteria2Tests: XCTestCase {
         XCTAssertEqual(handshakeCompleted, 0)
     }
 
+    func testNativeRuntimeConnectWaitsAcrossMultipleHandshakeAndAuthPollsBeforeNetworkFailure() async throws {
+        let blackholeSocket = socket(AF_INET, SOCK_DGRAM, 0)
+        XCTAssertGreaterThanOrEqual(blackholeSocket, 0)
+        defer { close(blackholeSocket) }
+        var blackholeAddress = sockaddr_in()
+        blackholeAddress.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        blackholeAddress.sin_family = sa_family_t(AF_INET)
+        blackholeAddress.sin_port = in_port_t(0).bigEndian
+        blackholeAddress.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let bindResult = withUnsafePointer(to: &blackholeAddress) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { rebound in
+                Darwin.bind(blackholeSocket, rebound, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        XCTAssertEqual(bindResult, 0)
+        var boundAddress = sockaddr_in()
+        var boundAddressLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let nameResult = withUnsafeMutablePointer(to: &boundAddress) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { rebound in
+                getsockname(blackholeSocket, rebound, &boundAddressLength)
+            }
+        }
+        XCTAssertEqual(nameResult, 0)
+        let blackholePort = Int(UInt16(bigEndian: boundAddress.sin_port))
+        let configuration = try NativeHysteria2ClientConfiguration(serverHost: "127.0.0.1", serverPort: blackholePort, serverName: "hysteria.example.com")
+        let client = NativeHysteria2Client(configuration: configuration)
+        let startedAt = Date()
+
+        do {
+            _ = try await client.connect(authentication: "secret-password")
+            XCTFail("Expected network failure")
+        } catch let error as NativeHysteria2Error {
+            XCTAssertEqual(error, .networkFailed("native hysteria2 connect network failed (connect_blocked: 5)"))
+            XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(startedAt), 2.0)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testNativeRuntimeErrorDescriptionsStayCredentialSafe() {
         let errors: [NativeHysteria2Error] = [
             .authenticationFailed("secret-password"),
-            .networkFailed("secret-password")
+            .authenticationFailed("native hysteria2 authentication rejected (http3_status: 401)"),
+            .networkFailed("secret-password"),
+            .networkFailed("native hysteria2 connect network failed (quic_read: -201)")
         ]
 
         for error in errors {
             XCTAssertFalse(error.description.contains("secret-password"))
+        }
+        XCTAssertEqual(NativeHysteria2Error.authenticationFailed("native hysteria2 authentication rejected (http3_status: 401)").description, "Native Hysteria2 authentication failed (http3_status: 401)")
+        XCTAssertEqual(NativeHysteria2Error.networkFailed("native hysteria2 connect network failed (quic_read: -201)").description, "Native Hysteria2 network failed (quic_read: -201)")
+    }
+
+    func testNativeRuntimeConnectErrorIncludesCredentialSafeDiagnostic() async throws {
+        irock_hy2_set_last_error_for_testing("quic_read", -201)
+        let configuration = try NativeHysteria2ClientConfiguration(serverHost: "127.0.0.1", serverPort: 443, serverName: "hysteria.example.com")
+        let client = NativeHysteria2Client(configuration: configuration)
+
+        do {
+            _ = try await client.connect(authentication: "secret-password")
+            XCTFail("Expected network failure")
+        } catch let error as NativeHysteria2Error {
+            XCTAssertEqual(error, .networkFailed("native hysteria2 connect network failed (quic_handshake: 4)"))
+            XCTAssertFalse(error.description.contains("secret-password"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
         }
     }
 
@@ -836,7 +997,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 1, &nativeSession), IROCK_HY2_OK)
@@ -867,7 +1029,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 1, &nativeSession), IROCK_HY2_OK)
@@ -923,7 +1086,8 @@ final class IrockNativeHysteria2Tests: XCTestCase {
                             server_port: 443,
                             server_name: serverName,
                             alpn: alpn,
-                            allow_insecure: 0
+                            allow_insecure: 0,
+                            certificate_pin_sha256: nil
                         )
 
                         XCTAssertEqual(irock_hy2_session_create_configured_for_testing(&configuration, authentication, 0, &nativeSession), IROCK_HY2_OK)
@@ -1035,6 +1199,26 @@ final class IrockNativeHysteria2Tests: XCTestCase {
         let data = try await stream.read(maxLength: 32)
 
         XCTAssertEqual(data, Data("delayed".utf8))
+    }
+
+    func testNativeByteStreamDrainsSuccessfulTCPResponseBeforeReturningPayload() async throws {
+        var nativeSession: irock_hy2_session_ref?
+        XCTAssertEqual(irock_hy2_session_create_for_testing(1, &nativeSession), IROCK_HY2_OK)
+        let session = NativeHysteria2Session(nativeSession: nativeSession!)
+
+        var nativeStream: irock_hy2_stream_ref?
+        XCTAssertEqual(irock_hy2_session_create_tcp_stream_for_testing(nativeSession, 4, &nativeStream), IROCK_HY2_OK)
+        let stream = NativeHysteria2NativeByteStream(nativeStream: nativeStream!, session: session)
+        let response = Data([0x00, 0x09]) + Data("Connected".utf8) + Data([0x00]) + Data("HTTP/1.1 200 OK\r\n\r\n".utf8)
+        var bytesConsumed: Int32 = -1
+        XCTAssertEqual(response.withUnsafeBytes { buffer in
+            irock_hy2_session_receive_tcp_stream_for_testing(nativeSession, 4, buffer.bindMemory(to: UInt8.self).baseAddress, Int32(response.count), 0, &bytesConsumed)
+        }, IROCK_HY2_OK)
+
+        try await stream.drainSuccessfulTCPResponse()
+        let payload = try await stream.read(maxLength: 64)
+
+        XCTAssertEqual(payload, Data("HTTP/1.1 200 OK\r\n\r\n".utf8))
     }
 
     func testNativeByteStreamReadsReceivedTCPStreamData() {

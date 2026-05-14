@@ -11,6 +11,33 @@
 #include <string.h>
 #include <unistd.h>
 
+static char irock_hy2_last_error_stage[32];
+static int irock_hy2_last_error_code;
+
+void irock_hy2_set_last_error_for_testing(const char *stage, int code) {
+  if (!stage || !stage[0]) {
+    irock_hy2_last_error_stage[0] = '\0';
+    irock_hy2_last_error_code = 0;
+    return;
+  }
+  strncpy(irock_hy2_last_error_stage, stage, sizeof(irock_hy2_last_error_stage) - 1);
+  irock_hy2_last_error_stage[sizeof(irock_hy2_last_error_stage) - 1] = '\0';
+  irock_hy2_last_error_code = code;
+}
+
+int irock_hy2_copy_last_error_for_testing(char *stage_buffer, int stage_buffer_length, int *code) {
+  if (!stage_buffer || stage_buffer_length <= 0 || !code || !irock_hy2_last_error_stage[0]) {
+    return 0;
+  }
+  size_t stage_length = strlen(irock_hy2_last_error_stage);
+  if (stage_length >= (size_t)stage_buffer_length) {
+    return 0;
+  }
+  memcpy(stage_buffer, irock_hy2_last_error_stage, stage_length + 1);
+  *code = irock_hy2_last_error_code;
+  return 1;
+}
+
 static char *irock_hy2_trimmed_copy(const char *value) {
   if (!value) {
     return 0;
@@ -82,35 +109,65 @@ static void irock_hy2_session_release_fields(struct irock_hy2_session *session) 
   free(session->server_host);
   free(session->server_name);
   free(session->alpn);
+  free(session->certificate_pin_sha256);
 }
 
 static irock_hy2_result irock_hy2_connect_session(irock_hy2_session_ref created_session, const char *authentication, irock_hy2_session_ref *session) {
+  irock_hy2_set_last_error_for_testing(0, 0);
   irock_hy2_result result = irock_hy2_session_initialize_udp_for_testing(created_session);
+  if (result != IROCK_HY2_OK) {
+    irock_hy2_set_last_error_for_testing("udp_init", result);
+  }
   if (result == IROCK_HY2_OK) {
     result = irock_hy2_session_initialize_tls_for_testing(created_session);
+    if (result != IROCK_HY2_OK) {
+      irock_hy2_set_last_error_for_testing("tls_init", result);
+    }
   }
   if (result == IROCK_HY2_OK) {
     result = irock_hy2_session_initialize_quic_for_testing(created_session);
+    if (result != IROCK_HY2_OK) {
+      irock_hy2_set_last_error_for_testing("quic_init", result);
+    }
   }
   if (result == IROCK_HY2_OK) {
     result = irock_hy2_session_initialize_http3_for_testing(created_session);
+    if (result != IROCK_HY2_OK) {
+      irock_hy2_set_last_error_for_testing("http3_init", result);
+    }
   }
   if (result == IROCK_HY2_OK) {
     result = irock_hy2_session_submit_http3_auth_for_testing(created_session, authentication, 250);
+    if (result != IROCK_HY2_OK) {
+      irock_hy2_set_last_error_for_testing("auth_submit", result);
+    }
   }
   if (result == IROCK_HY2_OK) {
     int bytes_written = 0;
     int packets_read = 0;
     int handshake_completed = 0;
-    result = irock_hy2_session_run_quic_handshake_until_blocked_for_testing(created_session, 64, 100, &bytes_written, &packets_read, &handshake_completed);
+    result = irock_hy2_session_run_quic_handshake_until_blocked_for_testing(created_session, 20, 100, &bytes_written, &packets_read, &handshake_completed);
+    if (result != IROCK_HY2_OK) {
+      irock_hy2_set_last_error_for_testing("quic_handshake", result);
+    }
   }
   if (result == IROCK_HY2_OK) {
     int bytes_written = 0;
     int packets_read = 0;
     int auth_status = 0;
     result = irock_hy2_session_run_http3_auth_for_testing(created_session, 64, 100, &bytes_written, &packets_read, &auth_status);
+    if (result != IROCK_HY2_OK) {
+      char stage[32];
+      int code = 0;
+      if (!irock_hy2_copy_last_error_for_testing(stage, (int)sizeof(stage), &code)) {
+        irock_hy2_set_last_error_for_testing("http3_auth", result);
+      }
+    }
   }
   if (result != IROCK_HY2_OK) {
+    if (result == IROCK_HY2_BLOCKED) {
+      irock_hy2_set_last_error_for_testing("connect_blocked", result);
+    }
     irock_hy2_session_free(created_session);
     return result == IROCK_HY2_BLOCKED ? IROCK_HY2_NETWORK_FAILED : result;
   }
@@ -184,6 +241,7 @@ irock_hy2_result irock_hy2_session_create_for_testing(int authenticated, irock_h
   created_session->server_name = 0;
   created_session->alpn = 0;
   created_session->allow_insecure = 0;
+  created_session->certificate_pin_sha256 = 0;
   created_session->ssl_ctx = 0;
   created_session->ssl = 0;
   created_session->crypto_ctx = 0;
@@ -196,6 +254,7 @@ irock_hy2_result irock_hy2_session_create_for_testing(int authenticated, irock_h
   created_session->http3_conn = 0;
   created_session->auth_stream_id = -1;
   created_session->auth_status = 0;
+  created_session->http3_open_stream_count = 0;
   created_session->has_quic_path = 0;
   created_session->last_quic_bytes_written = 0;
   created_session->streams = 0;
@@ -222,6 +281,7 @@ irock_hy2_result irock_hy2_session_create_configured_for_testing(const irock_hy2
   created_session->server_name = irock_hy2_trimmed_copy(config->server_name);
   created_session->alpn = irock_hy2_trimmed_copy(config->alpn);
   created_session->allow_insecure = config->allow_insecure ? 1 : 0;
+  created_session->certificate_pin_sha256 = irock_hy2_trimmed_copy(config->certificate_pin_sha256 ? config->certificate_pin_sha256 : "");
   created_session->ssl_ctx = 0;
   created_session->ssl = 0;
   created_session->crypto_ctx = 0;
@@ -234,6 +294,7 @@ irock_hy2_result irock_hy2_session_create_configured_for_testing(const irock_hy2
   created_session->http3_conn = 0;
   created_session->auth_stream_id = -1;
   created_session->auth_status = 0;
+  created_session->http3_open_stream_count = 0;
   created_session->has_quic_path = 0;
   created_session->last_quic_bytes_written = 0;
   created_session->streams = 0;
@@ -256,6 +317,8 @@ irock_hy2_result irock_hy2_session_copy_config_for_testing(
   int server_name_buffer_length,
   char *alpn_buffer,
   int alpn_buffer_length,
+  char *certificate_pin_buffer,
+  int certificate_pin_buffer_length,
   int *allow_insecure,
   int *authentication_stored
 ) {
@@ -267,7 +330,7 @@ irock_hy2_result irock_hy2_session_copy_config_for_testing(
   if (!hy2_session->server_host || !hy2_session->server_name || !hy2_session->alpn) {
     return IROCK_HY2_INVALID_CONFIGURATION;
   }
-  if (!irock_hy2_copy_c_string(host_buffer, host_buffer_length, hy2_session->server_host) || !irock_hy2_copy_c_string(server_name_buffer, server_name_buffer_length, hy2_session->server_name) || !irock_hy2_copy_c_string(alpn_buffer, alpn_buffer_length, hy2_session->alpn)) {
+  if (!irock_hy2_copy_c_string(host_buffer, host_buffer_length, hy2_session->server_host) || !irock_hy2_copy_c_string(server_name_buffer, server_name_buffer_length, hy2_session->server_name) || !irock_hy2_copy_c_string(alpn_buffer, alpn_buffer_length, hy2_session->alpn) || !irock_hy2_copy_c_string(certificate_pin_buffer, certificate_pin_buffer_length, hy2_session->certificate_pin_sha256 ? hy2_session->certificate_pin_sha256 : "")) {
     return IROCK_HY2_INVALID_CONFIGURATION;
   }
 

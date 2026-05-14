@@ -48,7 +48,7 @@ irock_hy2_result irock_hy2_build_auth_request(
   if (!config || !config->server_name || !config->server_name[0] || !authentication || !authentication[0] || !auth_present || !auth_length || !resolved_receive_mbps) {
     return IROCK_HY2_INVALID_CONFIGURATION;
   }
-  if (!irock_hy2_copy_c_string(method_buffer, method_buffer_length, "POST") || !irock_hy2_copy_c_string(path_buffer, path_buffer_length, "/auth") || !irock_hy2_copy_c_string(authority_buffer, authority_buffer_length, config->server_name)) {
+  if (!irock_hy2_copy_c_string(method_buffer, method_buffer_length, "POST") || !irock_hy2_copy_c_string(path_buffer, path_buffer_length, "/auth") || !irock_hy2_copy_c_string(authority_buffer, authority_buffer_length, "hysteria")) {
     return IROCK_HY2_INVALID_CONFIGURATION;
   }
 

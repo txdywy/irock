@@ -23,6 +23,9 @@ struct irock_hy2_stream {
   uint8_t *read_buffer;
   int read_buffer_length;
   int read_buffer_capacity;
+  uint8_t *write_buffer;
+  int write_buffer_length;
+  int write_buffer_sent;
   int read_closed;
   struct irock_hy2_stream *next;
 };
@@ -39,6 +42,7 @@ struct irock_hy2_session {
   char *server_name;
   char *alpn;
   int allow_insecure;
+  char *certificate_pin_sha256;
   SSL_CTX *ssl_ctx;
   SSL *ssl;
   ngtcp2_crypto_ossl_ctx *crypto_ctx;
@@ -51,6 +55,8 @@ struct irock_hy2_session {
   nghttp3_conn *http3_conn;
   int64_t auth_stream_id;
   int auth_status;
+  int64_t http3_open_stream_ids[16];
+  int http3_open_stream_count;
   int has_quic_path;
   int last_quic_bytes_written;
   struct irock_hy2_stream *streams;

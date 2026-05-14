@@ -2,8 +2,62 @@
 #include "irock_hy2_internal.h"
 
 #include <ngtcp2/ngtcp2_crypto_ossl.h>
+#include <openssl/evp.h>
 #include <openssl/ssl.h>
+#include <openssl/x509.h>
 #include <string.h>
+
+irock_hy2_result irock_hy2_validate_certificate_pin_for_testing(const uint8_t *certificate_bytes, int certificate_byte_count, const char *certificate_pin_sha256) {
+  if (!certificate_pin_sha256 || !certificate_pin_sha256[0]) {
+    return IROCK_HY2_OK;
+  }
+  if (!certificate_bytes || certificate_byte_count <= 0) {
+    return IROCK_HY2_INVALID_CONFIGURATION;
+  }
+
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int digest_length = 0;
+  if (EVP_Digest(certificate_bytes, (size_t)certificate_byte_count, digest, &digest_length, EVP_sha256(), 0) != 1) {
+    return IROCK_HY2_NETWORK_FAILED;
+  }
+
+  unsigned char encoded[128];
+  int encoded_length = EVP_EncodeBlock(encoded, digest, digest_length);
+  if (encoded_length <= 0 || encoded_length >= (int)sizeof(encoded)) {
+    return IROCK_HY2_NETWORK_FAILED;
+  }
+  encoded[encoded_length] = '\0';
+  return strcmp((const char *)encoded, certificate_pin_sha256) == 0 ? IROCK_HY2_OK : IROCK_HY2_AUTH_FAILED;
+}
+
+irock_hy2_result irock_hy2_session_validate_peer_certificate_pin_for_testing(irock_hy2_session_ref session) {
+  if (!session) {
+    return IROCK_HY2_INVALID_CONFIGURATION;
+  }
+
+  struct irock_hy2_session *hy2_session = session;
+  if (!hy2_session->certificate_pin_sha256 || !hy2_session->certificate_pin_sha256[0]) {
+    return IROCK_HY2_OK;
+  }
+  if (!hy2_session->ssl) {
+    return IROCK_HY2_INVALID_CONFIGURATION;
+  }
+
+  X509 *certificate = SSL_get1_peer_certificate(hy2_session->ssl);
+  if (!certificate) {
+    return IROCK_HY2_AUTH_FAILED;
+  }
+  unsigned char *der = 0;
+  int der_length = i2d_X509(certificate, &der);
+  X509_free(certificate);
+  if (der_length <= 0 || !der) {
+    OPENSSL_free(der);
+    return IROCK_HY2_NETWORK_FAILED;
+  }
+  irock_hy2_result result = irock_hy2_validate_certificate_pin_for_testing(der, der_length, hy2_session->certificate_pin_sha256);
+  OPENSSL_free(der);
+  return result;
+}
 
 static irock_hy2_result irock_hy2_set_alpn(SSL *ssl, const char *alpn) {
   if (!ssl || !alpn || !alpn[0]) {

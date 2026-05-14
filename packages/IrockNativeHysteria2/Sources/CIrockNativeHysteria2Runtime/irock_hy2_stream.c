@@ -87,9 +87,13 @@ void irock_hy2_stream_release(struct irock_hy2_stream *stream) {
   }
 
   free(stream->read_buffer);
+  free(stream->write_buffer);
   stream->read_buffer = 0;
   stream->read_buffer_length = 0;
   stream->read_buffer_capacity = 0;
+  stream->write_buffer = 0;
+  stream->write_buffer_length = 0;
+  stream->write_buffer_sent = 0;
 }
 
 irock_hy2_result irock_hy2_session_receive_tcp_stream_for_testing(irock_hy2_session_ref session, int64_t stream_id, const uint8_t *bytes, int byte_count, int fin, int *bytes_consumed) {
@@ -197,17 +201,29 @@ irock_hy2_result irock_hy2_stream_write(irock_hy2_stream_ref stream, const uint8
     return path_result;
   }
 
-  ngtcp2_vec vectors[2];
-  size_t vector_count = 0;
-  if (hy2_stream->request_bytes_sent < hy2_stream->request_bytes_written) {
-    vectors[vector_count].base = hy2_stream->request_bytes + hy2_stream->request_bytes_sent;
-    vectors[vector_count].len = (size_t)(hy2_stream->request_bytes_written - hy2_stream->request_bytes_sent);
-    vector_count++;
+  if (hy2_stream->write_buffer_length == 0 && byte_count > 0) {
+    hy2_stream->write_buffer = malloc((size_t)byte_count);
+    if (!hy2_stream->write_buffer) {
+      return IROCK_HY2_NETWORK_FAILED;
+    }
+    memcpy(hy2_stream->write_buffer, bytes, (size_t)byte_count);
+    hy2_stream->write_buffer_length = byte_count;
+    hy2_stream->write_buffer_sent = 0;
   }
-  if (byte_count > 0) {
-    vectors[vector_count].base = (uint8_t *)bytes;
-    vectors[vector_count].len = (size_t)byte_count;
-    vector_count++;
+
+  ngtcp2_vec vectors[1];
+  size_t vector_count = 0;
+  int writing_request_bytes = hy2_stream->request_bytes_sent < hy2_stream->request_bytes_written;
+  int writing_buffered_bytes = 0;
+  if (writing_request_bytes) {
+    vectors[0].base = hy2_stream->request_bytes + hy2_stream->request_bytes_sent;
+    vectors[0].len = (size_t)(hy2_stream->request_bytes_written - hy2_stream->request_bytes_sent);
+    vector_count = 1;
+  } else if (hy2_stream->write_buffer_sent < hy2_stream->write_buffer_length) {
+    writing_buffered_bytes = 1;
+    vectors[0].base = hy2_stream->write_buffer + hy2_stream->write_buffer_sent;
+    vectors[0].len = (size_t)(hy2_stream->write_buffer_length - hy2_stream->write_buffer_sent);
+    vector_count = 1;
   }
   if (vector_count == 0) {
     return IROCK_HY2_OK;
@@ -238,10 +254,21 @@ irock_hy2_result irock_hy2_stream_write(irock_hy2_stream_ref stream, const uint8
   if (sent_length != packet_length) {
     return IROCK_HY2_NETWORK_FAILED;
   }
-  if (hy2_stream->request_bytes_sent < hy2_stream->request_bytes_written) {
+  if (writing_request_bytes) {
     int remaining_request_bytes = hy2_stream->request_bytes_written - hy2_stream->request_bytes_sent;
     int request_bytes_accepted = accepted_length > remaining_request_bytes ? remaining_request_bytes : (int)accepted_length;
     hy2_stream->request_bytes_sent += request_bytes_accepted;
+    return IROCK_HY2_BLOCKED;
+  }
+  if (writing_buffered_bytes) {
+    hy2_stream->write_buffer_sent += (int)accepted_length;
+    if (hy2_stream->write_buffer_sent < hy2_stream->write_buffer_length) {
+      return IROCK_HY2_BLOCKED;
+    }
+    free(hy2_stream->write_buffer);
+    hy2_stream->write_buffer = 0;
+    hy2_stream->write_buffer_length = 0;
+    hy2_stream->write_buffer_sent = 0;
   }
   return IROCK_HY2_OK;
 }

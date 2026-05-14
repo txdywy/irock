@@ -194,6 +194,34 @@ final class URIImportTests: XCTestCase {
         XCTAssertEqual(draft.hysteria2Realm?.token, "token/with+encoded=chars")
     }
 
+    func testParsesHysteria2RealmForwardingMarkerAsDirectHysteria2Node() throws {
+        let draft = try URIImport.parseDraft("hysteria2://mypassword123@45.32.83.183:19991/?sni=los.hackx86.com&insecure=1&realm=1#Realm-HY2")
+
+        XCTAssertEqual(draft.name, "Realm-HY2")
+        XCTAssertEqual(draft.protocolType, .hysteria2)
+        XCTAssertEqual(draft.serverHost, "45.32.83.183")
+        XCTAssertEqual(draft.serverPortText, "19991")
+        XCTAssertEqual(draft.credentialAccount, "mypassword123")
+        XCTAssertEqual(draft.transport, .quic)
+        XCTAssertEqual(draft.tlsServerName, "los.hackx86.com")
+        XCTAssertTrue(draft.tlsAllowInsecure)
+        XCTAssertNil(draft.hysteria2Realm)
+    }
+
+    func testParsesRealmSchemeForwardingURIAsDirectHysteria2Node() throws {
+        let draft = try URIImport.parseDraft("realm://mypassword123@45.32.83.183:19991?sni=los.hackx86.com&insecure=1#Realm-HY2")
+
+        XCTAssertEqual(draft.name, "Realm-HY2")
+        XCTAssertEqual(draft.protocolType, .hysteria2)
+        XCTAssertEqual(draft.serverHost, "45.32.83.183")
+        XCTAssertEqual(draft.serverPortText, "19991")
+        XCTAssertEqual(draft.credentialAccount, "mypassword123")
+        XCTAssertEqual(draft.transport, .quic)
+        XCTAssertEqual(draft.tlsServerName, "los.hackx86.com")
+        XCTAssertTrue(draft.tlsAllowInsecure)
+        XCTAssertNil(draft.hysteria2Realm)
+    }
+
     func testParsesHysteria2PinnedCertificateShareLinkShape() throws {
         let draft = try URIImport.parseDraft("hysteria2://example-password@realm-host.example:19991/?insecure=1&pinSHA256=example-pin%2Bvalue%2Ffor%2Btests%3D&sni=realm-host.example#Realm_Hysteria2_19991")
         let node = try draft.buildNode(id: NodeID(rawValue: "node-hy2-pin"), keychainService: "com.irock.nodes")

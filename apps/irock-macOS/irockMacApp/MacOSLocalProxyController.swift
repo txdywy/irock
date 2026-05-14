@@ -19,6 +19,7 @@ final class MacOSLocalProxyController: LocalProxyControlling {
     private var activeSockets: Set<Int32> = []
 
     init(endpoint: LocalProxyEndpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)) {
+        signal(SIGPIPE, SIG_IGN)
         self.endpoint = endpoint
     }
 
@@ -192,6 +193,7 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             serverName: node.tls.serverName,
             alpn: node.tls.alpn.isEmpty ? ["h3"] : node.tls.alpn,
             allowInsecure: node.tls.allowInsecure,
+            certificatePinSHA256: node.tls.fingerprint,
             connectedUDPPath: connectedUDPPath
         )
         let nativeClient = NativeHysteria2Client(configuration: configuration)
