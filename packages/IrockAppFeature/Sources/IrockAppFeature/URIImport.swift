@@ -117,11 +117,15 @@ public enum URIImport {
         let port = try requiredString(object["port"])
         let userID = try requiredString(object["id"])
         let transportName = optionalString(object["net"]) ?? "tcp"
-        let tlsName = optionalString(object["tls"])
+        let tlsName = optionalString(object["tls"])?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let tcpType = optionalString(object["type"])?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let sni = optionalString(object["sni"]) ?? optionalString(object["host"]) ?? host
         let path = optionalString(object["path"]) ?? "/"
         let name = optionalString(object["ps"]) ?? "\(host):\(port)"
         let transport = try transportType(transportName)
+        guard transport != .tcp || tcpType == nil || tcpType == "none" else {
+            throw URIImportError.unsupportedOption("vmess tcp type")
+        }
         return NodeDraft(
             name: name,
             protocolType: .vmess,
@@ -129,10 +133,11 @@ public enum URIImport {
             serverPortText: port,
             credentialAccount: userID,
             transport: transport,
-            tlsEnabled: tlsName?.isEmpty == false,
+            tlsEnabled: tlsName == "tls",
             tlsServerName: sni,
             udpEnabled: false,
-            transportOptions: transportOptions(for: transport, host: optionalString(object["host"]), path: path, service: path)
+            transportOptions: transportOptions(for: transport, host: optionalString(object["host"]), path: path, service: path),
+            tlsFingerprint: optionalString(object["fp"])
         )
     }
 

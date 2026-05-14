@@ -133,6 +133,43 @@ final class URIImportTests: XCTestCase {
         XCTAssertFalse(String(decoding: try JSONEncoder().encode(RuntimeSnapshot(id: SnapshotID(rawValue: "snapshot-vmess"), selectedNode: node, routeMode: .ruleBased, logLevel: .user)), as: UTF8.self).contains("00000000-0000-0000-0000-000000000001"))
     }
 
+    func testParsesVMessFingerprintShareLink() throws {
+        let json = """
+        {"v":"2","ps":"VMess Pin","add":"vmess.example.com","port":"443","id":"00000000-0000-0000-0000-000000000001","net":"tcp","type":"none","tls":"tls","sni":"vmess.example.com","fp":"chrome"}
+        """
+        let encoded = Data(json.utf8).base64EncodedString()
+
+        let draft = try URIImport.parseDraft("vmess://\(encoded)")
+        let node = try draft.buildNode(id: NodeID(rawValue: "node-vmess-pin"), keychainService: "com.irock.nodes")
+
+        XCTAssertEqual(node.protocolType, .vmess)
+        XCTAssertEqual(node.transport, .tcp)
+        XCTAssertEqual(node.tls.fingerprint, "chrome")
+    }
+
+    func testParsesVMessNoneTLSAsDisabled() throws {
+        let json = """
+        {"v":"2","ps":"VMess None TLS","add":"vmess.example.com","port":"443","id":"00000000-0000-0000-0000-000000000001","net":"tcp","type":"none","tls":"none","sni":"vmess.example.com"}
+        """
+        let encoded = Data(json.utf8).base64EncodedString()
+
+        let draft = try URIImport.parseDraft("vmess://\(encoded)")
+        let node = try draft.buildNode(id: NodeID(rawValue: "node-vmess-none-tls"), keychainService: "com.irock.nodes")
+
+        XCTAssertFalse(node.tls.enabled)
+    }
+
+    func testRejectsVMessUnsupportedTCPHeaderType() {
+        let json = """
+        {"v":"2","ps":"VMess HTTP","add":"vmess.example.com","port":"443","id":"00000000-0000-0000-0000-000000000001","net":"tcp","type":"http","tls":"tls","sni":"vmess.example.com"}
+        """
+        let encoded = Data(json.utf8).base64EncodedString()
+
+        XCTAssertThrowsError(try URIImport.parseDraft("vmess://\(encoded)")) { error in
+            XCTAssertEqual(error as? URIImportError, .unsupportedOption("vmess tcp type"))
+        }
+    }
+
     func testParsesVLESSRealityShareLink() throws {
         let draft = try URIImport.parseDraft("vless://00000000-0000-0000-0000-000000000002@vless.example.com:443?security=reality&type=tcp&sni=www.example.com&fp=chrome&pbk=reality-public-key&sid=abc123&spx=%2F#VLESS%20Reality")
         let node = try draft.buildNode(id: NodeID(rawValue: "node-vless"), keychainService: "com.irock.nodes")

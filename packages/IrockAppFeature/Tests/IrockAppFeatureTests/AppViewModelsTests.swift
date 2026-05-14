@@ -164,6 +164,61 @@ final class AppViewModelsTests: XCTestCase {
     }
 
     @MainActor
+    func testAppViewModelConnectStartsVMessTCPTLSLocalProxyWithoutStartingUserModeTun() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let localProxy = RecordingLocalProxyController(endpoint: endpoint)
+        let tunEndpoint = UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500)
+        let tun = RecordingUserModeTunController(endpoint: tunEndpoint)
+        let model = AppViewModel(nodes: [], localProxyController: localProxy, userModeTunController: tun)
+        let encoded = "eyJ2IjoiMiIsInBzIjoiVk1lc3MgVENQIiwiYWRkIjoidm1lc3MuZXhhbXBsZS5jb20iLCJwb3J0IjoiNDQzIiwiaWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDEiLCJuZXQiOiJ0Y3AiLCJ0eXBlIjoibm9uZSIsInRscyI6InRscyIsInNuaSI6InZtZXNzLmV4YW1wbGUuY29tIn0"
+        let node = try model.importURI("vmess://\(encoded)")
+
+        let result = model.connect()
+
+        XCTAssertEqual(result, .localProxyStarted(endpoint))
+        XCTAssertEqual(localProxy.startedNode, node)
+        XCTAssertEqual(localProxy.startedCredential, "00000000-0000-0000-0000-000000000001")
+        XCTAssertNil(localProxy.startedRealmCredential)
+        XCTAssertNil(tun.startedNode)
+        XCTAssertNil(tun.startedCredential)
+        XCTAssertEqual(model.localProxyState.phase, .running)
+        XCTAssertEqual(model.localProxyState.endpoint, endpoint)
+        XCTAssertEqual(model.userModeTunState.phase, .stopped)
+    }
+
+    @MainActor
+    func testAppViewModelConnectRejectsVMessWithoutTCPTLSBeforeStartingProxy() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let localProxy = RecordingLocalProxyController(endpoint: endpoint)
+        let model = AppViewModel(nodes: [], localProxyController: localProxy)
+        let encoded = "eyJ2IjoiMiIsInBzIjoiVk1lc3MgV1MiLCJhZGQiOiJ2bWVzcy5leGFtcGxlLmNvbSIsInBvcnQiOiI0NDMiLCJpZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMSIsIm5ldCI6IndzIiwidHlwZSI6Im5vbmUiLCJob3N0IjoiZWRnZS5leGFtcGxlLmNvbSIsInBhdGgiOiIvcmF5IiwidGxzIjoidGxzIiwic25pIjoidm1lc3MuZXhhbXBsZS5jb20ifQ"
+        _ = try model.importURI("vmess://\(encoded)")
+
+        let result = model.connect()
+
+        XCTAssertEqual(result, .localProxyFailed("当前 VMess 节点需要 TCP+TLS 传输"))
+        XCTAssertNil(localProxy.startedNode)
+        XCTAssertEqual(model.localProxyState.phase, .failed)
+        XCTAssertEqual(model.localProxyState.message, "当前 VMess 节点需要 TCP+TLS 传输")
+    }
+
+    @MainActor
+    func testAppViewModelConnectRejectsVMessPinnedTLSBeforeStartingProxy() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let localProxy = RecordingLocalProxyController(endpoint: endpoint)
+        let model = AppViewModel(nodes: [], localProxyController: localProxy)
+        let encoded = "eyJ2IjoiMiIsInBzIjoiVk1lc3MgVGNwIFBpbiIsImFkZCI6InZtZXNzLmV4YW1wbGUuY29tIiwicG9ydCI6IjQ0MyIsImlkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIiwibmV0IjoidGNwIiwidHlwZSI6Im5vbmUiLCJ0bHMiOiJ0bHMiLCJzbmkiOiJ2bWVzcy5leGFtcGxlLmNvbSIsImZwIjoiY2hyb21lIn0"
+        _ = try model.importURI("vmess://\(encoded)")
+
+        let result = model.connect()
+
+        XCTAssertEqual(result, .localProxyFailed("当前 VMess 节点暂不支持证书固定或 Reality"))
+        XCTAssertNil(localProxy.startedNode)
+        XCTAssertEqual(model.localProxyState.phase, .failed)
+        XCTAssertEqual(model.localProxyState.message, "当前 VMess 节点暂不支持证书固定或 Reality")
+    }
+
+    @MainActor
     func testAppViewModelConnectRejectsVLESSWithoutPlainTLSBeforeStartingProxy() throws {
         let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
         let localProxy = RecordingLocalProxyController(endpoint: endpoint)

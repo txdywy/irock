@@ -73,6 +73,11 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             return node.transport == .quic
         case .trojan:
             return node.transport == .tcp
+        case .vmess:
+            return node.transport == .tcp
+                && node.tls.enabled
+                && node.tls.fingerprint == nil
+                && node.tls.reality == nil
         case .vless:
             return node.transport == .tcp
                 && node.tls.enabled
@@ -212,6 +217,8 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             try openShadowsocksOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
         case .trojan:
             try openTrojanOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
+        case .vmess:
+            try openVMessOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
         case .vless:
             try openVLESSOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
         case .hysteria2:
@@ -280,6 +287,20 @@ final class MacOSLocalProxyController: LocalProxyControlling {
     private func openVLESSOutboundAndRelay(client: Int32, destination: ProxyDestination, node: ProxyNode, credential: String, sendSuccess: () throws -> Void) throws {
         let serverName = node.tls.serverName ?? node.serverHost
         let request = try VLESSOpenRequest(userID: credential, destination: destination)
+        let tls = TLSOptions(
+            enabled: true,
+            serverName: serverName,
+            allowInsecure: node.tls.allowInsecure,
+            alpn: node.tls.alpn,
+            fingerprint: node.tls.fingerprint,
+            reality: node.tls.reality
+        )
+        try openTLSOutboundAndRelay(client: client, node: node, tls: tls, initialPayload: request.openBytes, sendSuccess: sendSuccess)
+    }
+
+    private func openVMessOutboundAndRelay(client: Int32, destination: ProxyDestination, node: ProxyNode, credential: String, sendSuccess: () throws -> Void) throws {
+        let serverName = node.tls.serverName ?? node.serverHost
+        let request = try VMessOpenRequest(userID: credential, destination: destination)
         let tls = TLSOptions(
             enabled: true,
             serverName: serverName,
