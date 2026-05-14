@@ -13,6 +13,7 @@
 		IROCKVPNMGRBUILD00001 /* MacOSVPNManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKVPNMGRFILEREF001 /* MacOSVPNManager.swift */;};
 		IROCKAPPSTORERESBUILD01 /* MacOSAppGroupRuntimeStoreResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKAPPSTORERESFILEREF1 /* MacOSAppGroupRuntimeStoreResolver.swift */;};
 		IROCKLOCALPROXYBUILD01 /* MacOSLocalProxyController.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKLOCALPROXYFILEREF1 /* MacOSLocalProxyController.swift */;};
+		IROCKAPPTLSBUILD0001 /* MacOSTLSByteStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKAPPTLSFILEREF01 /* MacOSTLSByteStream.swift */;};
 		IROCKUSERTUNBUILD001 /* MacOSUserModeTunController.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKUSERTUNFILEREF01 /* MacOSUserModeTunController.swift */;};
 		IROCKTUNDEVBUILD001 /* MacOSUserModeTunDevice.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKTUNDEVFILEREF01 /* MacOSUserModeTunDevice.swift */;};
 		IROCKTUNROUTEBUILD01 /* MacOSUserModeTunRouteCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKTUNROUTEFILEREF1 /* MacOSUserModeTunRouteCommands.swift */;};
@@ -129,6 +130,7 @@
 				IROCKVPNMGRFILEREF001 /* MacOSVPNManager.swift */,
 				IROCKAPPSTORERESFILEREF1 /* MacOSAppGroupRuntimeStoreResolver.swift */,
 				IROCKLOCALPROXYFILEREF1 /* MacOSLocalProxyController.swift */,
+				IROCKAPPTLSFILEREF01 /* MacOSTLSByteStream.swift */,
 				IROCKQUICDIALFILEREF1 /* MacOSPlatformQUICStreamDialer.swift */,
 					IROCKUSERTUNFILEREF01 /* MacOSUserModeTunController.swift */,
 					IROCKTUNDEVFILEREF01 /* MacOSUserModeTunDevice.swift */,
@@ -178,6 +180,7 @@
 		IROCKVPNMGRFILEREF001 /* MacOSVPNManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSVPNManager.swift; sourceTree = "<group>";};
 		IROCKAPPSTORERESFILEREF1 /* MacOSAppGroupRuntimeStoreResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSAppGroupRuntimeStoreResolver.swift; sourceTree = "<group>";};
 		IROCKLOCALPROXYFILEREF1 /* MacOSLocalProxyController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSLocalProxyController.swift; sourceTree = "<group>";};
+		IROCKAPPTLSFILEREF01 /* MacOSTLSByteStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSTLSByteStream.swift; sourceTree = "<group>";};
 		IROCKUSERTUNFILEREF01 /* MacOSUserModeTunController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSUserModeTunController.swift; sourceTree = "<group>";};
 		IROCKTUNDEVFILEREF01 /* MacOSUserModeTunDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSUserModeTunDevice.swift; sourceTree = "<group>";};
 		IROCKTUNROUTEFILEREF1 /* MacOSUserModeTunRouteCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSUserModeTunRouteCommands.swift; sourceTree = "<group>";};
@@ -203,7 +206,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXSourcesBuildPhase section */
-		IROCKAPPSOURCES0000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (IROCKAPPFILEBUILD000001 /* IrockMacApp.swift in Sources */, IROCKCONTENTBUILD000001 /* ContentView.swift in Sources */, IROCKVPNCFGBUILD00001 /* MacOSVPNManagerConfiguration.swift in Sources */, IROCKVPNMGRBUILD00001 /* MacOSVPNManager.swift in Sources */, IROCKAPPSTORERESBUILD01 /* MacOSAppGroupRuntimeStoreResolver.swift in Sources */, IROCKLOCALPROXYBUILD01 /* MacOSLocalProxyController.swift in Sources */, IROCKUSERTUNBUILD001 /* MacOSUserModeTunController.swift in Sources */, IROCKTUNDEVBUILD001 /* MacOSUserModeTunDevice.swift in Sources */, IROCKTUNROUTEBUILD01 /* MacOSUserModeTunRouteCommands.swift in Sources */, IROCKTUNFLOWBUILD001 /* MacOSUserModeTunPacketFlowIO.swift in Sources */, IROCKTUNCREDBUILD001 /* MacOSImportedShadowsocksCredentialResolver.swift in Sources */, IROCKAPPDIALBUILD001 /* MacOSPlatformTCPDialer.swift in Sources */, IROCKAPPQUICBUILD001 /* MacOSPlatformQUICStreamDialer.swift in Sources */); runOnlyForDeploymentPostprocessing = 0;};
+		IROCKAPPSOURCES0000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (IROCKAPPFILEBUILD000001 /* IrockMacApp.swift in Sources */, IROCKCONTENTBUILD000001 /* ContentView.swift in Sources */, IROCKVPNCFGBUILD00001 /* MacOSVPNManagerConfiguration.swift in Sources */, IROCKVPNMGRBUILD00001 /* MacOSVPNManager.swift in Sources */, IROCKAPPSTORERESBUILD01 /* MacOSAppGroupRuntimeStoreResolver.swift in Sources */, IROCKLOCALPROXYBUILD01 /* MacOSLocalProxyController.swift in Sources */, IROCKAPPTLSBUILD0001 /* MacOSTLSByteStream.swift in Sources */, IROCKUSERTUNBUILD001 /* MacOSUserModeTunController.swift in Sources */, IROCKTUNDEVBUILD001 /* MacOSUserModeTunDevice.swift in Sources */, IROCKTUNROUTEBUILD01 /* MacOSUserModeTunRouteCommands.swift in Sources */, IROCKTUNFLOWBUILD001 /* MacOSUserModeTunPacketFlowIO.swift in Sources */, IROCKTUNCREDBUILD001 /* MacOSImportedShadowsocksCredentialResolver.swift in Sources */, IROCKAPPDIALBUILD001 /* MacOSPlatformTCPDialer.swift in Sources */, IROCKAPPQUICBUILD001 /* MacOSPlatformQUICStreamDialer.swift in Sources */); runOnlyForDeploymentPostprocessing = 0;};
 		IROCKTUNNELSOURCES000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (IROCKPROVIDERBUILD00001 /* PacketTunnelProvider.swift in Sources */, IROCKFLOWIOBUILD000001 /* NEPacketTunnelFlowPacketFlowIO.swift in Sources */, IROCKSTORERESBUILD0001 /* PacketTunnelAppGroupStoreResolver.swift in Sources */, IROCKSMOKERUNBUILD0001 /* MacOSPacketTunnelSmokeRunner.swift in Sources */, IROCKLOOPRUNBUILD001 /* MacOSPacketTunnelLoopRunner.swift in Sources */, IROCKTCPDIALBUILD001 /* MacOSPlatformTCPDialer.swift in Sources */, IROCKSETCFGDBUILD001 /* PacketTunnelRuntimeSettingsConfiguration.swift in Sources */, IROCKSETFACTBUILD01 /* PacketTunnelRuntimeSettingsFactory.swift in Sources */, IROCKSETAPPBUILD001 /* PacketTunnelRuntimeSettingsApplicator.swift in Sources */); runOnlyForDeploymentPostprocessing = 0;};
 /* End PBXSourcesBuildPhase section */
 
