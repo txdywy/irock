@@ -1191,9 +1191,11 @@ final class IrockNativeHysteria2Tests: XCTestCase {
 
         Task {
             try await Task.sleep(nanoseconds: 20_000_000)
-            let responseBytes = Array("delayed".utf8)
+            let response = Data([0x00, 0x00, 0x00]) + Data("delayed".utf8)
             var bytesConsumed: Int32 = -1
-            XCTAssertEqual(irock_hy2_session_receive_tcp_stream_for_testing(nativeSession, 4, responseBytes, Int32(responseBytes.count), 0, &bytesConsumed), IROCK_HY2_OK)
+            XCTAssertEqual(response.withUnsafeBytes { buffer in
+                irock_hy2_session_receive_tcp_stream_for_testing(nativeSession, 4, buffer.bindMemory(to: UInt8.self).baseAddress, Int32(response.count), 0, &bytesConsumed)
+            }, IROCK_HY2_OK)
         }
 
         let data = try await stream.read(maxLength: 32)
