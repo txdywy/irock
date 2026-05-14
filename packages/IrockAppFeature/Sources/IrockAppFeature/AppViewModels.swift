@@ -115,6 +115,12 @@ public final class AppViewModel: ObservableObject {
                 appendLog("当前 Hysteria2 节点需要 QUIC 传输")
                 throw LocalProxyError.unsupportedCredential
             }
+        case .trojan:
+            guard node.transport == .tcp else {
+                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前 Trojan 节点需要 TCP 传输")
+                appendLog("当前 Trojan 节点需要 TCP 传输")
+                throw LocalProxyError.unsupportedCredential
+            }
         default:
             if localProxyState.phase != .running {
                 localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前协议暂不支持本地代理")

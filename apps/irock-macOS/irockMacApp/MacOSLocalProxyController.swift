@@ -4,9 +4,30 @@ import IrockAppFeature
 import IrockCore
 import IrockNativeHysteria2
 import IrockProtocols
+import IrockTransport
 
 private final class AsyncResultBox<T>: @unchecked Sendable {
     var result: Result<T, Error>?
+}
+
+private struct Hysteria2TransportByteStream: TransportByteStream {
+    let stream: any NativeHysteria2ByteStream
+
+    func read(maxLength: Int) async throws -> Data? {
+        try await stream.read(maxLength: maxLength)
+    }
+
+    func write(_ data: Data) async throws {
+        try await stream.write(data)
+    }
+
+    func closeWrite() async {
+        try? await stream.closeWrite()
+    }
+
+    func close() async {
+        await stream.close()
+    }
 }
 
 final class MacOSLocalProxyController: LocalProxyControlling {
@@ -24,7 +45,9 @@ final class MacOSLocalProxyController: LocalProxyControlling {
     }
 
     func start(node: ProxyNode, credential: String, realmCredential: String?) throws -> LocalProxyEndpoint {
-        guard (node.protocolType == .shadowsocks && node.transport == .tcp) || (node.protocolType == .hysteria2 && node.transport == .quic) else {
+        guard (node.protocolType == .shadowsocks && node.transport == .tcp)
+            || (node.protocolType == .hysteria2 && node.transport == .quic)
+            || (node.protocolType == .trojan && node.transport == .tcp) else {
             throw LocalProxyError.unavailable
         }
         stopListeners()
@@ -171,6 +194,8 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         switch node.protocolType {
         case .shadowsocks:
             try openShadowsocksOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
+        case .trojan:
+            try openTrojanOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
         case .hysteria2:
             try openHysteria2OutboundAndRelay(client: client, destination: destination, node: node, credential: credential, realmCredential: realmCredential, sendSuccess: sendSuccess)
         default:
@@ -201,8 +226,14 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             let session = try await nativeClient.connect(authentication: credential)
             return try await session.openTCPStream(address: Self.hysteria2AddressString(for: destination))
         }
-        try sendSuccess()
-        relay(local: client, stream: stream)
+        let transportStream = Hysteria2TransportByteStream(stream: stream)
+        do {
+            try sendSuccess()
+            relay(local: client, stream: transportStream)
+        } catch {
+            try? runAsync { await transportStream.close() }
+            throw error
+        }
     }
 
     private func openShadowsocksOutboundAndRelay(client: Int32, destination: ProxyDestination, node: ProxyNode, credential: String, sendSuccess: () throws -> Void) throws {
@@ -212,6 +243,28 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         let clientSalt = try sendShadowsocksOpen(destination: destination, remote: remote, credential: credential)
         try sendSuccess()
         relay(local: client, remote: remote, credential: credential, clientSalt: clientSalt)
+    }
+
+    private func openTrojanOutboundAndRelay(client: Int32, destination: ProxyDestination, node: ProxyNode, credential: String, sendSuccess: () throws -> Void) throws {
+        let serverName = node.tls.serverName ?? node.serverHost
+        let request = try TrojanOpenRequest(password: credential, destination: destination, serverName: serverName)
+        let tls = TLSOptions(
+            enabled: true,
+            serverName: serverName,
+            allowInsecure: node.tls.allowInsecure,
+            alpn: node.tls.alpn,
+            fingerprint: node.tls.fingerprint,
+            reality: node.tls.reality
+        )
+        let stream = try MacOSTLSByteStream(host: node.serverHost, port: node.serverPort, tls: tls, initialPayload: request.openBytes)
+        try runAsync { try await stream.start() }
+        do {
+            try sendSuccess()
+            relay(local: client, stream: stream)
+        } catch {
+            try? runAsync { await stream.close() }
+            throw error
+        }
     }
 
     private func sendShadowsocksOpen(destination: ProxyDestination, remote: Int32, credential: String) throws -> Data {
@@ -236,7 +289,7 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         group.wait()
     }
 
-    private func relay(local: Int32, stream: any NativeHysteria2ByteStream) {
+    private func relay(local: Int32, stream: any TransportByteStream) {
         let group = DispatchGroup()
         group.enter()
         connectionQueue.async {
@@ -249,18 +302,19 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             group.leave()
         }
         group.wait()
+        try? runAsync { await stream.close() }
     }
 
-    private func relayLocalToStream(local: Int32, stream: any NativeHysteria2ByteStream) {
+    private func relayLocalToStream(local: Int32, stream: any TransportByteStream) {
         do {
             while let payload = try readAvailable(from: local, maxLength: 16_384) {
                 try runAsync { try await stream.write(payload) }
             }
-            try runAsync { try await stream.closeWrite() }
+            try runAsync { await stream.closeWrite() }
         } catch {}
     }
 
-    private func relayStreamToLocal(stream: any NativeHysteria2ByteStream, local: Int32) {
+    private func relayStreamToLocal(stream: any TransportByteStream, local: Int32) {
         do {
             while let payload = try runAsync({ try await stream.read(maxLength: 16_384) }) {
                 try writeAll(payload, to: local)
@@ -393,7 +447,8 @@ final class MacOSLocalProxyController: LocalProxyControlling {
     }
 
     private func sendUnsupportedHTTPResponse(to client: Int32) throws {
-        let response = "HTTP/1.1 501 Not Implemented\r\nContent-Length: 62\r\nConnection: close\r\n\r\nHTTP proxy only supports CONNECT tunneling for Shadowsocks relay."
+        let body = "HTTP proxy only supports CONNECT tunneling for supported local proxy protocols."
+        let response = "HTTP/1.1 501 Not Implemented\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
         try writeAll(Data(response.utf8), to: client)
     }
 
