@@ -472,6 +472,87 @@ public struct VMessOpenRequest: Equatable, Sendable {
     }
 }
 
+public struct VLESSRealityHandshakeConfiguration: Equatable, Sendable {
+    public let serverName: String
+    public let clientFingerprint: String
+    public let publicKeyBytes: Data
+    public let shortIDBytes: Data
+    public let spiderX: String
+    public let metadata: [String: String]
+
+    public init(tls: TLSOptions) throws {
+        guard tls.enabled else {
+            throw ProxyProtocolError.invalidConfiguration("missing reality tls")
+        }
+        let normalizedServerName = tls.serverName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !normalizedServerName.isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing reality server name")
+        }
+        guard let reality = tls.reality else {
+            throw ProxyProtocolError.invalidConfiguration("missing reality options")
+        }
+        let normalizedFingerprint = tls.fingerprint?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        guard !normalizedFingerprint.isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing reality fingerprint")
+        }
+        let publicKeyBytes = try Self.publicKeyBytes(reality.publicKey)
+        let shortIDBytes = try Self.shortIDBytes(reality.shortID)
+        let spiderX = reality.spiderX?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? reality.spiderX!.trimmingCharacters(in: .whitespacesAndNewlines) : "/"
+        self.serverName = normalizedServerName
+        self.clientFingerprint = normalizedFingerprint
+        self.publicKeyBytes = publicKeyBytes
+        self.shortIDBytes = shortIDBytes
+        self.spiderX = spiderX
+        self.metadata = [
+            "vlessRealityPresent": "true",
+            "vlessRealityServerName": normalizedServerName,
+            "vlessRealityShortIDBytes": String(shortIDBytes.count),
+            "vlessRealitySpiderX": spiderX,
+            "vlessRealityFingerprint": normalizedFingerprint
+        ]
+    }
+
+    private static func publicKeyBytes(_ value: String) throws -> Data {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty, normalized.unicodeScalars.allSatisfy(Self.isBase64URLScalar) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid reality public key")
+        }
+        var base64 = normalized.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        let padding = (4 - base64.count % 4) % 4
+        if padding > 0 {
+            base64.append(String(repeating: "=", count: padding))
+        }
+        guard let data = Data(base64Encoded: base64), data.count == 32 else {
+            throw ProxyProtocolError.invalidConfiguration("invalid reality public key")
+        }
+        return data
+    }
+
+    private static func isBase64URLScalar(_ scalar: Unicode.Scalar) -> Bool {
+        let value = scalar.value
+        return (65...90).contains(value) || (97...122).contains(value) || (48...57).contains(value) || value == 45 || value == 95
+    }
+
+    private static func shortIDBytes(_ value: String?) throws -> Data {
+        let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        guard normalized.count <= 16, normalized.count % 2 == 0 else {
+            throw ProxyProtocolError.invalidConfiguration("invalid reality short id")
+        }
+        guard !normalized.isEmpty else { return Data() }
+        var bytes = Data()
+        var index = normalized.startIndex
+        while index < normalized.endIndex {
+            let next = normalized.index(index, offsetBy: 2)
+            guard let byte = UInt8(normalized[index..<next], radix: 16) else {
+                throw ProxyProtocolError.invalidConfiguration("invalid reality short id")
+            }
+            bytes.append(byte)
+            index = next
+        }
+        return bytes
+    }
+}
+
 public struct VLESSOpenRequest: Equatable, Sendable {
     public let destinationDescription: String
     public let security: String
@@ -1290,12 +1371,13 @@ public struct VLESSProxyAdapter<CredentialResolver: ProxyCredentialResolver>: Pr
         try validate(request.node)
         let credential = try credentialResolver.credential(for: request.node.credentialReference)
         let openRequest = try VLESSOpenRequest(userID: credential, destination: request.destination)
+        let realityConfiguration = try request.node.tls.reality.map { _ in try VLESSRealityHandshakeConfiguration(tls: request.node.tls) }
         let transportRequest = TransportRequest(
             host: request.node.serverHost,
             port: request.node.serverPort,
             transport: request.node.transport,
             tls: request.node.tls.enabled ? request.node.tls : nil,
-            metadata: transportMetadata(for: request, openRequest: openRequest),
+            metadata: transportMetadata(for: request, openRequest: openRequest, realityConfiguration: realityConfiguration),
             initialPayload: openRequest.openBytes
         )
         do {
@@ -1321,14 +1403,24 @@ public struct VLESSProxyAdapter<CredentialResolver: ProxyCredentialResolver>: Pr
         }
     }
 
-    private func transportMetadata(for request: ProxyRequest, openRequest: VLESSOpenRequest) -> [String: String] {
+    private func transportMetadata(for request: ProxyRequest, openRequest: VLESSOpenRequest, realityConfiguration: VLESSRealityHandshakeConfiguration?) -> [String: String] {
         var metadata = request.metadata
+        Self.removeSensitiveMetadata(from: &metadata)
         metadata["proxyProtocol"] = request.node.protocolType.rawValue
         applyTransportOptions(from: request.node, to: &metadata)
         for (key, value) in openRequest.metadata {
             metadata[key] = value
         }
+        for (key, value) in realityConfiguration?.metadata ?? [:] {
+            metadata[key] = value
+        }
         return metadata
+    }
+
+    private static func removeSensitiveMetadata(from metadata: inout [String: String]) {
+        metadata.removeValue(forKey: "vlessUserID")
+        metadata.removeValue(forKey: "vlessRealityPublicKey")
+        metadata.removeValue(forKey: "realityPublicKey")
     }
 
     private func proxyProtocolError(for error: TransportError) -> ProxyProtocolError {
