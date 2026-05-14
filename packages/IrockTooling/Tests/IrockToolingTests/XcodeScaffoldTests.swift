@@ -234,6 +234,8 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(controller.contains("saltLength(forCredential:"))
         XCTAssertTrue(controller.contains("VLESSOpenRequest"))
         XCTAssertTrue(controller.contains("openVLESSOutboundAndRelay"))
+        XCTAssertTrue(controller.contains("VMessOpenRequest"))
+        XCTAssertTrue(controller.contains("openVMessOutboundAndRelay"))
         XCTAssertTrue(controller.contains("isSupportedLocalProxyNode"))
         XCTAssertTrue(controller.contains("node.tls.enabled"))
         XCTAssertTrue(controller.contains("node.tls.fingerprint == nil"))
