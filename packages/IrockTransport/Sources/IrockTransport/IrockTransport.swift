@@ -753,6 +753,491 @@ public final class WebSocketClientByteStream<Underlying: TransportByteStream>: T
     }
 }
 
+public final class HTTP2ClientByteStream<Underlying: TransportByteStream>: TransportByteStream, @unchecked Sendable {
+    private let underlying: Underlying
+    private let writer: HTTP2UnderlyingWriter<Underlying>
+    private let state = HTTP2ClientStreamState()
+    private let authority: String
+    private let path: String
+    private let initialPayload: Data?
+    private var readerTask: Task<Void, Never>?
+    private static var maximumDataFramePayloadSize: Int { 16_384 }
+
+    public init(underlying: Underlying, authority: String, path: String, initialPayload: Data? = nil) {
+        self.underlying = underlying
+        self.writer = HTTP2UnderlyingWriter(underlying: underlying)
+        self.authority = authority.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.path = path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "/" : path.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.initialPayload = initialPayload
+    }
+
+    public func start() async throws {
+        var data = Data("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".utf8)
+        data.append(Self.frame(type: 0x04, flags: 0x00, streamID: 0, payload: Data()))
+        data.append(Self.frame(type: 0x01, flags: 0x04, streamID: 1, payload: try headerBlock()))
+        try await writer.write(data)
+        startReaderPump()
+        if let initialPayload, !initialPayload.isEmpty {
+            try await write(initialPayload)
+        }
+    }
+
+    public func read(maxLength: Int) async throws -> Data? {
+        let result = try await state.readPayload(maxLength: maxLength)
+        if !result.windowUpdate.isEmpty {
+            try await writer.write(result.windowUpdate)
+        }
+        return result.payload
+    }
+
+    public func waitForResponseHeaders() async throws {
+        try await state.waitForResponseHeaders()
+    }
+
+    public func write(_ data: Data) async throws {
+        var offset = data.startIndex
+        while offset < data.endIndex {
+            let available = try await state.reserveOutboundCapacity(remaining: data.distance(from: offset, to: data.endIndex), maximumFrameSize: Self.maximumDataFramePayloadSize)
+            let end = data.index(offset, offsetBy: available)
+            try await writer.write(Self.frame(type: 0x00, flags: 0x00, streamID: 1, payload: Data(data[offset..<end])))
+            offset = end
+        }
+    }
+
+    public func closeWrite() async {
+        try? await writer.write(Self.frame(type: 0x00, flags: 0x01, streamID: 1, payload: Data()))
+    }
+
+    public func close() async {
+        readerTask?.cancel()
+        await writer.close()
+    }
+
+    private func startReaderPump() {
+        readerTask = Task { [underlying, writer, state] in
+            var buffer = Data()
+            do {
+                while !Task.isCancelled, let data = try await underlying.read(maxLength: 4_096) {
+                    buffer.append(data)
+                    while let frame = try Self.readFrame(from: &buffer) {
+                        let response = try await state.handleIncomingFrame(frame)
+                        if !response.isEmpty {
+                            try await writer.write(response)
+                        }
+                    }
+                }
+                await state.finish(error: nil)
+            } catch {
+                await state.finish(error: error)
+            }
+        }
+    }
+
+    private func headerBlock() throws -> Data {
+        var block = Data()
+        block.append(0x83)
+        block.append(0x87)
+        try appendLiteralHeader(nameIndex: 4, value: path.hasPrefix("/") ? path : "/\(path)", to: &block)
+        try appendLiteralHeader(nameIndex: 1, value: authority, to: &block)
+        try appendLiteralHeader(nameIndex: 31, value: "application/octet-stream", to: &block)
+        return block
+    }
+
+    private func appendLiteralHeader(nameIndex: Int, value: String, to block: inout Data) throws {
+        let valueData = Data(value.utf8)
+        guard !valueData.isEmpty, valueData.count < 128 else {
+            throw TransportError.invalidConfiguration("invalid http2 header value")
+        }
+        appendHPACKInteger(nameIndex, prefixBits: 4, prefix: 0x00, to: &block)
+        block.append(UInt8(valueData.count))
+        block.append(valueData)
+    }
+
+    private func appendHPACKInteger(_ value: Int, prefixBits: UInt8, prefix: UInt8, to data: inout Data) {
+        let maxPrefixValue = (1 << Int(prefixBits)) - 1
+        if value < maxPrefixValue {
+            data.append(prefix | UInt8(value))
+            return
+        }
+        data.append(prefix | UInt8(maxPrefixValue))
+        var remaining = value - maxPrefixValue
+        while remaining >= 128 {
+            data.append(UInt8(remaining % 128 + 128))
+            remaining /= 128
+        }
+        data.append(UInt8(remaining))
+    }
+
+    private static func readFrame(from buffer: inout Data) throws -> HTTP2ClientFrame? {
+        guard buffer.count >= 9 else { return nil }
+        let length = Int(buffer[0]) << 16 | Int(buffer[1]) << 8 | Int(buffer[2])
+        guard length <= maximumDataFramePayloadSize else {
+            throw TransportError.invalidConfiguration("unsupported http2 frame length")
+        }
+        guard buffer.count >= 9 + length else { return nil }
+        let type = buffer[3]
+        let flags = buffer[4]
+        let streamID = (UInt32(buffer[5] & 0x7f) << 24) | (UInt32(buffer[6]) << 16) | (UInt32(buffer[7]) << 8) | UInt32(buffer[8])
+        let payload = buffer.subdata(in: 9..<(9 + length))
+        buffer.removeSubrange(..<(9 + length))
+        return HTTP2ClientFrame(type: type, flags: flags, streamID: streamID, payload: payload)
+    }
+
+    private static func frame(type: UInt8, flags: UInt8, streamID: UInt32, payload: Data) -> Data {
+        var frame = Data([
+            UInt8((payload.count >> 16) & 0xff),
+            UInt8((payload.count >> 8) & 0xff),
+            UInt8(payload.count & 0xff),
+            type,
+            flags,
+            UInt8((streamID >> 24) & 0x7f),
+            UInt8((streamID >> 16) & 0xff),
+            UInt8((streamID >> 8) & 0xff),
+            UInt8(streamID & 0xff)
+        ])
+        frame.append(payload)
+        return frame
+    }
+}
+
+private actor HTTP2UnderlyingWriter<Underlying: TransportByteStream> {
+    private let underlying: Underlying
+
+    init(underlying: Underlying) {
+        self.underlying = underlying
+    }
+
+    func write(_ data: Data) async throws {
+        try await underlying.write(data)
+    }
+
+    func close() async {
+        await underlying.close()
+    }
+}
+
+private struct HTTP2ClientFrame: Sendable {
+    let type: UInt8
+    let flags: UInt8
+    let streamID: UInt32
+    let payload: Data
+}
+
+private struct HTTP2ClientReadResult: Sendable {
+    let payload: Data?
+    let windowUpdate: Data
+}
+
+private actor HTTP2ClientStreamState {
+    private var payloadBuffer = Data()
+    private var reachedEOF = false
+    private var terminalError: Error?
+    private var connectionSendWindow = 65_535
+    private var streamSendWindow = 65_535
+    private var peerInitialStreamWindow = 65_535
+    private var responseResult: Result<Void, Error>?
+    private var responseHeaderBlock = Data()
+    private var collectingResponseHeaders = false
+    private var payloadWaiters: [CheckedContinuation<Void, Never>] = []
+    private var windowWaiters: [CheckedContinuation<Void, Never>] = []
+    private var responseWaiters: [CheckedContinuation<Void, Error>] = []
+
+    func readPayload(maxLength: Int) async throws -> HTTP2ClientReadResult {
+        while true {
+            if !payloadBuffer.isEmpty {
+                let count = min(maxLength, payloadBuffer.count)
+                let data = payloadBuffer.prefix(count)
+                payloadBuffer.removeSubrange(..<count)
+                var windowUpdate = Data()
+                windowUpdate.append(Self.windowUpdateFrame(byteCount: count, streamID: 0))
+                windowUpdate.append(Self.windowUpdateFrame(byteCount: count, streamID: 1))
+                return HTTP2ClientReadResult(payload: Data(data), windowUpdate: windowUpdate)
+            }
+            if let terminalError { throw terminalError }
+            if reachedEOF { return HTTP2ClientReadResult(payload: nil, windowUpdate: Data()) }
+            await withCheckedContinuation { continuation in
+                payloadWaiters.append(continuation)
+            }
+        }
+    }
+
+    func waitForResponseHeaders() async throws {
+        if let responseResult {
+            try responseResult.get()
+            return
+        }
+        try await withCheckedThrowingContinuation { continuation in
+            responseWaiters.append(continuation)
+        }
+    }
+
+    func reserveOutboundCapacity(remaining: Int, maximumFrameSize: Int) async throws -> Int {
+        while true {
+            if let terminalError { throw terminalError }
+            let available = min(connectionSendWindow, streamSendWindow, maximumFrameSize, remaining)
+            if available > 0 {
+                connectionSendWindow -= available
+                streamSendWindow -= available
+                return available
+            }
+            if reachedEOF { throw TransportError.remoteClosed }
+            await withCheckedContinuation { continuation in
+                windowWaiters.append(continuation)
+            }
+        }
+    }
+
+    func handleIncomingFrame(_ frame: HTTP2ClientFrame) throws -> Data {
+        switch frame.type {
+        case 0x00 where frame.streamID == 1:
+            return try bufferInboundData(frame)
+        case 0x01 where frame.streamID == 1:
+            responseHeaderBlock = try headerPayload(from: frame)
+            collectingResponseHeaders = frame.flags & 0x04 == 0
+            if !collectingResponseHeaders {
+                completeResponseHeaders()
+            }
+        case 0x03 where frame.streamID == 1:
+            reachedEOF = true
+            if responseResult == nil {
+                failResponse(TransportError.invalidConfiguration("invalid http2 response"))
+            }
+            signalPayloadWaiters()
+            signalWindowWaiters()
+        case 0x04 where frame.streamID == 0 && frame.flags & 0x01 == 0:
+            try applySettings(frame.payload)
+            signalWindowWaiters()
+            return Self.frame(type: 0x04, flags: 0x01, streamID: 0, payload: Data())
+        case 0x08:
+            try applyWindowUpdate(frame)
+            signalWindowWaiters()
+        case 0x09 where frame.streamID == 1 && collectingResponseHeaders:
+            responseHeaderBlock.append(try continuationPayload(from: frame))
+            if frame.flags & 0x04 != 0 {
+                collectingResponseHeaders = false
+                completeResponseHeaders()
+            }
+        default:
+            break
+        }
+        return Data()
+    }
+
+    func finish(error: Error?) {
+        if let error, !(error is CancellationError) {
+            terminalError = error
+            if responseResult == nil {
+                failResponse(error)
+            }
+        } else if responseResult == nil {
+            failResponse(TransportError.remoteClosed)
+        }
+        reachedEOF = true
+        signalPayloadWaiters()
+        signalWindowWaiters()
+    }
+
+    private func bufferInboundData(_ frame: HTTP2ClientFrame) throws -> Data {
+        let payload = try dataPayload(from: frame)
+        if !payload.isEmpty {
+            payloadBuffer.append(payload)
+            signalPayloadWaiters()
+        }
+        if frame.flags & 0x01 != 0 {
+            reachedEOF = true
+            if responseResult == nil {
+                failResponse(TransportError.invalidConfiguration("invalid http2 response"))
+            }
+            signalPayloadWaiters()
+        }
+        return Data()
+    }
+
+    private func dataPayload(from frame: HTTP2ClientFrame) throws -> Data {
+        guard frame.flags & 0x08 != 0 else { return frame.payload }
+        guard let padLength = frame.payload.first else {
+            throw TransportError.invalidConfiguration("invalid http2 data frame")
+        }
+        guard frame.payload.count >= 1 + Int(padLength) else {
+            throw TransportError.invalidConfiguration("invalid http2 data frame")
+        }
+        return frame.payload.subdata(in: 1..<(frame.payload.count - Int(padLength)))
+    }
+
+    private func headerPayload(from frame: HTTP2ClientFrame) throws -> Data {
+        var start = 0
+        var end = frame.payload.count
+        if frame.flags & 0x08 != 0 {
+            guard let padLength = frame.payload.first, frame.payload.count >= 1 + Int(padLength) else {
+                throw TransportError.invalidConfiguration("invalid http2 headers frame")
+            }
+            start = 1
+            end -= Int(padLength)
+        }
+        if frame.flags & 0x20 != 0 {
+            guard end - start >= 5 else {
+                throw TransportError.invalidConfiguration("invalid http2 headers frame")
+            }
+            start += 5
+        }
+        return frame.payload.subdata(in: start..<end)
+    }
+
+    private func continuationPayload(from frame: HTTP2ClientFrame) throws -> Data {
+        guard frame.flags & 0x08 == 0 else {
+            throw TransportError.invalidConfiguration("invalid http2 continuation frame")
+        }
+        return frame.payload
+    }
+
+    private func applySettings(_ payload: Data) throws {
+        guard payload.count % 6 == 0 else {
+            throw TransportError.invalidConfiguration("invalid http2 settings frame")
+        }
+        var cursor = payload.startIndex
+        while cursor < payload.endIndex {
+            let identifier = UInt16(payload[cursor]) << 8 | UInt16(payload[payload.index(after: cursor)])
+            let valueStart = payload.index(cursor, offsetBy: 2)
+            let value = (Int(payload[valueStart]) << 24)
+                | (Int(payload[payload.index(valueStart, offsetBy: 1)]) << 16)
+                | (Int(payload[payload.index(valueStart, offsetBy: 2)]) << 8)
+                | Int(payload[payload.index(valueStart, offsetBy: 3)])
+            if identifier == 0x04 {
+                guard value <= 0x7fff_ffff else {
+                    throw TransportError.invalidConfiguration("invalid http2 initial window size")
+                }
+                streamSendWindow += value - peerInitialStreamWindow
+                peerInitialStreamWindow = value
+            }
+            cursor = payload.index(cursor, offsetBy: 6)
+        }
+    }
+
+    private func applyWindowUpdate(_ frame: HTTP2ClientFrame) throws {
+        guard frame.payload.count == 4 else {
+            throw TransportError.invalidConfiguration("invalid http2 window update")
+        }
+        let increment = (Int(frame.payload[0] & 0x7f) << 24)
+            | (Int(frame.payload[1]) << 16)
+            | (Int(frame.payload[2]) << 8)
+            | Int(frame.payload[3])
+        guard increment > 0, increment <= 0x7fff_ffff else {
+            throw TransportError.invalidConfiguration("invalid http2 window update increment")
+        }
+        if frame.streamID == 0 {
+            connectionSendWindow += increment
+        } else if frame.streamID == 1 {
+            streamSendWindow += increment
+        }
+    }
+
+    private func completeResponseHeaders() {
+        if isSuccessfulResponseHeaderBlock(responseHeaderBlock) {
+            responseResult = .success(())
+            for waiter in responseWaiters { waiter.resume() }
+        } else {
+            failResponse(TransportError.invalidConfiguration("invalid http2 response"))
+        }
+        responseWaiters.removeAll()
+        responseHeaderBlock.removeAll()
+    }
+
+    private func failResponse(_ error: Error) {
+        responseResult = .failure(error)
+        for waiter in responseWaiters { waiter.resume(throwing: error) }
+        responseWaiters.removeAll()
+    }
+
+    private func signalPayloadWaiters() {
+        let waiters = payloadWaiters
+        payloadWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+
+    private func signalWindowWaiters() {
+        let waiters = windowWaiters
+        windowWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
+
+    private func isSuccessfulResponseHeaderBlock(_ block: Data) -> Bool {
+        var cursor = block.startIndex
+        while cursor < block.endIndex {
+            let byte = block[cursor]
+            if byte & 0x80 != 0 {
+                let index = Int(byte & 0x7f)
+                cursor = block.index(after: cursor)
+                if index == 8 { return true }
+                if (9...14).contains(index) { return false }
+            } else if byte & 0xc0 == 0x40 {
+                let nameIndex = Int(byte & 0x3f)
+                cursor = block.index(after: cursor)
+                if nameIndex == 0 {
+                    guard let name = readHPACKString(block, cursor: &cursor) else { return false }
+                    guard let value = readHPACKString(block, cursor: &cursor) else { return false }
+                    if name == ":status" { return value.hasPrefix("2") }
+                } else {
+                    guard let value = readHPACKString(block, cursor: &cursor) else { return false }
+                    if nameIndex == 8 { return value.hasPrefix("2") }
+                }
+            } else if byte & 0xf0 == 0x00 || byte & 0xf0 == 0x10 {
+                let nameIndex = Int(byte & 0x0f)
+                cursor = block.index(after: cursor)
+                if nameIndex == 0 {
+                    guard let name = readHPACKString(block, cursor: &cursor) else { return false }
+                    guard let value = readHPACKString(block, cursor: &cursor) else { return false }
+                    if name == ":status" { return value.hasPrefix("2") }
+                } else {
+                    guard let value = readHPACKString(block, cursor: &cursor) else { return false }
+                    if nameIndex == 8 { return value.hasPrefix("2") }
+                }
+            } else {
+                return false
+            }
+        }
+        return false
+    }
+
+    private func readHPACKString(_ block: Data, cursor: inout Data.Index) -> String? {
+        guard cursor < block.endIndex else { return nil }
+        let first = block[cursor]
+        guard first & 0x80 == 0 else { return nil }
+        let length = Int(first & 0x7f)
+        cursor = block.index(after: cursor)
+        guard block.distance(from: cursor, to: block.endIndex) >= length else { return nil }
+        let end = block.index(cursor, offsetBy: length)
+        let data = block[cursor..<end]
+        cursor = end
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func windowUpdateFrame(byteCount: Int, streamID: UInt32) -> Data {
+        let payload = Data([
+            UInt8((byteCount >> 24) & 0x7f),
+            UInt8((byteCount >> 16) & 0xff),
+            UInt8((byteCount >> 8) & 0xff),
+            UInt8(byteCount & 0xff)
+        ])
+        return frame(type: 0x08, flags: 0x00, streamID: streamID, payload: payload)
+    }
+
+    private static func frame(type: UInt8, flags: UInt8, streamID: UInt32, payload: Data) -> Data {
+        var frame = Data([
+            UInt8((payload.count >> 16) & 0xff),
+            UInt8((payload.count >> 8) & 0xff),
+            UInt8(payload.count & 0xff),
+            type,
+            flags,
+            UInt8((streamID >> 24) & 0x7f),
+            UInt8((streamID >> 16) & 0xff),
+            UInt8((streamID >> 8) & 0xff),
+            UInt8(streamID & 0xff)
+        ])
+        frame.append(payload)
+        return frame
+    }
+}
+
 public struct HTTP2TransportAdapter<Underlying: TransportAdapter>: TransportAdapter {
     public let supportedTransport: TransportType = .http2
     private let underlying: Underlying

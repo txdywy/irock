@@ -1134,6 +1134,334 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(first, Data("hello".utf8))
         XCTAssertEqual(second, Data("-world".utf8))
     }
+
+    func testHTTP2ClientByteStreamStartsWithPrefaceSettingsHeadersAndInitialData() async throws {
+        let underlying = RecordingTransportByteStream(reads: [nil])
+        let stream = HTTP2ClientByteStream(
+            underlying: underlying,
+            authority: "edge.example.com",
+            path: "/ray",
+            initialPayload: Data("open".utf8)
+        )
+
+        try await stream.start()
+
+        let frames = http2Frames(in: underlying.writes.reduce(Data(), +))
+        XCTAssertEqual(frames.count, 3)
+        XCTAssertEqual(frames[0].type, 0x04)
+        XCTAssertEqual(frames[0].flags, 0x00)
+        XCTAssertEqual(frames[0].streamID, 0)
+        XCTAssertEqual(frames[0].payload, Data())
+        XCTAssertEqual(frames[1].type, 0x01)
+        XCTAssertEqual(frames[1].flags, 0x04)
+        XCTAssertEqual(frames[1].streamID, 1)
+        XCTAssertTrue(frames[1].payload.contains(Data([0x83])))
+        XCTAssertTrue(frames[1].payload.contains(Data([0x87])))
+        XCTAssertTrue(frames[1].payload.contains(Data("/ray".utf8)))
+        XCTAssertTrue(frames[1].payload.contains(Data("edge.example.com".utf8)))
+        XCTAssertTrue(frames[1].payload.contains(Data("application/octet-stream".utf8)))
+        XCTAssertEqual(frames[2].type, 0x00)
+        XCTAssertEqual(frames[2].flags, 0x00)
+        XCTAssertEqual(frames[2].streamID, 1)
+        XCTAssertEqual(frames[2].payload, Data("open".utf8))
+    }
+
+    func testHTTP2ClientByteStreamLargeInitialDataWaitsForWindowUpdatesAfterReaderPumpStarts() async throws {
+        let windowUpdates = http2Frame(type: 0x08, flags: 0x00, streamID: 0, payload: Data([0x00, 0x00, 0x11, 0x71]))
+            + http2Frame(type: 0x08, flags: 0x00, streamID: 1, payload: Data([0x00, 0x00, 0x11, 0x71]))
+        let underlying = ControllableTransportByteStream()
+        let initialPayload = Data(repeating: 0x44, count: 70_000)
+        let stream = HTTP2ClientByteStream(underlying: underlying, authority: "edge.example.com", path: "/ray", initialPayload: initialPayload)
+
+        let startTask = Task { try await stream.start() }
+        let initialWrites = await underlying.waitForWriteCount(5)
+        let initialDataFrames = http2DataFrames(in: initialWrites)
+        XCTAssertEqual(initialDataFrames.map(\.payload.count).reduce(0, +), 65_535)
+
+        underlying.enqueueRead(windowUpdates)
+        try await startTask.value
+
+        let allDataFrames = http2DataFrames(in: underlying.writes)
+        XCTAssertEqual(allDataFrames.map(\.payload.count).reduce(0, +), 70_000)
+        await stream.close()
+    }
+
+    func testHTTP2ClientByteStreamWritesDataFrames() async throws {
+        let underlying = RecordingTransportByteStream(reads: [nil])
+        let stream = HTTP2ClientByteStream(underlying: underlying, authority: "edge.example.com", path: "/ray")
+        try await stream.start()
+
+        try await stream.write(Data("ping".utf8))
+
+        XCTAssertEqual(underlying.writes.count, 2)
+        let frames = http2Frames(in: underlying.writes[1])
+        XCTAssertEqual(frames.count, 1)
+        XCTAssertEqual(frames[0].type, 0x00)
+        XCTAssertEqual(frames[0].flags, 0x00)
+        XCTAssertEqual(frames[0].streamID, 1)
+        XCTAssertEqual(frames[0].payload, Data("ping".utf8))
+    }
+
+    func testHTTP2ClientByteStreamCloseWriteOnlyEndsStreamOne() async throws {
+        let underlying = RecordingTransportByteStream(reads: [nil])
+        let stream = HTTP2ClientByteStream(underlying: underlying, authority: "edge.example.com", path: "/ray")
+        try await stream.start()
+
+        await stream.closeWrite()
+
+        XCTAssertFalse(underlying.didCloseWrite)
+        XCTAssertEqual(underlying.writes.count, 2)
+        let frames = http2Frames(in: underlying.writes[1])
+        XCTAssertEqual(frames.count, 1)
+        XCTAssertEqual(frames[0].type, 0x00)
+        XCTAssertEqual(frames[0].flags, 0x01)
+        XCTAssertEqual(frames[0].streamID, 1)
+        XCTAssertEqual(frames[0].payload, Data())
+    }
+
+    func testHTTP2ClientByteStreamWriteHonorsInitialSendWindowThenWindowUpdates() async throws {
+        let windowUpdates = http2Frame(type: 0x08, flags: 0x00, streamID: 0, payload: Data([0x00, 0x00, 0x11, 0x71]))
+            + http2Frame(type: 0x08, flags: 0x00, streamID: 1, payload: Data([0x00, 0x00, 0x11, 0x71]))
+        let underlying = ControllableTransportByteStream()
+        let stream = HTTP2ClientByteStream(underlying: underlying, authority: "edge.example.com", path: "/ray")
+        let payload = Data(repeating: 0x41, count: 70_000)
+        try await stream.start()
+
+        let writeTask = Task { try await stream.write(payload) }
+        let initialWrites = await underlying.waitForWriteCount(5)
+        let initialDataFrames = http2DataFrames(in: initialWrites)
+        XCTAssertEqual(initialDataFrames.map(\.payload.count).reduce(0, +), 65_535)
+        XCTAssertTrue(initialDataFrames.allSatisfy { $0.payload.count <= 16_384 })
+
+        underlying.enqueueRead(windowUpdates)
+        try await writeTask.value
+
+        let allDataFrames = http2DataFrames(in: underlying.writes)
+        XCTAssertEqual(allDataFrames.map(\.payload.count).reduce(0, +), 70_000)
+        XCTAssertTrue(allDataFrames.allSatisfy { $0.payload.count <= 16_384 })
+        await stream.close()
+    }
+
+    func testHTTP2ClientByteStreamAppliesLowerInitialWindowSettingBeforeWrite() async throws {
+        let settings = http2Frame(type: 0x04, flags: 0x00, streamID: 0, payload: Data([0x00, 0x04, 0x00, 0x00, 0x04, 0x00]))
+        let headers = http2Frame(type: 0x01, flags: 0x04, streamID: 1, payload: Data([0x88]))
+        let windowUpdates = http2Frame(type: 0x08, flags: 0x00, streamID: 0, payload: Data([0x00, 0x00, 0x04, 0x00]))
+            + http2Frame(type: 0x08, flags: 0x00, streamID: 1, payload: Data([0x00, 0x00, 0x04, 0x00]))
+        let underlying = ControllableTransportByteStream(reads: [settings + headers])
+        let stream = HTTP2ClientByteStream(underlying: underlying, authority: "edge.example.com", path: "/ray")
+        try await stream.start()
+        try await stream.waitForResponseHeaders()
+
+        let writeTask = Task { try await stream.write(Data(repeating: 0x42, count: 2_048)) }
+        let initialDataFrames = http2DataFrames(in: await underlying.waitForWriteCount(3))
+        XCTAssertEqual(initialDataFrames.map(\.payload.count).reduce(0, +), 1_024)
+
+        underlying.enqueueRead(windowUpdates)
+        try await writeTask.value
+
+        let allDataFrames = http2DataFrames(in: underlying.writes)
+        XCTAssertEqual(allDataFrames.map(\.payload.count).reduce(0, +), 2_048)
+        await stream.close()
+    }
+
+    func testHTTP2ClientByteStreamWriteBuffersInboundDataWhileWaitingForWindowUpdate() async throws {
+        let inboundData = http2Frame(type: 0x00, flags: 0x00, streamID: 1, payload: Data("reply".utf8))
+        let windowUpdates = http2Frame(type: 0x08, flags: 0x00, streamID: 0, payload: Data([0x00, 0x00, 0x11, 0x71]))
+            + http2Frame(type: 0x08, flags: 0x00, streamID: 1, payload: Data([0x00, 0x00, 0x11, 0x71]))
+        let underlying = ControllableTransportByteStream(reads: [inboundData])
+        let stream = HTTP2ClientByteStream(underlying: underlying, authority: "edge.example.com", path: "/ray")
+        try await stream.start()
+
+        let writeTask = Task { try await stream.write(Data(repeating: 0x43, count: 70_000)) }
+        _ = await underlying.waitForWriteCount(5)
+        underlying.enqueueRead(windowUpdates)
+        try await writeTask.value
+        let reply = try await stream.read(maxLength: 64)
+
+        XCTAssertEqual(reply, Data("reply".utf8))
+        await stream.close()
+    }
+
+    func testHTTP2ClientByteStreamReadsDataAndPreservesRemainder() async throws {
+        let serverSettings = http2Frame(type: 0x04, flags: 0x00, streamID: 0, payload: Data())
+        let windowUpdate = http2Frame(type: 0x08, flags: 0x00, streamID: 0, payload: Data([0x00, 0x00, 0x10, 0x00]))
+        let serverData = http2Frame(type: 0x00, flags: 0x00, streamID: 1, payload: Data("hello-world".utf8))
+        let underlying = RecordingTransportByteStream(reads: [serverSettings + windowUpdate + serverData, nil])
+        let stream = HTTP2ClientByteStream(underlying: underlying, authority: "edge.example.com", path: "/ray")
+        try await stream.start()
+
+        let first = try await stream.read(maxLength: 5)
+        let second = try await stream.read(maxLength: 64)
+
+        XCTAssertEqual(first, Data("hello".utf8))
+        XCTAssertEqual(second, Data("-world".utf8))
+        XCTAssertEqual(underlying.writes.count, 4)
+        XCTAssertEqual(http2Frames(in: underlying.writes[1]).first?.type, 0x04)
+        XCTAssertEqual(http2Frames(in: underlying.writes[1]).first?.flags, 0x01)
+        let firstUpdates = http2Frames(in: underlying.writes[2])
+        XCTAssertEqual(firstUpdates.count, 2)
+        XCTAssertEqual(firstUpdates[0].type, 0x08)
+        XCTAssertEqual(firstUpdates[0].streamID, 0)
+        XCTAssertEqual(firstUpdates[0].payload, Data([0x00, 0x00, 0x00, 0x05]))
+        XCTAssertEqual(firstUpdates[1].type, 0x08)
+        XCTAssertEqual(firstUpdates[1].streamID, 1)
+        XCTAssertEqual(firstUpdates[1].payload, Data([0x00, 0x00, 0x00, 0x05]))
+        let secondUpdates = http2Frames(in: underlying.writes[3])
+        XCTAssertEqual(secondUpdates.count, 2)
+        XCTAssertEqual(secondUpdates[0].type, 0x08)
+        XCTAssertEqual(secondUpdates[0].streamID, 0)
+        XCTAssertEqual(secondUpdates[0].payload, Data([0x00, 0x00, 0x00, 0x06]))
+        XCTAssertEqual(secondUpdates[1].type, 0x08)
+        XCTAssertEqual(secondUpdates[1].streamID, 1)
+        XCTAssertEqual(secondUpdates[1].payload, Data([0x00, 0x00, 0x00, 0x06]))
+    }
+
+    func testHTTP2ClientByteStreamDelaysWindowUpdatesUntilInboundDataIsRead() async throws {
+        let inboundData = http2Frame(type: 0x00, flags: 0x00, streamID: 1, payload: Data("reply".utf8))
+        let underlying = RecordingTransportByteStream(reads: [inboundData, nil])
+        let stream = HTTP2ClientByteStream(underlying: underlying, authority: "edge.example.com", path: "/ray")
+        try await stream.start()
+
+        let reply = try await stream.read(maxLength: 2)
+
+        XCTAssertEqual(reply, Data("re".utf8))
+        let updates = underlying.writes.dropFirst().flatMap { http2Frames(in: $0) }.filter { $0.type == 0x08 }
+        XCTAssertEqual(updates.count, 2)
+        XCTAssertEqual(updates[0].streamID, 0)
+        XCTAssertEqual(updates[0].payload, Data([0x00, 0x00, 0x00, 0x02]))
+        XCTAssertEqual(updates[1].streamID, 1)
+        XCTAssertEqual(updates[1].payload, Data([0x00, 0x00, 0x00, 0x02]))
+    }
+
+    func testHTTP2ClientByteStreamHandlesPaddedDataAndPriorityHeaders() async throws {
+        let priority = Data([0x00, 0x00, 0x00, 0x00, 0x10])
+        let headers = http2Frame(type: 0x01, flags: 0x2c, streamID: 1, payload: Data([0x00]) + priority + Data([0x88]))
+        let dataPayload = Data([0x02]) + Data("ok".utf8) + Data([0x00, 0x00])
+        let data = http2Frame(type: 0x00, flags: 0x08, streamID: 1, payload: dataPayload)
+        let underlying = RecordingTransportByteStream(reads: [headers + data, nil])
+        let stream = HTTP2ClientByteStream(underlying: underlying, authority: "edge.example.com", path: "/ray")
+        try await stream.start()
+
+        try await stream.waitForResponseHeaders()
+        let reply = try await stream.read(maxLength: 64)
+
+        XCTAssertEqual(reply, Data("ok".utf8))
+        let updates = underlying.writes.dropFirst().flatMap { http2Frames(in: $0) }.filter { $0.type == 0x08 }
+        XCTAssertEqual(updates.count, 2)
+        XCTAssertEqual(updates[0].payload, Data([0x00, 0x00, 0x00, 0x02]))
+        XCTAssertEqual(updates[1].payload, Data([0x00, 0x00, 0x00, 0x02]))
+    }
+
+    func testHTTP2ClientByteStreamWaitForResponseHeadersAccepts2xxStatus() async throws {
+        let headers = http2Frame(type: 0x01, flags: 0x04, streamID: 1, payload: Data([0x88]))
+        let underlying = RecordingTransportByteStream(reads: [headers, nil])
+        let stream = HTTP2ClientByteStream(underlying: underlying, authority: "edge.example.com", path: "/ray")
+        try await stream.start()
+
+        try await stream.waitForResponseHeaders()
+    }
+
+    func testHTTP2ClientByteStreamWaitForResponseHeadersAcceptsLiteralIndexedStatus() async throws {
+        let headers = http2Frame(type: 0x01, flags: 0x04, streamID: 1, payload: Data([0x48, 0x03]) + Data("200".utf8))
+        let underlying = RecordingTransportByteStream(reads: [headers, nil])
+        let stream = HTTP2ClientByteStream(underlying: underlying, authority: "edge.example.com", path: "/ray")
+        try await stream.start()
+
+        try await stream.waitForResponseHeaders()
+    }
+
+    func testHTTP2ClientByteStreamWaitForResponseHeadersCombinesContinuation() async throws {
+        let headers = http2Frame(type: 0x01, flags: 0x00, streamID: 1, payload: Data([0x48]))
+        let continuation = http2Frame(type: 0x09, flags: 0x04, streamID: 1, payload: Data([0x03]) + Data("200".utf8))
+        let underlying = RecordingTransportByteStream(reads: [headers + continuation, nil])
+        let stream = HTTP2ClientByteStream(underlying: underlying, authority: "edge.example.com", path: "/ray")
+        try await stream.start()
+
+        try await stream.waitForResponseHeaders()
+    }
+
+    func testHTTP2ClientByteStreamWaitForResponseHeadersRejectsNon2xxAndReset() async throws {
+        let non2xx = http2Frame(type: 0x01, flags: 0x04, streamID: 1, payload: Data([0x8d]))
+        let reset = http2Frame(type: 0x03, flags: 0x00, streamID: 1, payload: Data([0x00, 0x00, 0x00, 0x00]))
+
+        for frame in [non2xx, reset] {
+            let underlying = RecordingTransportByteStream(reads: [frame, nil])
+            let stream = HTTP2ClientByteStream(underlying: underlying, authority: "edge.example.com", path: "/ray")
+            try await stream.start()
+
+            do {
+                try await stream.waitForResponseHeaders()
+                XCTFail("Expected HTTP/2 response rejection")
+            } catch let error as TransportError {
+                XCTAssertEqual(error, .invalidConfiguration("invalid http2 response"))
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testHTTP2ClientByteStreamTreatsEndStreamAndResetAsEOF() async throws {
+        let endStream = http2Frame(type: 0x00, flags: 0x01, streamID: 1, payload: Data())
+        let reset = http2Frame(type: 0x03, flags: 0x00, streamID: 1, payload: Data([0x00, 0x00, 0x00, 0x00]))
+
+        for frame in [endStream, reset] {
+            let underlying = RecordingTransportByteStream(reads: [frame, nil])
+            let stream = HTTP2ClientByteStream(underlying: underlying, authority: "edge.example.com", path: "/ray")
+            try await stream.start()
+
+            let data = try await stream.read(maxLength: 64)
+
+            XCTAssertNil(data)
+        }
+    }
+}
+
+private struct HTTP2Frame: Equatable {
+    let type: UInt8
+    let flags: UInt8
+    let streamID: UInt32
+    let payload: Data
+}
+
+private func http2Frame(type: UInt8, flags: UInt8, streamID: UInt32, payload: Data) -> Data {
+    var frame = Data([
+        UInt8((payload.count >> 16) & 0xff),
+        UInt8((payload.count >> 8) & 0xff),
+        UInt8(payload.count & 0xff),
+        type,
+        flags,
+        UInt8((streamID >> 24) & 0x7f),
+        UInt8((streamID >> 16) & 0xff),
+        UInt8((streamID >> 8) & 0xff),
+        UInt8(streamID & 0xff)
+    ])
+    frame.append(payload)
+    return frame
+}
+
+private func http2Frames(in data: Data.SubSequence) -> [HTTP2Frame] {
+    var frames: [HTTP2Frame] = []
+    let preface = Data("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".utf8)
+    var cursor = data.starts(with: preface) ? data.index(data.startIndex, offsetBy: preface.count) : data.startIndex
+    while data.distance(from: cursor, to: data.endIndex) >= 9 {
+        let length = Int(data[cursor]) << 16 | Int(data[data.index(cursor, offsetBy: 1)]) << 8 | Int(data[data.index(cursor, offsetBy: 2)])
+        guard data.distance(from: cursor, to: data.endIndex) >= 9 + length else { break }
+        let type = data[data.index(cursor, offsetBy: 3)]
+        let flags = data[data.index(cursor, offsetBy: 4)]
+        let streamID = (UInt32(data[data.index(cursor, offsetBy: 5)] & 0x7f) << 24)
+            | (UInt32(data[data.index(cursor, offsetBy: 6)]) << 16)
+            | (UInt32(data[data.index(cursor, offsetBy: 7)]) << 8)
+            | UInt32(data[data.index(cursor, offsetBy: 8)])
+        let payloadStart = data.index(cursor, offsetBy: 9)
+        let payloadEnd = data.index(payloadStart, offsetBy: length)
+        frames.append(HTTP2Frame(type: type, flags: flags, streamID: streamID, payload: Data(data[payloadStart..<payloadEnd])))
+        cursor = payloadEnd
+    }
+    return frames
+}
+
+private func http2DataFrames(in writes: [Data]) -> [HTTP2Frame] {
+    writes.flatMap { http2Frames(in: $0) }.filter { $0.type == 0x00 && $0.streamID == 1 && !$0.payload.isEmpty }
 }
 
 private struct TransportAdapterRequest: Equatable {
@@ -1264,6 +1592,7 @@ private final class RecordingQUICStreamDialer: QUICStreamDialer, @unchecked Send
 }
 
 private final class RecordingTransportByteStream: TransportByteStream, @unchecked Sendable {
+    private let queue = DispatchQueue(label: "RecordingTransportByteStream")
     private var reads: [Data?]
     private var storedWrites: [Data] = []
     private var closeWriteCalled = false
@@ -1273,25 +1602,123 @@ private final class RecordingTransportByteStream: TransportByteStream, @unchecke
         self.reads = reads
     }
 
-    var writes: [Data] { storedWrites }
-    var didCloseWrite: Bool { closeWriteCalled }
-    var didClose: Bool { closeCalled }
+    var writes: [Data] {
+        queue.sync { storedWrites }
+    }
+
+    var didCloseWrite: Bool {
+        queue.sync { closeWriteCalled }
+    }
+
+    var didClose: Bool {
+        queue.sync { closeCalled }
+    }
 
     func read(maxLength: Int) async throws -> Data? {
-        guard !reads.isEmpty else { return nil }
-        return reads.removeFirst()
+        queue.sync {
+            guard !reads.isEmpty else { return nil }
+            return reads.removeFirst()
+        }
     }
 
     func write(_ data: Data) async throws {
-        storedWrites.append(data)
+        queue.sync {
+            storedWrites.append(data)
+        }
     }
 
     func closeWrite() async {
-        closeWriteCalled = true
+        queue.sync {
+            closeWriteCalled = true
+        }
     }
 
     func close() async {
-        closeCalled = true
+        queue.sync {
+            closeCalled = true
+        }
+    }
+}
+
+private final class ControllableTransportByteStream: TransportByteStream, @unchecked Sendable {
+    private let queue = DispatchQueue(label: "ControllableTransportByteStream")
+    private var reads: [Data?]
+    private var readWaiters: [CheckedContinuation<Data?, Never>] = []
+    private var writeWaiters: [(Int, CheckedContinuation<[Data], Never>)] = []
+    private var storedWrites: [Data] = []
+    private var closeCalled = false
+
+    init(reads: [Data] = []) {
+        self.reads = reads.map { Optional($0) }
+    }
+
+    var writes: [Data] {
+        queue.sync { storedWrites }
+    }
+
+    func enqueueRead(_ data: Data?) {
+        let waiter = queue.sync { () -> CheckedContinuation<Data?, Never>? in
+            if readWaiters.isEmpty {
+                reads.append(data)
+                return nil
+            }
+            return readWaiters.removeFirst()
+        }
+        waiter?.resume(returning: data)
+    }
+
+    func read(maxLength: Int) async throws -> Data? {
+        let queued = queue.sync { () -> (available: Bool, data: Data?) in
+            guard !reads.isEmpty else { return (false, nil) }
+            return (true, reads.removeFirst())
+        }
+        if queued.available {
+            return queued.data
+        }
+        return await withCheckedContinuation { continuation in
+            queue.sync {
+                readWaiters.append(continuation)
+            }
+        }
+    }
+
+    func write(_ data: Data) async throws {
+        let ready = queue.sync { () -> [(CheckedContinuation<[Data], Never>, [Data])] in
+            storedWrites.append(data)
+            let readyWaiters = writeWaiters.filter { storedWrites.count >= $0.0 }
+            writeWaiters.removeAll { storedWrites.count >= $0.0 }
+            let writes = storedWrites
+            return readyWaiters.map { ($0.1, writes) }
+        }
+        for (waiter, writes) in ready {
+            waiter.resume(returning: writes)
+        }
+    }
+
+    func waitForWriteCount(_ count: Int) async -> [Data] {
+        let current = queue.sync { storedWrites.count >= count ? storedWrites : nil }
+        if let current {
+            return current
+        }
+        return await withCheckedContinuation { continuation in
+            queue.sync {
+                writeWaiters.append((count, continuation))
+            }
+        }
+    }
+
+    func closeWrite() async {}
+
+    func close() async {
+        let waiters = queue.sync { () -> [CheckedContinuation<Data?, Never>] in
+            closeCalled = true
+            let waiters = readWaiters
+            readWaiters.removeAll()
+            return waiters
+        }
+        for waiter in waiters {
+            waiter.resume(returning: nil)
+        }
     }
 }
 

@@ -74,7 +74,7 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         case .trojan:
             return node.transport == .tcp
         case .vmess:
-            return (node.transport == .tcp || node.transport == .webSocket)
+            return (node.transport == .tcp || node.transport == .webSocket || node.transport == .http2)
                 && node.tls.enabled
                 && node.tls.fingerprint == nil
                 && node.tls.reality == nil
@@ -312,6 +312,8 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         switch node.transport {
         case .webSocket:
             try openWebSocketTLSOutboundAndRelay(client: client, node: node, tls: tls, initialPayload: request.openBytes, sendSuccess: sendSuccess)
+        case .http2:
+            try openHTTP2TLSOutboundAndRelay(client: client, node: node, tls: tls, initialPayload: request.openBytes, sendSuccess: sendSuccess)
         default:
             try openTLSOutboundAndRelay(client: client, node: node, tls: tls, initialPayload: request.openBytes, sendSuccess: sendSuccess)
         }
@@ -332,6 +334,38 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         try runAsync { try await tlsStream.start() }
         try runAsync { try await stream.start() }
         do {
+            try sendSuccess()
+            relay(local: client, stream: stream)
+        } catch {
+            try? runAsync { await stream.close() }
+            throw error
+        }
+    }
+
+    private func openHTTP2TLSOutboundAndRelay(client: Int32, node: ProxyNode, tls: TLSOptions, initialPayload: Data, sendSuccess: () throws -> Void) throws {
+        guard let options = node.transportOptions.http2 else {
+            throw TransportError.invalidConfiguration("missing http2 options")
+        }
+        let alpn = ["h2"] + tls.alpn.filter { $0 != "h2" }
+        let http2TLS = TLSOptions(
+            enabled: true,
+            serverName: tls.serverName,
+            allowInsecure: tls.allowInsecure,
+            alpn: alpn,
+            fingerprint: tls.fingerprint,
+            reality: tls.reality
+        )
+        let tlsStream = try MacOSTLSByteStream(host: node.serverHost, port: node.serverPort, tls: http2TLS, initialPayload: nil)
+        let stream = HTTP2ClientByteStream(
+            underlying: tlsStream,
+            authority: options.authority ?? node.tls.serverName ?? node.serverHost,
+            path: options.path,
+            initialPayload: initialPayload
+        )
+        try runAsync { try await tlsStream.start() }
+        do {
+            try runAsync { try await stream.start() }
+            try runAsync { try await stream.waitForResponseHeaders() }
             try sendSuccess()
             relay(local: client, stream: stream)
         } catch {
