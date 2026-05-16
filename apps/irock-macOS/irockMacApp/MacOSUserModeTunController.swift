@@ -1,10 +1,61 @@
 import Foundation
 import IrockAppFeature
 import IrockCore
+import IrockNativeHysteria2
 import IrockProtocols
 import IrockStorage
 import IrockTransport
 import IrockTunnelCore
+
+private struct NativeTunTransportByteStream: TransportByteStream {
+    let stream: any NativeHysteria2ByteStream
+
+    func read(maxLength: Int) async throws -> Data? {
+        try await stream.read(maxLength: maxLength)
+    }
+
+    func write(_ data: Data) async throws {
+        try await stream.write(data)
+    }
+
+    func closeWrite() async {
+        try? await stream.closeWrite()
+    }
+
+    func close() async {
+        await stream.close()
+    }
+}
+
+private struct NativeTunTUICQUICSession: TUICQUICSession {
+    let session: NativeHysteria2Session
+
+    func exportKeyingMaterial(label: Data, context: Data, length: Int) async throws -> Data {
+        try await session.exportKeyingMaterial(label: label, context: context, length: length)
+    }
+
+    func openUnidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream {
+        NativeTunTransportByteStream(stream: try await session.openRawUnidirectionalStream(initialPayload: initialPayload))
+    }
+
+    func openBidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream {
+        NativeTunTransportByteStream(stream: try await session.openRawBidirectionalStream(initialPayload: initialPayload))
+    }
+}
+
+private struct NativeTUICQUICSessionDialer: TUICQUICSessionDialer {
+    func openSession(host: String, port: Int, tls: TLSOptions?, metadata: [String: String]) async throws -> any TUICQUICSession {
+        let configuration = try NativeHysteria2ClientConfiguration(
+            serverHost: host,
+            serverPort: port,
+            serverName: tls?.serverName ?? host,
+            alpn: tls?.alpn.isEmpty == false ? tls?.alpn ?? ["h3"] : ["h3"],
+            allowInsecure: tls?.allowInsecure ?? false,
+            certificatePinSHA256: tls?.fingerprint
+        )
+        return NativeTunTUICQUICSession(session: try await NativeHysteria2Client(configuration: configuration).connectQUICSession())
+    }
+}
 
 final class MacOSUserModeTunAuthorizationController: UserModeTunAuthorizationControlling {
     func requestAuthorization() -> UserModeTunAuthorizationResult {
@@ -137,23 +188,77 @@ final class MacOSUserModeTunController: UserModeTunControlling {
         let batchLimit = batchLimit
         let flowLimit = flowLimit
         return Task.detached(priority: .userInitiated) {
-            while !Task.isCancelled {
-                do {
-                    let stores = try runtimeStores ?? storeResolver.makeRuntimeStoreBundle()
-                    _ = try await TunnelRuntimeController.runShadowsocksTCPBatch(
+            do {
+                let stores = try runtimeStores ?? storeResolver.makeRuntimeStoreBundle()
+                switch node.protocolType {
+                case .vmess where node.transport == .grpc:
+                    let runtime = try TunnelRuntimeController.makeVMessGRPCSession(
                         snapshotStore: stores.snapshotStore,
                         flow: MacOSUserModeTunPacketFlowIO(fileDescriptor: fileDescriptor),
                         statusStore: stores.statusStore,
                         logStore: stores.logStore,
-                        plain: TCPTransportAdapter(dialer: MacOSPlatformTCPDialer()),
-                        tls: UnsupportedTransportAdapter(transport: .tcp),
-                        credentialResolver: MacOSImportedShadowsocksCredentialResolver(nodeID: node.id, credential: credential),
+                        stream: MacOSPlatformTCPByteStreamDialer(),
+                        credentialResolver: MacOSImportedProxyCredentialResolver(nodeID: node.id, credential: credential),
+                        udpDatagramForwarder: DirectUDPDatagramForwarder(client: MacOSPlatformUDPDatagramClient()),
                         batchLimit: batchLimit,
                         flowLimit: flowLimit
                     )
-                } catch {
-                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    while !Task.isCancelled {
+                        do {
+                            _ = try await runtime.runOnce()
+                        } catch {
+                            try? await Task.sleep(nanoseconds: 50_000_000)
+                        }
+                    }
+                    await runtime.closeProxyConnections()
+                case .tuic:
+                    let runtime = try TunnelRuntimeController.makeTUICQUICSession(
+                        snapshotStore: stores.snapshotStore,
+                        flow: MacOSUserModeTunPacketFlowIO(fileDescriptor: fileDescriptor),
+                        statusStore: stores.statusStore,
+                        logStore: stores.logStore,
+                        sessionDialer: NativeTUICQUICSessionDialer(),
+                        credentialResolver: MacOSImportedProxyCredentialResolver(nodeID: node.id, credential: credential),
+                        udpDatagramForwarder: DirectUDPDatagramForwarder(client: MacOSPlatformUDPDatagramClient()),
+                        batchLimit: batchLimit,
+                        flowLimit: flowLimit
+                    )
+                    while !Task.isCancelled {
+                        do {
+                            _ = try await runtime.runOnce()
+                        } catch {
+                            try? await Task.sleep(nanoseconds: 50_000_000)
+                        }
+                    }
+                    await runtime.closeProxyConnections()
+                default:
+                    let plain = TCPTransportAdapter(dialer: MacOSPlatformTCPDialer())
+                    let tls = UnsupportedTransportAdapter(transport: .tcp)
+                    let credentialResolver = MacOSImportedShadowsocksCredentialResolver(nodeID: node.id, credential: credential)
+                    let registry = RuntimeProxyStack.shadowsocksTCP(plain: plain, tls: tls, credentialResolver: credentialResolver)
+                    let runtime = try TunnelRuntimeController.makeShadowsocksTCPSession(
+                        snapshotStore: stores.snapshotStore,
+                        flow: MacOSUserModeTunPacketFlowIO(fileDescriptor: fileDescriptor),
+                        statusStore: stores.statusStore,
+                        logStore: stores.logStore,
+                        plain: plain,
+                        tls: tls,
+                        credentialResolver: credentialResolver,
+                        udpDatagramForwarder: ProtocolUDPDatagramForwarder(client: MacOSPlatformUDPDatagramClient(), proxyAdapterRegistry: registry),
+                        batchLimit: batchLimit,
+                        flowLimit: flowLimit
+                    )
+                    while !Task.isCancelled {
+                        do {
+                            _ = try await runtime.runOnce()
+                        } catch {
+                            try? await Task.sleep(nanoseconds: 50_000_000)
+                        }
+                    }
+                    await runtime.closeProxyConnections()
                 }
+            } catch {
+                try? await Task.sleep(nanoseconds: 50_000_000)
             }
         }
     }

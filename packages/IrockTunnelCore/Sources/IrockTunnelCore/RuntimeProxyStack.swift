@@ -26,6 +26,28 @@ public struct RuntimeProxyStack: Sendable {
         return ProxyAdapterRegistry(adapters: [vmess])
     }
 
+    public static func vmessGRPC<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver
+    ) -> ProxyAdapterRegistry {
+        let selector = TCPTLSTransportAdapter(plain: plain, tls: tls)
+        let grpc = GRPCTransportAdapter(underlying: selector)
+        let transportRegistry = TransportAdapterRegistry(adapters: [grpc])
+        let vmess = VMessProxyAdapter(transportRegistry: transportRegistry, credentialResolver: credentialResolver)
+        return ProxyAdapterRegistry(adapters: [vmess])
+    }
+
+    public static func vmessGRPC<Stream: TransportStreamAdapter, CredentialResolver: ProxyCredentialResolver>(
+        stream: Stream,
+        credentialResolver: CredentialResolver
+    ) -> ProxyAdapterRegistry {
+        let grpc = GRPCStreamTransportAdapter(underlying: stream)
+        let streamRegistry = TransportStreamAdapterRegistry(adapters: [grpc])
+        let vmess = VMessProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: []), streamRegistry: streamRegistry, credentialResolver: credentialResolver)
+        return ProxyAdapterRegistry(adapters: [vmess])
+    }
+
     public static func vlessTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
         plain: Plain,
         tls: TLS,
@@ -75,6 +97,14 @@ public struct RuntimeProxyStack: Sendable {
         let tuic = TUICProxyAdapter(transportRegistry: transportRegistry, credentialResolver: credentialResolver)
         return ProxyAdapterRegistry(adapters: [tuic])
     }
+
+    public static func tuicQUIC<SessionDialer: TUICQUICSessionDialer, CredentialResolver: ProxyCredentialResolver>(
+        sessionDialer: SessionDialer,
+        credentialResolver: CredentialResolver
+    ) -> ProxyAdapterRegistry {
+        let tuic = TUICProxyAdapter(sessionDialer: sessionDialer, credentialResolver: credentialResolver)
+        return ProxyAdapterRegistry(adapters: [tuic])
+    }
 }
 
 public extension TunnelRuntimeConfiguration {
@@ -112,6 +142,80 @@ public extension TunnelRuntimeConfiguration {
         )
     }
 
+    static func vmessGRPC<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        routingEngine: RoutingEngine,
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        batchLimit: Int,
+        flowLimit: Int
+    ) -> TunnelRuntimeConfiguration {
+        TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            routingEngine: routingEngine,
+            proxyAdapterRegistry: RuntimeProxyStack.vmessGRPC(plain: plain, tls: tls, credentialResolver: credentialResolver),
+            udpDatagramForwarder: udpDatagramForwarder,
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func vmessGRPC<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> TunnelRuntimeConfiguration {
+        try TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            proxyAdapterRegistry: RuntimeProxyStack.vmessGRPC(plain: plain, tls: tls, credentialResolver: credentialResolver),
+            udpDatagramForwarder: udpDatagramForwarder,
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func vmessGRPC<Stream: TransportStreamAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        routingEngine: RoutingEngine,
+        stream: Stream,
+        credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        batchLimit: Int,
+        flowLimit: Int
+    ) -> TunnelRuntimeConfiguration {
+        TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            routingEngine: routingEngine,
+            proxyAdapterRegistry: RuntimeProxyStack.vmessGRPC(stream: stream, credentialResolver: credentialResolver),
+            udpDatagramForwarder: udpDatagramForwarder,
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func vmessGRPC<Stream: TransportStreamAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        stream: Stream,
+        credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> TunnelRuntimeConfiguration {
+        try TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            proxyAdapterRegistry: RuntimeProxyStack.vmessGRPC(stream: stream, credentialResolver: credentialResolver),
+            udpDatagramForwarder: udpDatagramForwarder,
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
     static func vlessTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
         snapshot: RuntimeSnapshot,
         routingEngine: RoutingEngine,
@@ -242,6 +346,42 @@ public extension TunnelRuntimeConfiguration {
         )
     }
 
+    static func tuicQUIC<SessionDialer: TUICQUICSessionDialer, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        routingEngine: RoutingEngine,
+        sessionDialer: SessionDialer,
+        credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        batchLimit: Int,
+        flowLimit: Int
+    ) -> TunnelRuntimeConfiguration {
+        TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            routingEngine: routingEngine,
+            proxyAdapterRegistry: RuntimeProxyStack.tuicQUIC(sessionDialer: sessionDialer, credentialResolver: credentialResolver),
+            udpDatagramForwarder: udpDatagramForwarder,
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func tuicQUIC<SessionDialer: TUICQUICSessionDialer, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        sessionDialer: SessionDialer,
+        credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> TunnelRuntimeConfiguration {
+        try TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            proxyAdapterRegistry: RuntimeProxyStack.tuicQUIC(sessionDialer: sessionDialer, credentialResolver: credentialResolver),
+            udpDatagramForwarder: udpDatagramForwarder,
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
     static func trojanTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
         snapshot: RuntimeSnapshot,
         routingEngine: RoutingEngine,
@@ -282,6 +422,7 @@ public extension TunnelRuntimeConfiguration {
         plain: Plain,
         tls: TLS,
         credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
         batchLimit: Int,
         flowLimit: Int
     ) -> TunnelRuntimeConfiguration {
@@ -289,6 +430,7 @@ public extension TunnelRuntimeConfiguration {
             snapshot: snapshot,
             routingEngine: routingEngine,
             proxyAdapterRegistry: RuntimeProxyStack.shadowsocksTCP(plain: plain, tls: tls, credentialResolver: credentialResolver),
+            udpDatagramForwarder: udpDatagramForwarder,
             batchLimit: batchLimit,
             flowLimit: flowLimit
         )
@@ -299,12 +441,14 @@ public extension TunnelRuntimeConfiguration {
         plain: Plain,
         tls: TLS,
         credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
         batchLimit: Int,
         flowLimit: Int
     ) throws -> TunnelRuntimeConfiguration {
         try TunnelRuntimeConfiguration(
             snapshot: snapshot,
             proxyAdapterRegistry: RuntimeProxyStack.shadowsocksTCP(plain: plain, tls: tls, credentialResolver: credentialResolver),
+            udpDatagramForwarder: udpDatagramForwarder,
             batchLimit: batchLimit,
             flowLimit: flowLimit
         )

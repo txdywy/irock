@@ -112,7 +112,13 @@ let package = Package(
         ),
         .target(
             name: "IrockTooling",
+            dependencies: ["IrockTunnelCore", "IrockRouting"],
             path: "packages/IrockTooling/Sources/IrockTooling"
+        ),
+        .executableTarget(
+            name: "irock-benchmark-runner",
+            dependencies: ["IrockTooling"],
+            path: "tools/benchmark-runner/Sources"
         ),
         .testTarget(
             name: "IrockToolingTests",

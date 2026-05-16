@@ -1,6 +1,23 @@
 import Foundation
+import IrockCore
 import IrockTransport
 import Network
+
+struct MacOSPlatformTCPByteStreamDialer: TransportStreamAdapter {
+    let supportedTransport: TransportType = .tcp
+
+    func openStream(request: TransportRequest) async throws -> any TransportByteStream {
+        guard request.transport == .tcp else {
+            throw TransportError.unsupportedTransport(request.transport)
+        }
+        guard request.tls?.enabled == true, let tls = request.tls else {
+            throw TransportError.invalidConfiguration("missing tls options")
+        }
+        let stream = try MacOSTLSByteStream(host: request.host, port: request.port, tls: tls, initialPayload: nil)
+        try await stream.start()
+        return stream
+    }
+}
 
 struct MacOSPlatformTCPDialer: TCPDialer {
     private static let queue = DispatchQueue(label: "dev.irock.macos-tcp-dialer")

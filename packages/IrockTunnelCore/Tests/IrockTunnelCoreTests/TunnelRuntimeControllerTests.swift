@@ -1,5 +1,6 @@
 import XCTest
 import IrockCore
+import IrockProtocols
 import IrockStorage
 import IrockTransport
 @testable import IrockTunnelCore
@@ -179,6 +180,113 @@ final class TunnelRuntimeControllerTests: XCTestCase {
         }
     }
 
+    func testRunVMessGRPCBatchLoadsSnapshotAndRunsPacketFlowBatch() async throws {
+        let snapshotStore = InMemoryRuntimeSnapshotStore()
+        try snapshotStore.save(controllerVMessGRPCSnapshot())
+        let packet = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let flow = ControllerRecordingPacketFlowIO(packets: [packet])
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+        let plain = ControllerRecordingTransportAdapter(transport: .tcp)
+        let tlsChild = ControllerRecordingTransportAdapter(transport: .tcp)
+
+        let summary = try await TunnelRuntimeController.runVMessGRPCBatch(
+            snapshotStore: snapshotStore,
+            flow: flow,
+            statusStore: statusStore,
+            logStore: logStore,
+            plain: plain,
+            tls: tlsChild,
+            credentialResolver: TestProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000001"),
+            batchLimit: 16,
+            flowLimit: 32
+        )
+
+        XCTAssertEqual(summary.readCount, 1)
+        XCTAssertEqual(summary.writtenCount, 1)
+        XCTAssertEqual(summary.proxyConnectCount, 1)
+        XCTAssertEqual(flow.readLimits, [16])
+        XCTAssertEqual(flow.writtenResults.count, 1)
+        XCTAssertEqual(plain.requests, [])
+        XCTAssertEqual(tlsChild.requests.count, 1)
+        XCTAssertEqual(tlsChild.requests.first?.metadata["grpcAuthority"], "edge.example.com")
+        XCTAssertEqual(tlsChild.requests.first?.metadata["grpcService"], "/TunnelService/Connect")
+        XCTAssertEqual(tlsChild.requests.first?.metadata["grpcProtocol"], "vmess")
+        let status = try XCTUnwrap(statusStore.load())
+        XCTAssertEqual(status.phase, .connected)
+        XCTAssertEqual(status.selectedNodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(status.selectedNodeName, "VMess gRPC")
+        XCTAssertEqual(status.message, "Packet batch processed")
+        XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Tunnel runtime connected"])
+    }
+
+    func testRunVMessGRPCBatchWithStreamAdapterUsesRetainedGRPCStream() async throws {
+        let snapshotStore = InMemoryRuntimeSnapshotStore()
+        try snapshotStore.save(controllerVMessGRPCSnapshot())
+        let packet = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let flow = ControllerRecordingPacketFlowIO(packets: [packet])
+        let stream = ControllerRecordingByteStream()
+        let streamAdapter = ControllerRecordingTransportStreamAdapter(transport: .tcp, stream: stream)
+
+        let summary = try await TunnelRuntimeController.runVMessGRPCBatch(
+            snapshotStore: snapshotStore,
+            flow: flow,
+            statusStore: InMemoryRuntimeStatusStore(),
+            logStore: InMemoryRuntimeLogStore(),
+            stream: streamAdapter,
+            credentialResolver: TestProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000001"),
+            batchLimit: 16,
+            flowLimit: 32
+        )
+
+        XCTAssertEqual(summary.proxyConnectCount, 1)
+        XCTAssertEqual(streamAdapter.requests.count, 1)
+        XCTAssertEqual(streamAdapter.requests.first?.transport, .tcp)
+        XCTAssertEqual(streamAdapter.requests.first?.tls, controllerVMessGRPCSnapshot().selectedNode.tls)
+        XCTAssertTrue(stream.writes.reduce(Data(), +).starts(with: Data("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".utf8)))
+    }
+
+    func testRunTUICQUICBatchLoadsSnapshotAndRunsPacketFlowBatch() async throws {
+        let snapshotStore = InMemoryRuntimeSnapshotStore()
+        try snapshotStore.save(controllerTUICSnapshot())
+        let token = Data((0..<32).map(UInt8.init))
+        let uniStream = ControllerRecordingByteStream()
+        let bidiStream = ControllerRecordingByteStream()
+        let session = ControllerRecordingTUICQUICSession(exportedToken: token, bidirectionalStream: bidiStream, unidirectionalStream: uniStream)
+        let dialer = ControllerRecordingTUICQUICSessionDialer(session: session)
+        let packet = Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let flow = ControllerRecordingPacketFlowIO(packets: [packet])
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+
+        let summary = try await TunnelRuntimeController.runTUICQUICBatch(
+            snapshotStore: snapshotStore,
+            flow: flow,
+            statusStore: statusStore,
+            logStore: logStore,
+            sessionDialer: dialer,
+            credentialResolver: TestProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000003:tuic-password"),
+            batchLimit: 16,
+            flowLimit: 32
+        )
+
+        XCTAssertEqual(summary.readCount, 1)
+        XCTAssertEqual(summary.writtenCount, 1)
+        XCTAssertEqual(summary.proxyConnectCount, 1)
+        XCTAssertEqual(flow.readLimits, [16])
+        XCTAssertEqual(flow.writtenResults.count, 1)
+        XCTAssertEqual(dialer.requests.count, 1)
+        XCTAssertEqual(session.exports.count, 1)
+        XCTAssertEqual(uniStream.writes, [Data([0x05, 0x00]) + Data([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]) + token])
+        XCTAssertEqual(bidiStream.writes, [Data([0x05, 0x01, 0x01, 93, 184, 216, 34, 0x01, 0xbb])])
+        let status = try XCTUnwrap(statusStore.load())
+        XCTAssertEqual(status.phase, .connected)
+        XCTAssertEqual(status.selectedNodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(status.selectedNodeName, "TUIC")
+        XCTAssertEqual(status.message, "Packet batch processed")
+        XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Tunnel runtime connected"])
+    }
+
     func testRunShadowsocksTCPBatchLoadsSnapshotAndRunsPacketFlowBatch() async throws {
         let snapshotStore = InMemoryRuntimeSnapshotStore()
         try snapshotStore.save(controllerSnapshot(tls: .disabled))
@@ -215,6 +323,49 @@ final class TunnelRuntimeControllerTests: XCTestCase {
         XCTAssertEqual(status.selectedNodeName, "Demo")
         XCTAssertEqual(status.message, "Packet batch processed")
         XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Tunnel runtime connected"])
+    }
+
+    func testShadowsocksTCPSessionReusesProxyConnectionAcrossBatches() async throws {
+        let snapshotStore = InMemoryRuntimeSnapshotStore()
+        try snapshotStore.save(controllerSnapshot(tls: .disabled))
+        let firstPacket = Packet.ipv4TCP(
+            id: "tcp-session-1",
+            source: .v4(10, 0, 0, 2),
+            destination: .v4(93, 184, 216, 34),
+            sourcePort: 51_234,
+            destinationPort: 443,
+            payload: [0x01]
+        )
+        let secondPacket = Packet.ipv4TCP(
+            id: "tcp-session-2",
+            source: .v4(10, 0, 0, 2),
+            destination: .v4(93, 184, 216, 34),
+            sourcePort: 51_234,
+            destinationPort: 443,
+            payload: [0x02]
+        )
+        let flow = ControllerSequentialPacketFlowIO(batches: [[firstPacket], [secondPacket]])
+        let plain = ControllerRecordingTransportAdapter(transport: .tcp)
+        let session = try TunnelRuntimeController.makeShadowsocksTCPSession(
+            snapshotStore: snapshotStore,
+            flow: flow,
+            statusStore: InMemoryRuntimeStatusStore(),
+            logStore: InMemoryRuntimeLogStore(),
+            plain: plain,
+            tls: ControllerRecordingTransportAdapter(transport: .tcp),
+            credentialResolver: TestShadowsocksCredentialResolver(),
+            batchLimit: 16,
+            flowLimit: 32
+        )
+
+        let firstSummary = try await session.runOnce()
+        let secondSummary = try await session.runOnce()
+
+        XCTAssertEqual(firstSummary.proxyConnectCount, 1)
+        XCTAssertEqual(secondSummary.proxyConnectCount, 0)
+        XCTAssertEqual(plain.requests.count, 1)
+        XCTAssertEqual(flow.readLimits, [16, 16])
+        XCTAssertEqual(flow.writtenResults.count, 2)
     }
 }
 
@@ -262,6 +413,39 @@ private final class ControllerRecordingPacketFlowIO: PacketFlowIO, @unchecked Se
     }
 }
 
+private final class ControllerSequentialPacketFlowIO: PacketFlowIO, @unchecked Sendable {
+    private let queue = DispatchQueue(label: "ControllerSequentialPacketFlowIO")
+    private var batches: [[Packet]]
+    private var storedReadLimits: [Int] = []
+    private var storedWrittenResults: [PacketProcessingResult] = []
+
+    var readLimits: [Int] {
+        queue.sync { storedReadLimits }
+    }
+
+    var writtenResults: [PacketProcessingResult] {
+        queue.sync { storedWrittenResults }
+    }
+
+    init(batches: [[Packet]]) {
+        self.batches = batches
+    }
+
+    func readPackets(limit: Int) async throws -> [Packet] {
+        queue.sync {
+            storedReadLimits.append(limit)
+            guard !batches.isEmpty else { return [] }
+            return Array(batches.removeFirst().prefix(limit))
+        }
+    }
+
+    func writePackets(_ results: [PacketProcessingResult]) async throws {
+        queue.sync {
+            storedWrittenResults.append(contentsOf: results)
+        }
+    }
+}
+
 private final class ControllerRecordingTransportAdapter: TransportAdapter, @unchecked Sendable {
     let supportedTransport: TransportType
     private let lock = NSLock()
@@ -287,6 +471,98 @@ private final class ControllerRecordingTransportAdapter: TransportAdapter, @unch
         storedRequests.append(request)
         return EstablishedTransportConnection(host: request.host, port: request.port, transport: request.transport)
     }
+}
+
+private final class ControllerRecordingTransportStreamAdapter: TransportStreamAdapter, @unchecked Sendable {
+    let supportedTransport: TransportType
+    private let stream: ControllerRecordingByteStream
+    private let queue = DispatchQueue(label: "ControllerRecordingTransportStreamAdapter")
+    private var storedRequests: [TransportRequest] = []
+
+    var requests: [TransportRequest] {
+        queue.sync { storedRequests }
+    }
+
+    init(transport: TransportType, stream: ControllerRecordingByteStream) {
+        self.supportedTransport = transport
+        self.stream = stream
+    }
+
+    func openStream(request: TransportRequest) async throws -> any TransportByteStream {
+        queue.sync {
+            storedRequests.append(request)
+        }
+        return stream
+    }
+}
+
+private struct ControllerTUICExporterRequest: Equatable {
+    let label: Data
+    let context: Data
+    let length: Int
+}
+
+private struct ControllerTUICSessionDialRequest: Equatable {
+    let host: String
+    let port: Int
+    let tls: TLSOptions?
+    let metadata: [String: String]
+}
+
+private final class ControllerRecordingTUICQUICSessionDialer: TUICQUICSessionDialer, @unchecked Sendable {
+    private let session: ControllerRecordingTUICQUICSession
+    private var storedRequests: [ControllerTUICSessionDialRequest] = []
+
+    init(session: ControllerRecordingTUICQUICSession) {
+        self.session = session
+    }
+
+    var requests: [ControllerTUICSessionDialRequest] { storedRequests }
+
+    func openSession(host: String, port: Int, tls: TLSOptions?, metadata: [String: String]) async throws -> any TUICQUICSession {
+        storedRequests.append(ControllerTUICSessionDialRequest(host: host, port: port, tls: tls, metadata: metadata))
+        return session
+    }
+}
+
+private final class ControllerRecordingTUICQUICSession: TUICQUICSession, @unchecked Sendable {
+    private let exportedToken: Data
+    private let bidirectionalStream: ControllerRecordingByteStream
+    private let unidirectionalStream: ControllerRecordingByteStream
+    private var storedExports: [ControllerTUICExporterRequest] = []
+
+    init(exportedToken: Data, bidirectionalStream: ControllerRecordingByteStream, unidirectionalStream: ControllerRecordingByteStream) {
+        self.exportedToken = exportedToken
+        self.bidirectionalStream = bidirectionalStream
+        self.unidirectionalStream = unidirectionalStream
+    }
+
+    var exports: [ControllerTUICExporterRequest] { storedExports }
+
+    func exportKeyingMaterial(label: Data, context: Data, length: Int) async throws -> Data {
+        storedExports.append(ControllerTUICExporterRequest(label: label, context: context, length: length))
+        return exportedToken
+    }
+
+    func openUnidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream {
+        unidirectionalStream.initialPayloads.append(initialPayload)
+        return unidirectionalStream
+    }
+
+    func openBidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream {
+        bidirectionalStream.initialPayloads.append(initialPayload)
+        return bidirectionalStream
+    }
+}
+
+private final class ControllerRecordingByteStream: TransportByteStream, @unchecked Sendable {
+    var initialPayloads: [Data] = []
+    var writes: [Data] = []
+
+    func read(maxLength: Int) async throws -> Data? { nil }
+    func write(_ data: Data) async throws { writes.append(data) }
+    func closeWrite() async {}
+    func close() async {}
 }
 
 private enum ControllerPacketFlowTestError: Error {
@@ -368,5 +644,46 @@ private func controllerSnapshot(tls: TLSOptions, routingRuleManifest: RuntimeRou
         routeMode: .globalProxy,
         logLevel: .user,
         routingRuleManifest: routingRuleManifest
+    )
+}
+
+private func controllerVMessGRPCSnapshot() -> RuntimeSnapshot {
+    RuntimeSnapshot(
+        id: SnapshotID(rawValue: "snapshot-1"),
+        selectedNode: ProxyNode(
+            id: NodeID(rawValue: "node-1"),
+            name: "VMess gRPC",
+            protocolType: .vmess,
+            serverHost: "example.com",
+            serverPort: 443,
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "vmess-credential"),
+            transport: .grpc,
+            transportOptions: TransportOptions(grpc: GRPCTransportOptions(authority: "edge.example.com", service: "/TunnelService/Connect")),
+            tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil),
+            udpPolicy: .disabled
+        ),
+        routeMode: .globalProxy,
+        logLevel: .user,
+        routingRuleManifest: RuntimeRoutingRuleManifest(version: 1, rules: [RuntimeRoutingRule(kind: .finalRule, value: nil, action: .proxy)])
+    )
+}
+
+private func controllerTUICSnapshot() -> RuntimeSnapshot {
+    RuntimeSnapshot(
+        id: SnapshotID(rawValue: "snapshot-1"),
+        selectedNode: ProxyNode(
+            id: NodeID(rawValue: "node-1"),
+            name: "TUIC",
+            protocolType: .tuic,
+            serverHost: "tuic.example.com",
+            serverPort: 443,
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "tuic-credential"),
+            transport: .quic,
+            tls: TLSOptions(enabled: true, serverName: "tuic.example.com", allowInsecure: false, alpn: ["h3"], fingerprint: nil, reality: nil),
+            udpPolicy: .disabled
+        ),
+        routeMode: .globalProxy,
+        logLevel: .user,
+        routingRuleManifest: RuntimeRoutingRuleManifest(version: 1, rules: [RuntimeRoutingRule(kind: .finalRule, value: nil, action: .proxy)])
     )
 }

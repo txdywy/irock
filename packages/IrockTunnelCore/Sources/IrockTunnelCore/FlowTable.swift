@@ -40,22 +40,25 @@ public struct FlowTable: Equatable, Sendable {
     public private(set) var records: [FlowRecord]
     public let capacity: Int
     private var sequence: Int
+    private var recordIndexByKey: [FlowKey: Int]
 
     public init(capacity: Int) {
         self.capacity = max(0, capacity)
         self.records = []
         self.sequence = 0
+        self.recordIndexByKey = [:]
     }
 
     public func record(for key: FlowKey) -> FlowRecord? {
-        records.first { $0.key == key }
+        guard let index = recordIndexByKey[key] else { return nil }
+        return records[index]
     }
 
     public mutating func record(_ packet: ParsedPacket) -> FlowRecord {
         let key = FlowKey(packet)
         sequence += 1
 
-        if let index = records.firstIndex(where: { $0.key == key }) {
+        if let index = recordIndexByKey[key] {
             let updated = FlowRecord(key: key, packetCount: records[index].packetCount + 1, lastSeenSequence: sequence)
             records[index] = updated
             return updated
@@ -65,10 +68,20 @@ public struct FlowTable: Equatable, Sendable {
         guard capacity > 0 else { return inserted }
 
         records.append(inserted)
+        recordIndexByKey[key] = records.count - 1
         if records.count > capacity,
            let evictionIndex = records.indices.min(by: { records[$0].lastSeenSequence < records[$1].lastSeenSequence }) {
+            let evictedKey = records[evictionIndex].key
             records.remove(at: evictionIndex)
+            recordIndexByKey.removeValue(forKey: evictedKey)
+            rebuildRecordIndexes(startingAt: evictionIndex)
         }
         return inserted
+    }
+
+    private mutating func rebuildRecordIndexes(startingAt startIndex: Int) {
+        for index in startIndex..<records.count {
+            recordIndexByKey[records[index].key] = index
+        }
     }
 }

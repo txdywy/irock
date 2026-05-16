@@ -1,14 +1,16 @@
 import IrockCore
 import IrockProtocols
 
-struct MacOSImportedShadowsocksCredentialResolver: ShadowsocksCredentialResolver {
+struct MacOSImportedProxyCredentialResolver: ProxyCredentialResolver {
     let nodeID: NodeID
     let credential: String
 
     func credential(for reference: CredentialReference) throws -> String {
         guard reference.account == nodeID.rawValue else {
-            throw ProxyProtocolError.invalidConfiguration("missing shadowsocks credential material")
+            throw ProxyProtocolError.invalidConfiguration("missing proxy credential material")
         }
         return credential
     }
 }
+
+typealias MacOSImportedShadowsocksCredentialResolver = MacOSImportedProxyCredentialResolver

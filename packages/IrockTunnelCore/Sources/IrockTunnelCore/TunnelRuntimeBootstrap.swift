@@ -13,6 +13,7 @@ public struct TunnelRuntimeBootstrap: Sendable {
         plain: Plain,
         tls: TLS,
         credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
         batchLimit: Int,
         flowLimit: Int
     ) throws -> PacketTunnelRuntime<Reader, Writer> {
@@ -21,6 +22,81 @@ public struct TunnelRuntimeBootstrap: Sendable {
             plain: plain,
             tls: tls,
             credentialResolver: credentialResolver,
+            udpDatagramForwarder: udpDatagramForwarder,
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+        let reporter = TunnelRuntimeReporter(statusStore: statusStore, logStore: logStore)
+        return PacketTunnelRuntime(reader: reader, writer: writer, configuration: configuration, reporter: reporter)
+    }
+
+    public static func vmessGRPC<Reader: PacketReader, Writer: PacketWriter, Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        reader: Reader,
+        writer: Writer,
+        statusStore: RuntimeStatusStore,
+        logStore: RuntimeLogStore,
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> PacketTunnelRuntime<Reader, Writer> {
+        let configuration = try TunnelRuntimeConfiguration.vmessGRPC(
+            snapshot: snapshot,
+            plain: plain,
+            tls: tls,
+            credentialResolver: credentialResolver,
+            udpDatagramForwarder: udpDatagramForwarder,
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+        let reporter = TunnelRuntimeReporter(statusStore: statusStore, logStore: logStore)
+        return PacketTunnelRuntime(reader: reader, writer: writer, configuration: configuration, reporter: reporter)
+    }
+
+    public static func vmessGRPC<Reader: PacketReader, Writer: PacketWriter, Stream: TransportStreamAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        reader: Reader,
+        writer: Writer,
+        statusStore: RuntimeStatusStore,
+        logStore: RuntimeLogStore,
+        stream: Stream,
+        credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> PacketTunnelRuntime<Reader, Writer> {
+        let configuration = try TunnelRuntimeConfiguration.vmessGRPC(
+            snapshot: snapshot,
+            stream: stream,
+            credentialResolver: credentialResolver,
+            udpDatagramForwarder: udpDatagramForwarder,
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+        let reporter = TunnelRuntimeReporter(statusStore: statusStore, logStore: logStore)
+        return PacketTunnelRuntime(reader: reader, writer: writer, configuration: configuration, reporter: reporter)
+    }
+
+    public static func tuicQUIC<Reader: PacketReader, Writer: PacketWriter, SessionDialer: TUICQUICSessionDialer, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        reader: Reader,
+        writer: Writer,
+        statusStore: RuntimeStatusStore,
+        logStore: RuntimeLogStore,
+        sessionDialer: SessionDialer,
+        credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> PacketTunnelRuntime<Reader, Writer> {
+        let configuration = try TunnelRuntimeConfiguration.tuicQUIC(
+            snapshot: snapshot,
+            sessionDialer: sessionDialer,
+            credentialResolver: credentialResolver,
+            udpDatagramForwarder: udpDatagramForwarder,
             batchLimit: batchLimit,
             flowLimit: flowLimit
         )

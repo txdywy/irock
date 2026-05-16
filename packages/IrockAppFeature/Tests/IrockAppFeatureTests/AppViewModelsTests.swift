@@ -232,22 +232,27 @@ final class AppViewModelsTests: XCTestCase {
     }
 
     @MainActor
-    func testAppViewModelConnectRejectsVMessGRPCBeforeStartingProxy() throws {
+    func testAppViewModelConnectStartsVMessGRPCTLSLocalProxyWithoutStartingUserModeTun() throws {
         let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
         let localProxy = RecordingLocalProxyController(endpoint: endpoint)
-        let model = AppViewModel(nodes: [], localProxyController: localProxy)
+        let tunEndpoint = UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500)
+        let tun = RecordingUserModeTunController(endpoint: tunEndpoint)
+        let model = AppViewModel(nodes: [], localProxyController: localProxy, userModeTunController: tun)
         let json = """
         {"v":"2","ps":"VMess gRPC","add":"vmess.example.com","port":"443","id":"00000000-0000-0000-0000-000000000001","net":"grpc","type":"none","host":"edge.example.com","path":"/TunService/Connect","tls":"tls","sni":"vmess.example.com"}
         """
         let encoded = Data(json.utf8).base64EncodedString()
-        _ = try model.importURI("vmess://\(encoded)")
+        let node = try model.importURI("vmess://\(encoded)")
 
         let result = model.connect()
 
-        XCTAssertEqual(result, .localProxyFailed("当前 VMess 节点需要 TCP/WebSocket/HTTP2+TLS 传输"))
-        XCTAssertNil(localProxy.startedNode)
-        XCTAssertEqual(model.localProxyState.phase, .failed)
-        XCTAssertEqual(model.localProxyState.message, "当前 VMess 节点需要 TCP/WebSocket/HTTP2+TLS 传输")
+        XCTAssertEqual(result, .localProxyStarted(endpoint))
+        XCTAssertEqual(localProxy.startedNode, node)
+        XCTAssertEqual(localProxy.startedCredential, "00000000-0000-0000-0000-000000000001")
+        XCTAssertNil(tun.startedNode)
+        XCTAssertNil(tun.startedCredential)
+        XCTAssertEqual(model.localProxyState.phase, .running)
+        XCTAssertEqual(model.userModeTunState.phase, .stopped)
     }
 
     @MainActor
@@ -294,6 +299,26 @@ final class AppViewModelsTests: XCTestCase {
         XCTAssertNil(localProxy.startedNode)
         XCTAssertEqual(model.localProxyState.phase, .failed)
         XCTAssertEqual(model.localProxyState.message, "当前 VLESS 节点暂不支持证书固定或 Reality")
+    }
+
+    @MainActor
+    func testAppViewModelConnectStartsLocalProxyForTUICQUICExporterPath() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let localProxy = RecordingLocalProxyController(endpoint: endpoint)
+        let tunEndpoint = UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500)
+        let tun = RecordingUserModeTunController(endpoint: tunEndpoint)
+        let model = AppViewModel(nodes: [], localProxyController: localProxy, userModeTunController: tun)
+        let node = try model.importURI("tuic://00000000-0000-0000-0000-000000000003:tuic-password@tuic.example.com:443?sni=tuic.example.com&alpn=h3#TUIC")
+
+        let result = model.connect()
+
+        XCTAssertEqual(result, .localProxyStarted(endpoint))
+        XCTAssertEqual(localProxy.startedNode, node)
+        XCTAssertEqual(localProxy.startedCredential, "00000000-0000-0000-0000-000000000003:tuic-password")
+        XCTAssertNil(tun.startedNode)
+        XCTAssertNil(tun.startedCredential)
+        XCTAssertEqual(model.localProxyState.phase, .running)
+        XCTAssertEqual(model.userModeTunState.phase, .stopped)
     }
 
     @MainActor

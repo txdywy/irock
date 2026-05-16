@@ -210,6 +210,104 @@ public struct ShadowsocksAEADStreamDecoder: Sendable {
     }
 }
 
+extension ProxyDestination {
+    var shadowsocksAddressFrame: Data {
+        get throws {
+            switch self {
+            case let .host(host, port):
+                let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+                let hostBytes = Data(normalizedHost.utf8)
+                guard !hostBytes.isEmpty, hostBytes.count <= 255 else {
+                    throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks host")
+                }
+                return try Data([0x03, UInt8(hostBytes.count)]) + hostBytes + shadowsocksPortBytes(port)
+            case let .ipv4(address, port):
+                let octets = address.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+                guard octets.count == 4 else {
+                    throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks ipv4 destination")
+                }
+                let bytes = try octets.map { octet -> UInt8 in
+                    guard let value = UInt8(octet) else {
+                        throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks ipv4 destination")
+                    }
+                    return value
+                }
+                return try Data([0x01]) + Data(bytes) + shadowsocksPortBytes(port)
+            case let .ipv6(address, port):
+                let parts = address.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+                guard parts.count == 8 else {
+                    throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks ipv6 destination")
+                }
+                let bytes = try parts.flatMap { part -> [UInt8] in
+                    guard part.count <= 4, let value = UInt16(part, radix: 16) else {
+                        throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks ipv6 destination")
+                    }
+                    return [UInt8(value >> 8), UInt8(value & 0xff)]
+                }
+                return try Data([0x04]) + Data(bytes) + shadowsocksPortBytes(port)
+            }
+        }
+    }
+
+    private func shadowsocksPortBytes(_ port: Int) throws -> Data {
+        guard (1...65_535).contains(port) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks destination port")
+        }
+        return Data([UInt8(port >> 8), UInt8(port & 0xff)])
+    }
+}
+
+public struct ShadowsocksUDPDatagramRequest: Equatable, Sendable {
+    public let cipher: String
+    public let addressFrame: Data
+    public let packet: Data
+
+    public var addressFrameHex: String {
+        addressFrame.hexString
+    }
+
+    public var metadata: [String: String] {
+        [
+            "shadowsocksCipher": cipher,
+            "shadowsocksUDPAddressFrameHex": addressFrameHex,
+            "shadowsocksUDPPacketHex": packet.hexString
+        ]
+    }
+
+    public init(credential: String, destination: ProxyDestination, payload: Data, salt: Data) throws {
+        let parsed = try ShadowsocksStreamRequest.parseCredential(credential)
+        guard let cipher = ShadowsocksCipher.lookup(method: parsed.method) else {
+            throw ProxyProtocolError.invalidConfiguration("unsupported shadowsocks method")
+        }
+        guard cipher.kind == .legacyAEAD else {
+            throw ProxyProtocolError.invalidConfiguration("unsupported shadowsocks udp method")
+        }
+        let streamRequest = try ShadowsocksStreamRequest(credential: credential, destination: destination, salt: salt)
+        let subkey = try cipher.deriveSubkey(password: parsed.password, salt: salt)
+        let plaintext = streamRequest.addressFrame + payload
+        self.cipher = cipher.method
+        self.addressFrame = streamRequest.addressFrame
+        self.packet = salt + (try cipher.seal(plaintext, using: subkey, nonceValue: 0))
+    }
+
+    public static func decryptPayload(_ packet: Data, credential: String) throws -> Data {
+        let parsed = try ShadowsocksStreamRequest.parseCredential(credential)
+        guard let cipher = ShadowsocksCipher.lookup(method: parsed.method) else {
+            throw ProxyProtocolError.invalidConfiguration("unsupported shadowsocks method")
+        }
+        guard cipher.kind == .legacyAEAD else {
+            throw ProxyProtocolError.invalidConfiguration("unsupported shadowsocks udp method")
+        }
+        guard packet.count > cipher.saltLength + 16 else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks udp packet")
+        }
+        let salt = Data(packet.prefix(cipher.saltLength))
+        let encryptedPayload = Data(packet.dropFirst(cipher.saltLength))
+        let subkey = try cipher.deriveSubkey(password: parsed.password, salt: salt)
+        return try cipher.open(encryptedPayload, using: subkey, nonceValue: 0)
+    }
+}
+
 public struct ShadowsocksStreamRequest: Equatable, Sendable {
     public let cipher: String
     public let addressFrame: Data
@@ -364,50 +462,7 @@ public struct ShadowsocksStreamRequest: Equatable, Sendable {
     }
 
     private static func addressFrame(for destination: ProxyDestination) throws -> Data {
-        switch destination {
-        case let .host(host, port):
-            let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
-            let hostBytes = Data(normalizedHost.utf8)
-            guard !hostBytes.isEmpty, hostBytes.count <= 255 else {
-                throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks host")
-            }
-            return try Data([0x03, UInt8(hostBytes.count)]) + hostBytes + portBytes(port)
-        case let .ipv4(address, port):
-            let octets = address.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
-            guard octets.count == 4 else {
-                throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks ipv4 destination")
-            }
-            let bytes = try octets.map { octet -> UInt8 in
-                guard let value = UInt8(octet) else {
-                    throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks ipv4 destination")
-                }
-                return value
-            }
-            return try Data([0x01]) + Data(bytes) + portBytes(port)
-        case let .ipv6(address, port):
-            let bytes = try ipv6Bytes(address)
-            return try Data([0x04]) + Data(bytes) + portBytes(port)
-        }
-    }
-
-    private static func ipv6Bytes(_ address: String) throws -> [UInt8] {
-        let parts = address.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-        guard parts.count == 8 else {
-            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks ipv6 destination")
-        }
-        return try parts.flatMap { part -> [UInt8] in
-            guard part.count <= 4, let value = UInt16(part, radix: 16) else {
-                throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks ipv6 destination")
-            }
-            return [UInt8(value >> 8), UInt8(value & 0xff)]
-        }
-    }
-
-    private static func portBytes(_ port: Int) throws -> Data {
-        guard (1...65_535).contains(port) else {
-            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks destination port")
-        }
-        return Data([UInt8(port >> 8), UInt8(port & 0xff)])
+        try destination.shadowsocksAddressFrame
     }
 }
 
@@ -896,59 +951,79 @@ public struct Hysteria2StreamOpener<Dialer: QUICStreamDialer>: Sendable {
     }
 }
 
-public struct TUICOpenRequest: Equatable, Sendable {
-    public let destinationDescription: String
-    public let sni: String
-    public let openBytes: Data
+public protocol TUICQUICSession: Sendable {
+    func exportKeyingMaterial(label: Data, context: Data, length: Int) async throws -> Data
+    func openUnidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream
+    func openBidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream
+}
+
+public protocol TUICQUICSessionDialer: Sendable {
+    func openSession(host: String, port: Int, tls: TLSOptions?, metadata: [String: String]) async throws -> any TUICQUICSession
+}
+
+public struct TUICAuthenticateCommand: Equatable, Sendable {
+    public let bytes: Data
 
     public var metadata: [String: String] {
         [
             "tuicUUIDPresent": "true",
-            "tuicPasswordPresent": "true",
-            "tuicDestination": destinationDescription,
-            "tuicSNI": sni
+            "tuicPasswordPresent": "true"
         ]
     }
 
-    public init(credential: String, destination: ProxyDestination, sni: String = "") throws {
-        let parts = credential.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-        guard parts.count == 2 else {
-            throw ProxyProtocolError.invalidConfiguration("invalid tuic credential")
+    public init(credential: String, exportedToken: Data) throws {
+        let uuid = try TUICCredentialParser.uuidBytes(from: credential)
+        guard exportedToken.count == 32 else {
+            throw ProxyProtocolError.invalidConfiguration("invalid tuic exported token")
         }
-        let uuid = try Self.uuidBytes(String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines))
-        guard !String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ProxyProtocolError.invalidConfiguration("missing tuic password")
-        }
-
-        let frame = try ProtocolAddressFrame(destination: destination, domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04)
-        let trimmedSNI = sni.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.destinationDescription = frame.description
-        self.sni = trimmedSNI
-        var bytes = Data([0x54, 0x55, 0x49, 0x43, 0x05])
+        var bytes = Data([0x05, 0x00])
         bytes.append(contentsOf: uuid)
-        bytes.append(UInt8(trimmedSNI.utf8.count))
-        bytes.append(Data(trimmedSNI.utf8))
-        bytes.append(frame.bytes)
-        self.openBytes = bytes
+        bytes.append(exportedToken)
+        self.bytes = bytes
+    }
+}
+
+public struct TUICConnectCommand: Equatable, Sendable {
+    public let destinationDescription: String
+    public let bytes: Data
+
+    public var metadata: [String: String] {
+        ["tuicDestination": destinationDescription]
     }
 
-    private static func uuidBytes(_ value: String) throws -> [UInt8] {
-        guard let uuid = UUID(uuidString: value) else {
+    public init(destination: ProxyDestination) throws {
+        let frame = try ProtocolAddressFrame(destination: destination, domainType: 0x00, ipv4Type: 0x01, ipv6Type: 0x02)
+        self.destinationDescription = frame.description
+        var bytes = Data([0x05, 0x01])
+        bytes.append(frame.bytes)
+        self.bytes = bytes
+    }
+}
+
+private enum TUICCredentialParser {
+    static func uuidBytes(from credential: String) throws -> [UInt8] {
+        let parts = try parts(from: credential)
+        guard let uuid = UUID(uuidString: String(parts[0]).trimmingCharacters(in: .whitespacesAndNewlines)) else {
             throw ProxyProtocolError.invalidConfiguration("invalid tuic uuid")
         }
         let tuple = uuid.uuid
         return [tuple.0, tuple.1, tuple.2, tuple.3, tuple.4, tuple.5, tuple.6, tuple.7, tuple.8, tuple.9, tuple.10, tuple.11, tuple.12, tuple.13, tuple.14, tuple.15]
     }
 
-    private static func destinationDescription(_ destination: ProxyDestination) -> String {
-        switch destination {
-        case let .host(host, port):
-            return "host:\(host):\(port)"
-        case let .ipv4(address, port):
-            return "ipv4:\(address):\(port)"
-        case let .ipv6(address, port):
-            return "ipv6:\(address):\(port)"
+    static func passwordBytes(from credential: String) throws -> [UInt8] {
+        let parts = try parts(from: credential)
+        return Array(String(parts[1]).utf8)
+    }
+
+    private static func parts(from credential: String) throws -> [Substring] {
+        let parts = credential.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2 else {
+            throw ProxyProtocolError.invalidConfiguration("invalid tuic credential")
         }
+        guard !String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing tuic password")
+        }
+        return parts
     }
 }
 
@@ -1087,17 +1162,45 @@ public protocol ProxyConnection: Sendable {
     var nodeID: NodeID { get }
     var destination: ProxyDestination { get }
     var initialResponseBytes: [UInt8]? { get }
+    func writePayload(_ payload: [UInt8]) async throws -> [UInt8]?
+    func close() async
+}
+
+public extension ProxyConnection {
+    func writePayload(_ payload: [UInt8]) async throws -> [UInt8]? {
+        nil
+    }
+
+    func close() async {}
 }
 
 public struct EstablishedProxyConnection: ProxyConnection, Equatable, Sendable {
     public let nodeID: NodeID
     public let destination: ProxyDestination
     public let initialResponseBytes: [UInt8]?
+    private let retainedStream: (any TransportByteStream)?
 
-    public init(nodeID: NodeID, destination: ProxyDestination, initialResponseBytes: [UInt8]? = nil) {
+    public init(nodeID: NodeID, destination: ProxyDestination, initialResponseBytes: [UInt8]? = nil, retainedStream: (any TransportByteStream)? = nil) {
         self.nodeID = nodeID
         self.destination = destination
         self.initialResponseBytes = initialResponseBytes
+        self.retainedStream = retainedStream
+    }
+
+    public static func == (lhs: EstablishedProxyConnection, rhs: EstablishedProxyConnection) -> Bool {
+        lhs.nodeID == rhs.nodeID
+            && lhs.destination == rhs.destination
+            && lhs.initialResponseBytes == rhs.initialResponseBytes
+    }
+
+    public func writePayload(_ payload: [UInt8]) async throws -> [UInt8]? {
+        guard let retainedStream, !payload.isEmpty else { return nil }
+        try await retainedStream.write(Data(payload))
+        return nil
+    }
+
+    public func close() async {
+        await retainedStream?.close()
     }
 }
 
@@ -1145,9 +1248,55 @@ public enum ProxyProtocolError: Error, Equatable, CustomStringConvertible, Senda
     }
 }
 
+public struct ProxyUDPDatagramRequest: Equatable, Sendable {
+    public let node: ProxyNode
+    public let destination: ProxyDestination
+    public let payload: Data
+    public let metadata: [String: String]
+
+    public init(node: ProxyNode, destination: ProxyDestination, payload: Data, metadata: [String: String] = [:]) {
+        self.node = node
+        self.destination = destination
+        self.payload = payload
+        self.metadata = metadata
+    }
+}
+
+public struct EncodedProxyUDPDatagram: Equatable, Sendable {
+    public let server: ProxyDestination
+    public let payload: Data
+
+    public init(server: ProxyDestination, payload: Data) {
+        self.server = server
+        self.payload = payload
+    }
+}
+
+public struct ProxyUDPDatagramResponse: Equatable, Sendable {
+    public let source: ProxyDestination
+    public let payload: Data
+
+    public init(source: ProxyDestination, payload: Data) {
+        self.source = source
+        self.payload = payload
+    }
+}
+
 public protocol ProxyAdapter: Sendable {
     var supportedProtocol: ProxyProtocolType { get }
     func connect(request: ProxyRequest) async throws -> any ProxyConnection
+    func encodeUDPDatagram(request: ProxyUDPDatagramRequest) throws -> EncodedProxyUDPDatagram
+    func decodeUDPDatagramResponse(_ response: Data, request: ProxyUDPDatagramRequest) throws -> ProxyUDPDatagramResponse?
+}
+
+public extension ProxyAdapter {
+    func encodeUDPDatagram(request: ProxyUDPDatagramRequest) throws -> EncodedProxyUDPDatagram {
+        throw ProxyProtocolError.udpUnsupported
+    }
+
+    func decodeUDPDatagramResponse(_ response: Data, request: ProxyUDPDatagramRequest) throws -> ProxyUDPDatagramResponse? {
+        throw ProxyProtocolError.udpUnsupported
+    }
 }
 
 public struct UnsupportedProxyAdapter: ProxyAdapter {
@@ -1283,10 +1432,12 @@ private func applyTransportOptions(from node: ProxyNode, to metadata: inout [Str
 public struct VMessProxyAdapter<CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
     public let supportedProtocol: ProxyProtocolType = .vmess
     private let transportRegistry: TransportAdapterRegistry
+    private let streamRegistry: TransportStreamAdapterRegistry
     private let credentialResolver: CredentialResolver
 
-    public init(transportRegistry: TransportAdapterRegistry, credentialResolver: CredentialResolver) {
+    public init(transportRegistry: TransportAdapterRegistry, streamRegistry: TransportStreamAdapterRegistry = TransportStreamAdapterRegistry(adapters: []), credentialResolver: CredentialResolver) {
         self.transportRegistry = transportRegistry
+        self.streamRegistry = streamRegistry
         self.credentialResolver = credentialResolver
     }
 
@@ -1303,6 +1454,10 @@ public struct VMessProxyAdapter<CredentialResolver: ProxyCredentialResolver>: Pr
             initialPayload: openRequest.openBytes
         )
         do {
+            if let streamAdapter = streamRegistry.adapter(for: request.node.transport) {
+                let stream = try await streamAdapter.openStream(request: transportRequest)
+                return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination, retainedStream: stream)
+            }
             _ = try await transportRegistry.adapter(for: request.node.transport).open(request: transportRequest)
         } catch let error as TransportError {
             throw proxyProtocolError(for: error)
@@ -1328,6 +1483,9 @@ public struct VMessProxyAdapter<CredentialResolver: ProxyCredentialResolver>: Pr
     private func transportMetadata(for request: ProxyRequest, openRequest: VMessOpenRequest) -> [String: String] {
         var metadata = request.metadata
         metadata["proxyProtocol"] = request.node.protocolType.rawValue
+        if request.node.transport == .grpc {
+            metadata["grpcProtocol"] = request.node.protocolType.rawValue
+        }
         applyTransportOptions(from: request.node, to: &metadata)
         for (key, value) in openRequest.metadata {
             metadata[key] = value
@@ -1612,38 +1770,86 @@ public struct Hysteria2ProxyAdapter<CredentialResolver: ProxyCredentialResolver>
     }
 }
 
-public struct TUICProxyAdapter<CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
+public struct TUICStreamOpener<Dialer: TUICQUICSessionDialer>: Sendable {
+    private let sessionDialer: Dialer
+
+    public init(sessionDialer: Dialer) {
+        self.sessionDialer = sessionDialer
+    }
+
+    public func openStream(node: ProxyNode, credential: String, destination: ProxyDestination, metadata: [String: String] = [:]) async throws -> any TransportByteStream {
+        try validate(node)
+        let uuid = try TUICCredentialParser.uuidBytes(from: credential)
+        let password = try TUICCredentialParser.passwordBytes(from: credential)
+        let connectCommand = try TUICConnectCommand(destination: destination)
+        var requestMetadata = metadata
+        requestMetadata["proxyProtocol"] = node.protocolType.rawValue
+        requestMetadata["quicServerName"] = node.tls.serverName ?? node.serverHost
+        requestMetadata["quicProtocol"] = "tuic"
+        requestMetadata["quicALPN"] = node.tls.alpn.isEmpty ? "h3" : node.tls.alpn.joined(separator: ",")
+        for (key, value) in connectCommand.metadata {
+            requestMetadata[key] = value
+        }
+        let session = try await sessionDialer.openSession(
+            host: node.serverHost,
+            port: node.serverPort,
+            tls: node.tls.enabled ? node.tls : nil,
+            metadata: requestMetadata
+        )
+        let token = try await session.exportKeyingMaterial(label: Data(uuid), context: Data(password), length: 32)
+        let authenticateCommand = try TUICAuthenticateCommand(credential: credential, exportedToken: token)
+        let authStream = try await session.openUnidirectionalStream(initialPayload: Data())
+        try await authStream.write(authenticateCommand.bytes)
+        await authStream.closeWrite()
+        let stream = try await session.openBidirectionalStream(initialPayload: Data())
+        try await stream.write(connectCommand.bytes)
+        return stream
+    }
+
+    private func validate(_ node: ProxyNode) throws {
+        guard node.protocolType == .tuic else {
+            throw ProxyProtocolError.unsupportedProtocol(node.protocolType)
+        }
+        guard node.transport == .quic else {
+            throw ProxyProtocolError.unsupportedTransport(node.transport)
+        }
+        guard !node.serverHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing tuic server host")
+        }
+        guard (1...65_535).contains(node.serverPort) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid tuic server port")
+        }
+    }
+}
+
+public struct UnavailableTUICQUICSessionDialer: TUICQUICSessionDialer {
+    public init() {}
+
+    public func openSession(host: String, port: Int, tls: TLSOptions?, metadata: [String: String]) async throws -> any TUICQUICSession {
+        throw ProxyProtocolError.invalidConfiguration("tuic tls exporter authentication unavailable")
+    }
+}
+
+public struct TUICProxyAdapter<Dialer: TUICQUICSessionDialer, CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
     public let supportedProtocol: ProxyProtocolType = .tuic
-    private let transportRegistry: TransportAdapterRegistry
+    private let sessionDialer: Dialer
     private let credentialResolver: CredentialResolver
 
-    public init(transportRegistry: TransportAdapterRegistry, credentialResolver: CredentialResolver) {
-        self.transportRegistry = transportRegistry
+    public init(sessionDialer: Dialer, credentialResolver: CredentialResolver) {
+        self.sessionDialer = sessionDialer
+        self.credentialResolver = credentialResolver
+    }
+
+    public init(transportRegistry: TransportAdapterRegistry, credentialResolver: CredentialResolver) where Dialer == UnavailableTUICQUICSessionDialer {
+        self.sessionDialer = UnavailableTUICQUICSessionDialer()
         self.credentialResolver = credentialResolver
     }
 
     public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
         try validate(request.node)
         let credential = try credentialResolver.credential(for: request.node.credentialReference)
-        let openRequest = try TUICOpenRequest(
-            credential: credential,
-            destination: request.destination,
-            sni: request.node.tls.serverName ?? request.node.serverHost
-        )
-        let transportRequest = TransportRequest(
-            host: request.node.serverHost,
-            port: request.node.serverPort,
-            transport: request.node.transport,
-            tls: request.node.tls.enabled ? request.node.tls : nil,
-            metadata: transportMetadata(for: request, openRequest: openRequest),
-            initialPayload: openRequest.openBytes
-        )
-        do {
-            _ = try await transportRegistry.adapter(for: request.node.transport).open(request: transportRequest)
-        } catch let error as TransportError {
-            throw proxyProtocolError(for: error)
-        }
-        return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination)
+        let stream = try await TUICStreamOpener(sessionDialer: sessionDialer).openStream(node: request.node, credential: credential, destination: request.destination, metadata: request.metadata)
+        return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination, retainedStream: stream)
     }
 
     private func validate(_ node: ProxyNode) throws {
@@ -1661,35 +1867,6 @@ public struct TUICProxyAdapter<CredentialResolver: ProxyCredentialResolver>: Pro
         }
     }
 
-    private func transportMetadata(for request: ProxyRequest, openRequest: TUICOpenRequest) -> [String: String] {
-        var metadata = request.metadata
-        metadata["proxyProtocol"] = request.node.protocolType.rawValue
-        for (key, value) in openRequest.metadata {
-            metadata[key] = value
-        }
-        return metadata
-    }
-
-    private func proxyProtocolError(for error: TransportError) -> ProxyProtocolError {
-        switch error {
-        case .invalidConfiguration:
-            return .invalidConfiguration("transport invalid")
-        case .dnsFailed:
-            return .dnsFailed("transport dns failed")
-        case .tcpConnectFailed:
-            return .tcpConnectFailed("transport tcp connect failed")
-        case .tlsHandshakeFailed:
-            return .tlsHandshakeFailed("transport tls handshake failed")
-        case let .unsupportedTransport(transport):
-            return .unsupportedTransport(transport)
-        case .quicHandshakeFailed:
-            return .quicHandshakeFailed("transport quic handshake failed")
-        case .remoteClosed:
-            return .remoteClosed
-        case .timeout:
-            return .timeout
-        }
-    }
 }
 
 public protocol ProxyCredentialResolver: Sendable {
@@ -1740,6 +1917,29 @@ public struct ShadowsocksProxyAdapter<CredentialResolver: ProxyCredentialResolve
             throw proxyProtocolError(for: error)
         }
         return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination)
+    }
+
+    public func encodeUDPDatagram(request: ProxyUDPDatagramRequest) throws -> EncodedProxyUDPDatagram {
+        try validate(request.node)
+        let credential = try credentialResolver.credential(for: request.node.credentialReference)
+        let datagram = try ShadowsocksUDPDatagramRequest(
+            credential: credential,
+            destination: request.destination,
+            payload: request.payload,
+            salt: Data.random(count: try ShadowsocksStreamRequest.saltLength(forCredential: credential))
+        )
+        return EncodedProxyUDPDatagram(server: .host(request.node.serverHost, port: request.node.serverPort), payload: datagram.packet)
+    }
+
+    public func decodeUDPDatagramResponse(_ response: Data, request: ProxyUDPDatagramRequest) throws -> ProxyUDPDatagramResponse? {
+        try validate(request.node)
+        let credential = try credentialResolver.credential(for: request.node.credentialReference)
+        let plaintext = try ShadowsocksUDPDatagramRequest.decryptPayload(response, credential: credential)
+        let addressFrame = try request.destination.shadowsocksAddressFrame
+        guard plaintext.starts(with: addressFrame) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocks udp response destination")
+        }
+        return ProxyUDPDatagramResponse(source: request.destination, payload: plaintext.dropFirst(addressFrame.count))
     }
 
     private func validate(_ node: ProxyNode) throws {

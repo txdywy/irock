@@ -723,6 +723,36 @@ final class IrockTransportTests: XCTestCase {
         }
     }
 
+    func testGRPCStreamTransportAdapterWrapsUnderlyingStreamAndFramesWrites() async throws {
+        let underlyingStream = RecordingTransportByteStream(reads: [nil])
+        let underlying = RecordingTransportStreamAdapter(transport: .tcp, stream: underlyingStream)
+        let adapter = GRPCStreamTransportAdapter(underlying: underlying)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil)
+        let request = TransportRequest(
+            host: " example.com ",
+            port: 443,
+            transport: .grpc,
+            tls: tls,
+            metadata: ["grpcAuthority": "edge.example.com", "grpcService": "/TunnelService/Connect", "grpcProtocol": "vmess"],
+            initialPayload: Data("open".utf8)
+        )
+
+        let stream = try await adapter.openStream(request: request)
+        try await stream.write(Data("payload".utf8))
+
+        XCTAssertEqual(underlying.requests.count, 1)
+        XCTAssertEqual(underlying.requests.first?.host, "example.com")
+        XCTAssertEqual(underlying.requests.first?.port, 443)
+        XCTAssertEqual(underlying.requests.first?.transport, .tcp)
+        XCTAssertEqual(underlying.requests.first?.tls, tls)
+        XCTAssertNil(underlying.requests.first?.initialPayload)
+        let frames = http2Frames(in: underlyingStream.writes.reduce(Data(), +))
+        XCTAssertEqual(frames.filter { $0.type == 0x00 }.map(\.payload), [
+            Data([0x00, 0x00, 0x00, 0x00, 0x04]) + Data("open".utf8),
+            Data([0x00, 0x00, 0x00, 0x00, 0x07]) + Data("payload".utf8)
+        ])
+    }
+
     func testTLSTransportAdapterPropagatesUnderlyingTransportError() async {
         let adapter = TLSTransportAdapter(underlying: FailingTransportAdapter(transport: .tcp, error: .tlsHandshakeFailed("handshake failed")))
         let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
@@ -1166,6 +1196,60 @@ final class IrockTransportTests: XCTestCase {
         XCTAssertEqual(frames[2].payload, Data("open".utf8))
     }
 
+    func testGRPCClientByteStreamStartsHTTP2WithGRPCHeadersAndFramedInitialPayload() async throws {
+        let underlying = RecordingTransportByteStream(reads: [nil])
+        let stream = GRPCClientByteStream(
+            underlying: underlying,
+            authority: "edge.example.com",
+            service: "/TunnelService/Tun",
+            initialPayload: Data("open".utf8)
+        )
+
+        try await stream.start()
+
+        let frames = http2Frames(in: underlying.writes.reduce(Data(), +))
+        XCTAssertEqual(frames.count, 3)
+        XCTAssertEqual(frames[1].type, 0x01)
+        XCTAssertEqual(frames[1].streamID, 1)
+        XCTAssertTrue(frames[1].payload.contains(Data("/TunnelService/Tun".utf8)))
+        XCTAssertTrue(frames[1].payload.contains(Data("edge.example.com".utf8)))
+        XCTAssertTrue(frames[1].payload.contains(Data("application/grpc".utf8)))
+        XCTAssertTrue(frames[1].payload.contains(Data("trailers".utf8)))
+        XCTAssertEqual(frames[2].type, 0x00)
+        XCTAssertEqual(frames[2].streamID, 1)
+        XCTAssertEqual(frames[2].payload, Data([0x00, 0x00, 0x00, 0x00, 0x04]) + Data("open".utf8))
+    }
+
+    func testGRPCClientByteStreamFramesWritesAndUnframesReads() async throws {
+        let reply = http2Frame(type: 0x00, flags: 0x00, streamID: 1, payload: Data([0x00, 0x00, 0x00, 0x00, 0x05]) + Data("hello".utf8))
+        let underlying = RecordingTransportByteStream(reads: [reply, nil])
+        let stream = GRPCClientByteStream(underlying: underlying, authority: "edge.example.com", service: "/TunnelService/Tun")
+        try await stream.start()
+
+        try await stream.write(Data("ping".utf8))
+        let data = try await stream.read(maxLength: 64)
+
+        XCTAssertEqual(data, Data("hello".utf8))
+        let writes = underlying.writes.dropFirst().flatMap { http2Frames(in: $0) }.filter { $0.type == 0x00 }
+        XCTAssertEqual(writes.first?.payload, Data([0x00, 0x00, 0x00, 0x00, 0x04]) + Data("ping".utf8))
+    }
+
+    func testGRPCClientByteStreamRejectsCompressedInboundMessages() async throws {
+        let compressedReply = http2Frame(type: 0x00, flags: 0x00, streamID: 1, payload: Data([0x01, 0x00, 0x00, 0x00, 0x05]) + Data("hello".utf8))
+        let underlying = RecordingTransportByteStream(reads: [compressedReply, nil])
+        let stream = GRPCClientByteStream(underlying: underlying, authority: "edge.example.com", service: "/TunnelService/Tun")
+        try await stream.start()
+
+        do {
+            _ = try await stream.read(maxLength: 64)
+            XCTFail("Expected compressed gRPC message rejection")
+        } catch let error as TransportError {
+            XCTAssertEqual(error, .invalidConfiguration("unsupported grpc compressed message"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testHTTP2ClientByteStreamLargeInitialDataWaitsForWindowUpdatesAfterReaderPumpStarts() async throws {
         let windowUpdates = http2Frame(type: 0x08, flags: 0x00, streamID: 0, payload: Data([0x00, 0x00, 0x11, 0x71]))
             + http2Frame(type: 0x08, flags: 0x00, streamID: 1, payload: Data([0x00, 0x00, 0x11, 0x71]))
@@ -1479,6 +1563,29 @@ private struct TransportAdapterRequest: Equatable {
         self.tls = tls
         self.metadata = metadata
         self.initialPayload = initialPayload
+    }
+}
+
+private final class RecordingTransportStreamAdapter: TransportStreamAdapter, @unchecked Sendable {
+    let supportedTransport: TransportType
+    private let stream: RecordingTransportByteStream
+    private let queue = DispatchQueue(label: "RecordingTransportStreamAdapter")
+    private var storedRequests: [TransportAdapterRequest] = []
+
+    init(transport: TransportType, stream: RecordingTransportByteStream) {
+        self.supportedTransport = transport
+        self.stream = stream
+    }
+
+    var requests: [TransportAdapterRequest] {
+        queue.sync { storedRequests }
+    }
+
+    func openStream(request: TransportRequest) async throws -> any TransportByteStream {
+        queue.sync {
+            storedRequests.append(TransportAdapterRequest(host: request.host, port: request.port, transport: request.transport, tls: request.tls, metadata: request.metadata, initialPayload: request.initialPayload))
+        }
+        return stream
     }
 }
 

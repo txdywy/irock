@@ -34,6 +34,7 @@ struct irock_hy2_stream *irock_hy2_session_find_stream(struct irock_hy2_session 
 irock_hy2_result irock_hy2_session_register_stream(struct irock_hy2_session *session, struct irock_hy2_stream *stream);
 void irock_hy2_session_unregister_stream(struct irock_hy2_session *session, struct irock_hy2_stream *stream);
 void irock_hy2_stream_release(struct irock_hy2_stream *stream);
+struct irock_hy2_stream *irock_hy2_stream_create(struct irock_hy2_session *session, int64_t stream_id, const uint8_t *request_bytes, int request_bytes_written);
 
 struct irock_hy2_session {
   int authenticated;
