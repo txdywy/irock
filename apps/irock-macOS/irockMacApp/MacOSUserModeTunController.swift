@@ -211,6 +211,26 @@ final class MacOSUserModeTunController: UserModeTunControlling {
                         }
                     }
                     await runtime.closeProxyConnections()
+                case .trustTunnel where node.transport == .http2:
+                    let runtime = try TunnelRuntimeController.makeTrustTunnelHTTP2Session(
+                        snapshotStore: stores.snapshotStore,
+                        flow: MacOSUserModeTunPacketFlowIO(fileDescriptor: fileDescriptor),
+                        statusStore: stores.statusStore,
+                        logStore: stores.logStore,
+                        stream: MacOSPlatformTCPByteStreamDialer(),
+                        credentialResolver: MacOSImportedProxyCredentialResolver(nodeID: node.id, credential: credential),
+                        udpDatagramForwarder: DirectUDPDatagramForwarder(client: MacOSPlatformUDPDatagramClient()),
+                        batchLimit: batchLimit,
+                        flowLimit: flowLimit
+                    )
+                    while !Task.isCancelled {
+                        do {
+                            _ = try await runtime.runOnce()
+                        } catch {
+                            try? await Task.sleep(nanoseconds: 50_000_000)
+                        }
+                    }
+                    await runtime.closeProxyConnections()
                 case .tuic:
                     let runtime = try TunnelRuntimeController.makeTUICQUICSession(
                         snapshotStore: stores.snapshotStore,

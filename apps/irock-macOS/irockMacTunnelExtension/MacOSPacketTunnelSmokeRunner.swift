@@ -124,6 +124,18 @@ struct MacOSPacketTunnelSmokeRunner: Sendable {
                 batchLimit: batchLimit,
                 flowLimit: flowLimit
             )
+        case .trustTunnel where snapshot.selectedNode.transport == .http2:
+            return try TunnelRuntimeController.makeTrustTunnelHTTP2Session(
+                snapshotStore: stores.snapshotStore,
+                flow: flow,
+                statusStore: stores.statusStore,
+                logStore: stores.logStore,
+                stream: MacOSPlatformTCPByteStreamDialer(),
+                credentialResolver: KeychainProxyCredentialResolver(),
+                udpDatagramForwarder: DirectUDPDatagramForwarder(client: MacOSPlatformUDPDatagramClient()),
+                batchLimit: batchLimit,
+                flowLimit: flowLimit
+            )
         case .tuic:
             return try TunnelRuntimeController.makeTUICQUICSession(
                 snapshotStore: stores.snapshotStore,

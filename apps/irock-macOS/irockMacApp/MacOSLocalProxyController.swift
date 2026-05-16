@@ -104,6 +104,9 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         case .tuic:
             return node.transport == .quic
                 && node.tls.enabled
+        case .trustTunnel:
+            return node.transport == .http2
+                && node.tls.enabled
         case .trojan:
             return node.transport == .tcp
         case .vmess:
@@ -258,8 +261,35 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             try openHysteria2OutboundAndRelay(client: client, destination: destination, node: node, credential: credential, realmCredential: realmCredential, sendSuccess: sendSuccess)
         case .tuic:
             try openTUICOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
+        case .trustTunnel:
+            try openTrustTunnelOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
         default:
             throw LocalProxyError.unavailable
+        }
+    }
+
+    private func openTrustTunnelOutboundAndRelay(client: Int32, destination: ProxyDestination, node: ProxyNode, credential: String, sendSuccess: () throws -> Void) throws {
+        let tlsStream = try MacOSTLSByteStream(host: node.serverHost, port: node.serverPort, tls: h2TLSOptions(from: node.tls), initialPayload: nil)
+        let stream = HTTP2ClientByteStream(
+            underlying: tlsStream,
+            authority: authority(for: destination),
+            path: "/",
+            method: "CONNECT",
+            additionalHeaders: [
+                ("user-agent", "irock trusttunnel"),
+                ("proxy-authorization", "Basic \(Data(credential.utf8).base64EncodedString())")
+            ],
+            initialPayload: nil
+        )
+        try runAsync { try await tlsStream.start() }
+        do {
+            try runAsync { try await stream.start() }
+            try runAsync { try await stream.waitForResponseHeaders() }
+            try sendSuccess()
+            relay(local: client, stream: stream)
+        } catch {
+            try? runAsync { await stream.close() }
+            throw error
         }
     }
 
@@ -440,6 +470,14 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         } catch {
             try? runAsync { await stream.close() }
             throw error
+        }
+    }
+
+    private func authority(for destination: ProxyDestination) -> String {
+        switch destination {
+        case .host(let host, let port): return "\(host):\(port)"
+        case .ipv4(let address, let port): return "\(address):\(port)"
+        case .ipv6(let address, let port): return "[\(address)]:\(port)"
         }
     }
 

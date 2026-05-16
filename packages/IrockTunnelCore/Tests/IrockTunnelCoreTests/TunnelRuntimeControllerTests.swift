@@ -246,6 +246,43 @@ final class TunnelRuntimeControllerTests: XCTestCase {
         XCTAssertTrue(stream.writes.reduce(Data(), +).starts(with: Data("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".utf8)))
     }
 
+    func testRunTrustTunnelHTTP2BatchWithStreamAdapterUsesRetainedConnectStream() async throws {
+        let snapshotStore = InMemoryRuntimeSnapshotStore()
+        try snapshotStore.save(controllerTrustTunnelHTTP2Snapshot())
+        let packet = Packet.ipv4TCP(id: "tcp-tt", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
+        let flow = ControllerRecordingPacketFlowIO(packets: [packet])
+        let responseHeaders = controllerHTTP2Frame(type: 0x01, flags: 0x04, streamID: 1, payload: Data([0x88]))
+        let stream = ControllerRecordingByteStream(reads: [responseHeaders, nil])
+        let streamAdapter = ControllerRecordingTransportStreamAdapter(transport: .tcp, stream: stream)
+        let statusStore = InMemoryRuntimeStatusStore()
+        let logStore = InMemoryRuntimeLogStore()
+
+        let summary = try await TunnelRuntimeController.runTrustTunnelHTTP2Batch(
+            snapshotStore: snapshotStore,
+            flow: flow,
+            statusStore: statusStore,
+            logStore: logStore,
+            stream: streamAdapter,
+            credentialResolver: TestProxyCredentialResolver(credential: "admin:trust-secret"),
+            batchLimit: 16,
+            flowLimit: 32
+        )
+
+        XCTAssertEqual(summary.readCount, 1)
+        XCTAssertEqual(summary.writtenCount, 1)
+        XCTAssertEqual(summary.proxyConnectCount, 1)
+        XCTAssertEqual(streamAdapter.requests.count, 1)
+        XCTAssertEqual(streamAdapter.requests.first?.transport, .tcp)
+        XCTAssertEqual(streamAdapter.requests.first?.tls, controllerTrustTunnelHTTP2Snapshot().selectedNode.tls)
+        let written = stream.writes.reduce(Data(), +)
+        XCTAssertTrue(written.contains(Data("93.184.216.34:443".utf8)))
+        XCTAssertTrue(written.contains(Data("Basic YWRtaW46dHJ1c3Qtc2VjcmV0".utf8)))
+        let status = try XCTUnwrap(statusStore.load())
+        XCTAssertEqual(status.phase, .connected)
+        XCTAssertEqual(status.selectedNodeName, "TrustTunnel")
+        XCTAssertEqual(try logStore.loadRecent().map(\.message), ["Tunnel runtime preparing", "Tunnel runtime connected"])
+    }
+
     func testRunTUICQUICBatchLoadsSnapshotAndRunsPacketFlowBatch() async throws {
         let snapshotStore = InMemoryRuntimeSnapshotStore()
         try snapshotStore.save(controllerTUICSnapshot())
@@ -556,13 +593,36 @@ private final class ControllerRecordingTUICQUICSession: TUICQUICSession, @unchec
 }
 
 private final class ControllerRecordingByteStream: TransportByteStream, @unchecked Sendable {
+    private var reads: [Data?]
     var initialPayloads: [Data] = []
     var writes: [Data] = []
 
-    func read(maxLength: Int) async throws -> Data? { nil }
+    init(reads: [Data?] = []) {
+        self.reads = reads
+    }
+
+    func read(maxLength: Int) async throws -> Data? {
+        reads.isEmpty ? nil : reads.removeFirst()
+    }
+
     func write(_ data: Data) async throws { writes.append(data) }
     func closeWrite() async {}
     func close() async {}
+}
+
+private func controllerHTTP2Frame(type: UInt8, flags: UInt8, streamID: UInt32, payload: Data) -> Data {
+    var frame = Data()
+    frame.append(UInt8((payload.count >> 16) & 0xff))
+    frame.append(UInt8((payload.count >> 8) & 0xff))
+    frame.append(UInt8(payload.count & 0xff))
+    frame.append(type)
+    frame.append(flags)
+    frame.append(UInt8((streamID >> 24) & 0x7f))
+    frame.append(UInt8((streamID >> 16) & 0xff))
+    frame.append(UInt8((streamID >> 8) & 0xff))
+    frame.append(UInt8(streamID & 0xff))
+    frame.append(payload)
+    return frame
 }
 
 private enum ControllerPacketFlowTestError: Error {
@@ -661,6 +721,26 @@ private func controllerVMessGRPCSnapshot() -> RuntimeSnapshot {
             transportOptions: TransportOptions(grpc: GRPCTransportOptions(authority: "edge.example.com", service: "/TunnelService/Connect")),
             tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil),
             udpPolicy: .disabled
+        ),
+        routeMode: .globalProxy,
+        logLevel: .user,
+        routingRuleManifest: RuntimeRoutingRuleManifest(version: 1, rules: [RuntimeRoutingRule(kind: .finalRule, value: nil, action: .proxy)])
+    )
+}
+
+private func controllerTrustTunnelHTTP2Snapshot() -> RuntimeSnapshot {
+    RuntimeSnapshot(
+        id: SnapshotID(rawValue: "snapshot-1"),
+        selectedNode: ProxyNode(
+            id: NodeID(rawValue: "node-1"),
+            name: "TrustTunnel",
+            protocolType: .trustTunnel,
+            serverHost: "example.com",
+            serverPort: 443,
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "trust-credential"),
+            transport: .http2,
+            tls: TLSOptions(enabled: true, serverName: "example.com", allowInsecure: true, alpn: ["h2"], fingerprint: nil, reality: nil),
+            udpPolicy: .enabled
         ),
         routeMode: .globalProxy,
         logLevel: .user,

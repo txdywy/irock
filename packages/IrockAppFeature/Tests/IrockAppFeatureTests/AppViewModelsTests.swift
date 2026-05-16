@@ -256,6 +256,34 @@ final class AppViewModelsTests: XCTestCase {
     }
 
     @MainActor
+    func testAppViewModelConnectStartsTrustTunnelHTTP2LocalProxyWithoutStartingUserModeTun() throws {
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
+        let localProxy = RecordingLocalProxyController(endpoint: endpoint)
+        let tunEndpoint = UserModeTunEndpoint(interfaceName: "utun9", address: "10.255.0.2", gateway: "10.255.0.1", mtu: 1500)
+        let tun = RecordingUserModeTunController(endpoint: tunEndpoint)
+        let model = AppViewModel(nodes: [], localProxyController: localProxy, userModeTunController: tun)
+        let node = try model.importURI(trustTunnelLink(fields: [
+            (0x01, Data("los.hackx86.com".utf8)),
+            (0x02, Data("los.hackx86.com:30443".utf8)),
+            (0x05, Data("admin".utf8)),
+            (0x06, Data("trust-secret".utf8)),
+            (0x07, Data([0x01])),
+            (0x09, Data([0x01])),
+            (0x0C, Data("tt.los".utf8))
+        ]))
+
+        let result = model.connect()
+
+        XCTAssertEqual(result, .localProxyStarted(endpoint))
+        XCTAssertEqual(localProxy.startedNode, node)
+        XCTAssertEqual(localProxy.startedCredential, "admin:trust-secret")
+        XCTAssertNil(tun.startedNode)
+        XCTAssertNil(tun.startedCredential)
+        XCTAssertEqual(model.localProxyState.phase, .running)
+        XCTAssertEqual(model.userModeTunState.phase, .stopped)
+    }
+
+    @MainActor
     func testAppViewModelConnectRejectsVMessPinnedTLSBeforeStartingProxy() throws {
         let endpoint = LocalProxyEndpoint(host: "127.0.0.1", socksPort: 10808, httpPort: 10809)
         let localProxy = RecordingLocalProxyController(endpoint: endpoint)
@@ -760,6 +788,24 @@ final class AppViewModelsTests: XCTestCase {
             return XCTFail("Expected statusLoadFailed result")
         }
         XCTAssertEqual(message, "Runtime status unavailable")
+    }
+
+    private func trustTunnelLink(fields: [(UInt64, Data)]) -> String {
+        var payload = Data()
+        for (tag, value) in fields {
+            payload.append(trustTunnelVarInt(tag))
+            payload.append(trustTunnelVarInt(UInt64(value.count)))
+            payload.append(value)
+        }
+        return "tt://?" + payload.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private func trustTunnelVarInt(_ value: UInt64) -> Data {
+        precondition(value < 0x40)
+        return Data([UInt8(value)])
     }
 
     private final class RecordingLocalProxyController: LocalProxyControlling {

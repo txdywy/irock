@@ -121,6 +121,12 @@ public final class AppViewModel: ObservableObject {
                 appendLog("当前 TUIC 节点需要 QUIC+TLS 传输")
                 throw LocalProxyError.unsupportedCredential
             }
+        case .trustTunnel:
+            guard node.transport == .http2, node.tls.enabled else {
+                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前 TrustTunnel 节点需要 HTTP/2+TLS 传输")
+                appendLog("当前 TrustTunnel 节点需要 HTTP/2+TLS 传输")
+                throw LocalProxyError.unsupportedCredential
+            }
         case .trojan:
             guard node.transport == .tcp else {
                 localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前 Trojan 节点需要 TCP 传输")

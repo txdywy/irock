@@ -27,6 +27,7 @@ public enum ProxyProtocolType: String, Codable, Sendable {
     case trojan
     case hysteria2
     case tuic
+    case trustTunnel
 }
 
 public enum TransportType: String, Codable, Sendable {

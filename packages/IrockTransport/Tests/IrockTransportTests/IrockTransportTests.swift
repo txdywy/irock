@@ -723,6 +723,44 @@ final class IrockTransportTests: XCTestCase {
         }
     }
 
+    func testHTTP2ConnectStreamTransportAdapterWrapsUnderlyingStreamWithConnectHeaders() async throws {
+        let responseHeaders = http2Frame(type: 0x01, flags: 0x04, streamID: 1, payload: Data([0x88]))
+        let underlyingStream = RecordingTransportByteStream(reads: [responseHeaders, nil])
+        let underlying = RecordingTransportStreamAdapter(transport: .tcp, stream: underlyingStream)
+        let adapter = HTTP2ConnectStreamTransportAdapter(underlying: underlying)
+        let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil)
+        let request = TransportRequest(
+            host: " example.com ",
+            port: 443,
+            transport: .http2,
+            tls: tls,
+            metadata: [
+                "http2Authority": "apple.com:443",
+                "proxyAuthorization": "Basic YWRtaW46cGFzcw",
+                "userAgent": "irock trusttunnel"
+            ]
+        )
+
+        let stream = try await adapter.openStream(request: request)
+        try await stream.write(Data("payload".utf8))
+
+        XCTAssertEqual(underlying.requests.count, 1)
+        XCTAssertEqual(underlying.requests.first?.host, "example.com")
+        XCTAssertEqual(underlying.requests.first?.port, 443)
+        XCTAssertEqual(underlying.requests.first?.transport, .tcp)
+        XCTAssertEqual(underlying.requests.first?.tls, tls)
+        XCTAssertNil(underlying.requests.first?.initialPayload)
+        let frames = http2Frames(in: underlyingStream.writes.reduce(Data(), +))
+        XCTAssertEqual(frames[1].type, 0x01)
+        XCTAssertTrue(frames[1].payload.contains(Data("apple.com:443".utf8)))
+        XCTAssertTrue(frames[1].payload.contains(Data("Basic YWRtaW46cGFzcw".utf8)))
+        XCTAssertTrue(frames[1].payload.contains(Data("irock trusttunnel".utf8)))
+        XCTAssertFalse(frames[1].payload.contains(Data([0x87])))
+        XCTAssertFalse(frames[1].payload.contains(Data([0x04, 0x01, 0x2f])))
+        XCTAssertFalse(frames[1].payload.contains(Data("application/octet-stream".utf8)))
+        XCTAssertEqual(frames.filter { $0.type == 0x00 }.last?.payload, Data("payload".utf8))
+    }
+
     func testGRPCStreamTransportAdapterWrapsUnderlyingStreamAndFramesWrites() async throws {
         let underlyingStream = RecordingTransportByteStream(reads: [nil])
         let underlying = RecordingTransportStreamAdapter(transport: .tcp, stream: underlyingStream)

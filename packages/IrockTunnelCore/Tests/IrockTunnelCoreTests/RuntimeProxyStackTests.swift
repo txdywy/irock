@@ -263,6 +263,26 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertTrue(stream.writes.reduce(Data(), +).contains(Data([0x00, 0x00, 0x00, 0x00, 0x02, 0xde, 0xad])))
     }
 
+    func testTrustTunnelHTTP2StreamStackRetainsConnectStreamForRuntimePayloadWrites() async throws {
+        let responseHeaders = http2Frame(type: 0x01, flags: 0x04, streamID: 1, payload: Data([0x88]))
+        let stream = RecordingRuntimeByteStream(reads: [responseHeaders, nil])
+        let streamAdapter = RecordingRuntimeTransportStreamAdapter(transport: .tcp, stream: stream)
+        let registry = RuntimeProxyStack.trustTunnelHTTP2(stream: streamAdapter, credentialResolver: TestProxyCredentialResolver(credential: "admin:trust-secret"))
+        let outbound = ProxyOutbound(node: makeTrustTunnelHTTP2Node(), registry: registry)
+        let result = proxyResult(packetID: "tcp-tt")
+
+        let connection = try await outbound.connect(result: result)
+        _ = try await connection?.writePayload([0xca, 0xfe])
+
+        XCTAssertEqual(streamAdapter.requests.count, 1)
+        XCTAssertEqual(streamAdapter.requests.first?.transport, .tcp)
+        XCTAssertEqual(streamAdapter.requests.first?.tls, makeTrustTunnelHTTP2Node().tls)
+        let written = stream.writes.reduce(Data(), +)
+        XCTAssertTrue(written.contains(Data("93.184.216.34:443".utf8)))
+        XCTAssertTrue(written.contains(Data("Basic YWRtaW46dHJ1c3Qtc2VjcmV0".utf8)))
+        XCTAssertTrue(written.contains(Data([0xca, 0xfe])))
+    }
+
     func testVLESSTCPStackRoutesDisabledTLSToPlainChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
@@ -565,11 +585,18 @@ private final class RecordingRuntimeTUICQUICSession: TUICQUICSession, @unchecked
 }
 
 private final class RecordingRuntimeByteStream: TransportByteStream, @unchecked Sendable {
+    private var storedReads: [Data?]
     private var storedWrites: [Data] = []
+
+    init(reads: [Data?] = []) {
+        self.storedReads = reads
+    }
 
     var writes: [Data] { storedWrites }
 
-    func read(maxLength: Int) async throws -> Data? { nil }
+    func read(maxLength: Int) async throws -> Data? {
+        storedReads.isEmpty ? nil : storedReads.removeFirst()
+    }
 
     func write(_ data: Data) async throws {
         storedWrites.append(data)
@@ -583,6 +610,21 @@ private func proxyResult(packetID: String) -> PacketProcessingResult {
     var processor = PacketProcessor(configuration: TunnelRuntimeConfiguration(snapshot: snapshot(tls: .disabled), routingEngine: RoutingEngine(rules: [.final(.proxy)]), batchLimit: 16, flowLimit: 32))
     let packet = Packet.ipv4TCP(id: packetID, source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)
     return processor.process(packet)
+}
+
+private func http2Frame(type: UInt8, flags: UInt8, streamID: UInt32, payload: Data) -> Data {
+    var frame = Data()
+    frame.append(UInt8((payload.count >> 16) & 0xff))
+    frame.append(UInt8((payload.count >> 8) & 0xff))
+    frame.append(UInt8(payload.count & 0xff))
+    frame.append(type)
+    frame.append(flags)
+    frame.append(UInt8((streamID >> 24) & 0x7f))
+    frame.append(UInt8((streamID >> 16) & 0xff))
+    frame.append(UInt8((streamID >> 8) & 0xff))
+    frame.append(UInt8(streamID & 0xff))
+    frame.append(payload)
+    return frame
 }
 
 private func snapshot(tls: TLSOptions) -> RuntimeSnapshot {
@@ -600,6 +642,11 @@ private func makeVMessNode(tls: TLSOptions) -> ProxyNode {
 private func makeVMessGRPCNode() -> ProxyNode {
     let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: false, alpn: ["h2"], fingerprint: nil, reality: nil)
     return ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .vmess, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .grpc, transportOptions: TransportOptions(grpc: GRPCTransportOptions(authority: "edge.example.com", service: "/TunnelService/Connect")), tls: tls, udpPolicy: .disabled)
+}
+
+private func makeTrustTunnelHTTP2Node() -> ProxyNode {
+    let tls = TLSOptions(enabled: true, serverName: "example.com", allowInsecure: true, alpn: ["h2"], fingerprint: nil, reality: nil)
+    return ProxyNode(id: NodeID(rawValue: "node-1"), name: "TrustTunnel", protocolType: .trustTunnel, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .http2, tls: tls, udpPolicy: .enabled)
 }
 
 private func makeVLESSNode(tls: TLSOptions) -> ProxyNode {
