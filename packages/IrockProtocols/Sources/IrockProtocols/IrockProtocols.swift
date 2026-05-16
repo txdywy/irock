@@ -1830,6 +1830,70 @@ public struct UnavailableTUICQUICSessionDialer: TUICQUICSessionDialer {
     }
 }
 
+public struct TrustTunnelProxyAdapter<CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
+    public let supportedProtocol: ProxyProtocolType = .trustTunnel
+    private let streamRegistry: TransportStreamAdapterRegistry
+    private let credentialResolver: CredentialResolver
+
+    public init(streamRegistry: TransportStreamAdapterRegistry, credentialResolver: CredentialResolver) {
+        self.streamRegistry = streamRegistry
+        self.credentialResolver = credentialResolver
+    }
+
+    public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
+        try validate(request.node)
+        let credential = try credentialResolver.credential(for: request.node.credentialReference)
+        let stream = try await streamRegistry.adapter(for: request.node.transport)?.openStream(request: transportRequest(for: request, credential: credential))
+        guard let stream else {
+            throw ProxyProtocolError.unsupportedTransport(request.node.transport)
+        }
+        return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination, retainedStream: stream)
+    }
+
+    private func validate(_ node: ProxyNode) throws {
+        guard node.protocolType == .trustTunnel else {
+            throw ProxyProtocolError.unsupportedProtocol(node.protocolType)
+        }
+        guard node.transport == .http2 || node.transport == .quic else {
+            throw ProxyProtocolError.unsupportedTransport(node.transport)
+        }
+        guard node.tls.enabled else {
+            throw ProxyProtocolError.invalidConfiguration("trusttunnel requires tls")
+        }
+        guard !node.serverHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing trusttunnel server host")
+        }
+        guard (1...65_535).contains(node.serverPort) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid trusttunnel server port")
+        }
+    }
+
+    private func transportRequest(for request: ProxyRequest, credential: String) throws -> TransportRequest {
+        var metadata = request.metadata
+        metadata["proxyProtocol"] = request.node.protocolType.rawValue
+        metadata["http2Method"] = "CONNECT"
+        metadata["http2Authority"] = authority(for: request.destination)
+        metadata["userAgent"] = "irock trusttunnel"
+        metadata["proxyAuthorization"] = "Basic \(Data(credential.utf8).base64EncodedString())"
+        return TransportRequest(
+            host: request.node.serverHost,
+            port: request.node.serverPort,
+            transport: request.node.transport,
+            tls: request.node.tls.enabled ? request.node.tls : nil,
+            metadata: metadata,
+            initialPayload: nil
+        )
+    }
+
+    private func authority(for destination: ProxyDestination) -> String {
+        switch destination {
+        case .host(let host, let port): return "\(host):\(port)"
+        case .ipv4(let address, let port): return "\(address):\(port)"
+        case .ipv6(let address, let port): return "[\(address)]:\(port)"
+        }
+    }
+}
+
 public struct TUICProxyAdapter<Dialer: TUICQUICSessionDialer, CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
     public let supportedProtocol: ProxyProtocolType = .tuic
     private let sessionDialer: Dialer

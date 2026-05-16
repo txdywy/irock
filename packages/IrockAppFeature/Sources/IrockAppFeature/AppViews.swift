@@ -922,6 +922,7 @@ private extension ProxyProtocolType {
         case .trojan: "TR"
         case .hysteria2: "HY2"
         case .tuic: "TUIC"
+        case .trustTunnel: "TT"
         }
     }
 }

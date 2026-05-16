@@ -42,6 +42,8 @@ public enum URIImport {
             return URIImportResult(protocolType: .hysteria2, originalText: text)
         case "tuic":
             return URIImportResult(protocolType: .tuic, originalText: text)
+        case "tt":
+            return URIImportResult(protocolType: .trustTunnel, originalText: text)
         default:
             throw URIImportError.unsupportedScheme(scheme)
         }
@@ -59,6 +61,7 @@ public enum URIImport {
         case "trojan": return try parseTrojanDraft(uriText)
         case "hysteria2", "hy2", "realm": return try parseHysteria2Draft(uriText)
         case "tuic": return try parseTUICDraft(uriText)
+        case "tt": return try parseTrustTunnelDraft(uriText)
         default: throw URIImportError.unsupportedScheme(scheme)
         }
     }
@@ -246,6 +249,34 @@ public enum URIImport {
         )
     }
 
+    private static func parseTrustTunnelDraft(_ text: String) throws -> NodeDraft {
+        let components = try components(text)
+        guard components.scheme?.lowercased() == "tt" else { throw URIImportError.unsupportedScheme(components.scheme ?? "") }
+        guard let encodedPayload = components.percentEncodedQuery, !encodedPayload.isEmpty else {
+            throw URIImportError.malformedURI
+        }
+        let fields = try parseTrustTunnelFields(encodedPayload)
+        let host = try trustTunnelRequiredString(fields[0x01])
+        let address = try trustTunnelRequiredString(fields[0x02])
+        let endpoint = try parseEndpoint(address)
+        let username = try trustTunnelRequiredString(fields[0x05])
+        let password = try trustTunnelRequiredString(fields[0x06])
+        let transport = try trustTunnelTransport(fields[0x09])
+        return NodeDraft(
+            name: trustTunnelString(fields[0x0C]) ?? "\(endpoint.host):\(endpoint.port)",
+            protocolType: .trustTunnel,
+            serverHost: endpoint.host,
+            serverPortText: endpoint.port,
+            credentialAccount: "\(username):\(password)",
+            transport: transport,
+            tlsEnabled: true,
+            tlsServerName: trustTunnelString(fields[0x03]) ?? host,
+            udpEnabled: true,
+            tlsAllowInsecure: trustTunnelBool(fields[0x07]) ?? false,
+            tlsALPN: transport == .quic ? ["h3"] : ["h2"]
+        )
+    }
+
     private static func parseRealmOption(_ text: String) throws -> Hysteria2RealmDraft? {
         if text == "1" || text.lowercased() == "true" {
             return nil
@@ -276,9 +307,79 @@ public enum URIImport {
         )
     }
 
+    private static func parseTrustTunnelFields(_ encodedPayload: String) throws -> [UInt64: Data] {
+        let payload = try decodeBase64Data(encodedPayload)
+        var offset = payload.startIndex
+        var fields: [UInt64: Data] = [:]
+        while offset < payload.endIndex {
+            let tag = try readTrustTunnelVarInt(payload, offset: &offset)
+            let length = try readTrustTunnelVarInt(payload, offset: &offset)
+            guard length <= UInt64(payload.distance(from: offset, to: payload.endIndex)) else {
+                throw URIImportError.malformedURI
+            }
+            let end = payload.index(offset, offsetBy: Int(length))
+            if tag == 0x02 {
+                fields[tag] = fields[tag] ?? payload[offset..<end]
+            } else {
+                fields[tag] = payload[offset..<end]
+            }
+            offset = end
+        }
+        return fields
+    }
+
+    private static func readTrustTunnelVarInt(_ data: Data, offset: inout Data.Index) throws -> UInt64 {
+        guard offset < data.endIndex else { throw URIImportError.malformedURI }
+        let first = data[offset]
+        offset = data.index(after: offset)
+        let prefix = first >> 6
+        let byteCount: Int
+        switch prefix {
+        case 0: byteCount = 1
+        case 1: byteCount = 2
+        case 2: byteCount = 4
+        default: byteCount = 8
+        }
+        var value = UInt64(first & 0x3f)
+        guard byteCount == 1 || data.distance(from: offset, to: data.endIndex) >= byteCount - 1 else {
+            throw URIImportError.malformedURI
+        }
+        for _ in 1..<byteCount {
+            value = (value << 8) | UInt64(data[offset])
+            offset = data.index(after: offset)
+        }
+        return value
+    }
+
+    private static func trustTunnelRequiredString(_ data: Data?) throws -> String {
+        guard let string = trustTunnelString(data) else { throw URIImportError.malformedURI }
+        return string
+    }
+
+    private static func trustTunnelString(_ data: Data?) -> String? {
+        guard let data, let string = String(data: data, encoding: .utf8) else { return nil }
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func trustTunnelBool(_ data: Data?) -> Bool? {
+        guard let byte = data?.first else { return nil }
+        return byte != 0
+    }
+
+    private static func trustTunnelTransport(_ data: Data?) throws -> TransportType {
+        guard let data else { return .http2 }
+        var offset = data.startIndex
+        switch try readTrustTunnelVarInt(data, offset: &offset) {
+        case 0x01: return .http2
+        case 0x02: return .quic
+        default: throw URIImportError.unsupportedOption("trusttunnel upstream_protocol")
+        }
+    }
+
     private static func extractSupportedURI(from text: String) throws -> String {
         let compact = text.split(whereSeparator: \.isWhitespace).joined()
-        for scheme in ["hysteria2", "vmess", "vless", "trojan", "tuic", "realm", "hy2", "ss"] {
+        for scheme in ["hysteria2", "vmess", "vless", "trojan", "tuic", "realm", "hy2", "tt", "ss"] {
             if let range = compact.range(of: "\(scheme)://", options: .caseInsensitive) {
                 let candidate = String(compact[range.lowerBound...].prefix { $0.isASCII && !$0.isWhitespace })
                 return String(candidate.split(separator: "，", maxSplits: 1, omittingEmptySubsequences: false)[0])
@@ -409,14 +510,22 @@ public enum URIImport {
     }
 
     private static func decodeBase64String(_ text: String) throws -> String {
+        let data = try decodeBase64Data(text)
+        guard let decoded = String(data: data, encoding: .utf8), !decoded.isEmpty else {
+            throw URIImportError.invalidBase64
+        }
+        return decoded
+    }
+
+    private static func decodeBase64Data(_ text: String) throws -> Data {
         var normalized = text.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
         let remainder = normalized.count % 4
         if remainder > 0 {
             normalized.append(String(repeating: "=", count: 4 - remainder))
         }
-        guard let data = Data(base64Encoded: normalized), let decoded = String(data: data, encoding: .utf8), !decoded.isEmpty else {
+        guard let data = Data(base64Encoded: normalized), !data.isEmpty else {
             throw URIImportError.invalidBase64
         }
-        return decoded
+        return data
     }
 }

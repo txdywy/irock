@@ -805,17 +805,19 @@ public final class HTTP2ClientByteStream<Underlying: TransportByteStream>: Trans
     private let state = HTTP2ClientStreamState()
     private let authority: String
     private let path: String
+    private let method: String
     private let contentType: String
     private let additionalHeaders: [(String, String)]
     private let initialPayload: Data?
     private var readerTask: Task<Void, Never>?
     private static var maximumDataFramePayloadSize: Int { 16_384 }
 
-    public init(underlying: Underlying, authority: String, path: String, contentType: String = "application/octet-stream", additionalHeaders: [(String, String)] = [], initialPayload: Data? = nil) {
+    public init(underlying: Underlying, authority: String, path: String, method: String = "POST", contentType: String = "application/octet-stream", additionalHeaders: [(String, String)] = [], initialPayload: Data? = nil) {
         self.underlying = underlying
         self.writer = HTTP2UnderlyingWriter(underlying: underlying)
         self.authority = authority.trimmingCharacters(in: .whitespacesAndNewlines)
         self.path = path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "/" : path.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.method = method.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "POST" : method.trimmingCharacters(in: .whitespacesAndNewlines)
         self.contentType = contentType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "application/octet-stream" : contentType.trimmingCharacters(in: .whitespacesAndNewlines)
         self.additionalHeaders = additionalHeaders
         self.initialPayload = initialPayload
@@ -885,11 +887,21 @@ public final class HTTP2ClientByteStream<Underlying: TransportByteStream>: Trans
 
     private func headerBlock() throws -> Data {
         var block = Data()
-        block.append(0x83)
-        block.append(0x87)
-        try appendLiteralHeader(nameIndex: 4, value: path.hasPrefix("/") ? path : "/\(path)", to: &block)
-        try appendLiteralHeader(nameIndex: 1, value: authority, to: &block)
-        try appendLiteralHeader(nameIndex: 31, value: contentType, to: &block)
+        if method.uppercased() == "GET" {
+            block.append(0x82)
+        } else if method.uppercased() == "POST" {
+            block.append(0x83)
+        } else {
+            try appendLiteralHeader(nameIndex: 2, value: method.uppercased(), to: &block)
+        }
+        if method.uppercased() == "CONNECT" {
+            try appendLiteralHeader(nameIndex: 1, value: authority, to: &block)
+        } else {
+            block.append(0x87)
+            try appendLiteralHeader(nameIndex: 4, value: path.hasPrefix("/") ? path : "/\(path)", to: &block)
+            try appendLiteralHeader(nameIndex: 1, value: authority, to: &block)
+            try appendLiteralHeader(nameIndex: 31, value: contentType, to: &block)
+        }
         for (name, value) in additionalHeaders {
             try appendLiteralHeader(name: name, value: value, to: &block)
         }
@@ -1484,6 +1496,97 @@ private enum HTTP2LocalPrelude {
             data.append(block)
         }
         return data
+    }
+}
+
+public struct HTTP2ConnectStreamTransportAdapter<Underlying: TransportStreamAdapter>: TransportStreamAdapter {
+    public let supportedTransport: TransportType = .http2
+    private let underlying: Underlying
+
+    public init(underlying: Underlying) {
+        self.underlying = underlying
+    }
+
+    public func openStream(request: TransportRequest) async throws -> any TransportByteStream {
+        let descriptor = try HTTP2ConnectOpenDescriptor(request: request)
+        let underlyingRequest = TransportRequest(
+            host: descriptor.host,
+            port: request.port,
+            transport: underlying.supportedTransport,
+            tls: request.tls,
+            metadata: descriptor.metadata,
+            initialPayload: nil
+        )
+        let stream = try await underlying.openStream(request: underlyingRequest)
+        let http2 = HTTP2ClientByteStream(
+            underlying: AnyTransportByteStream(stream),
+            authority: descriptor.authority,
+            path: descriptor.path,
+            method: descriptor.method,
+            contentType: "application/octet-stream",
+            additionalHeaders: descriptor.additionalHeaders,
+            initialPayload: request.initialPayload
+        )
+        try await http2.start()
+        try await http2.waitForResponseHeaders()
+        return http2
+    }
+}
+
+private struct HTTP2ConnectOpenDescriptor {
+    let host: String
+    let authority: String
+    let path: String
+    let method: String
+    let userAgent: String
+    let proxyAuthorization: String
+
+    init(request: TransportRequest) throws {
+        guard request.transport == .http2 else {
+            throw TransportError.unsupportedTransport(request.transport)
+        }
+        let host = request.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else {
+            throw TransportError.invalidConfiguration("missing http2 host")
+        }
+        guard (1...65_535).contains(request.port) else {
+            throw TransportError.invalidConfiguration("invalid http2 port")
+        }
+        let authority = request.metadata["http2Authority", default: host].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !authority.isEmpty else {
+            throw TransportError.invalidConfiguration("invalid http2 authority")
+        }
+        let path = request.metadata["http2Path", default: "/"].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard path.hasPrefix("/") else {
+            throw TransportError.invalidConfiguration("invalid http2 path")
+        }
+        let method = request.metadata["http2Method", default: "CONNECT"].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !method.isEmpty else {
+            throw TransportError.invalidConfiguration("invalid http2 method")
+        }
+        let userAgent = request.metadata["userAgent", default: "irock"].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !userAgent.isEmpty else {
+            throw TransportError.invalidConfiguration("invalid http2 user agent")
+        }
+        let proxyAuthorization = request.metadata["proxyAuthorization", default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
+        self.host = host
+        self.authority = authority
+        self.path = path
+        self.method = method
+        self.userAgent = userAgent
+        self.proxyAuthorization = proxyAuthorization
+    }
+
+    var metadata: [String: String] {
+        ["http2Authority": authority, "http2Path": path, "http2Method": method]
+    }
+
+    var additionalHeaders: [(String, String)] {
+        var headers = [("user-agent", userAgent)]
+        if !proxyAuthorization.isEmpty {
+            headers.append(("proxy-authorization", proxyAuthorization))
+        }
+        return headers
     }
 }
 

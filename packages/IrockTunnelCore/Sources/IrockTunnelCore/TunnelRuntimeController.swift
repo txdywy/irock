@@ -173,6 +173,58 @@ public struct TunnelRuntimeController: Sendable {
         return try await runtime.runOnce()
     }
 
+    public static func makeTrustTunnelHTTP2Session<Flow: PacketFlowIO, Stream: TransportStreamAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshotStore: RuntimeSnapshotStore,
+        flow: Flow,
+        statusStore: RuntimeStatusStore,
+        logStore: RuntimeLogStore,
+        stream: Stream,
+        credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> PacketTunnelRuntime<PacketFlowRuntimeIO<Flow>, PacketFlowRuntimeIO<Flow>> {
+        let snapshot = try loadSnapshot(snapshotStore: snapshotStore, statusStore: statusStore, logStore: logStore)
+        let io = PacketFlowRuntimeIO(flow: flow, batchLimit: batchLimit)
+        return try TunnelRuntimeBootstrap.trustTunnelHTTP2(
+            snapshot: snapshot,
+            reader: io,
+            writer: io,
+            statusStore: statusStore,
+            logStore: logStore,
+            stream: stream,
+            credentialResolver: credentialResolver,
+            udpDatagramForwarder: udpDatagramForwarder,
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    public static func runTrustTunnelHTTP2Batch<Flow: PacketFlowIO, Stream: TransportStreamAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshotStore: RuntimeSnapshotStore,
+        flow: Flow,
+        statusStore: RuntimeStatusStore,
+        logStore: RuntimeLogStore,
+        stream: Stream,
+        credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        batchLimit: Int,
+        flowLimit: Int
+    ) async throws -> PacketTunnelRuntimeSummary {
+        let runtime = try makeTrustTunnelHTTP2Session(
+            snapshotStore: snapshotStore,
+            flow: flow,
+            statusStore: statusStore,
+            logStore: logStore,
+            stream: stream,
+            credentialResolver: credentialResolver,
+            udpDatagramForwarder: udpDatagramForwarder,
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+        return try await runtime.runOnce()
+    }
+
     public static func makeTUICQUICSession<Flow: PacketFlowIO, SessionDialer: TUICQUICSessionDialer, CredentialResolver: ProxyCredentialResolver>(
         snapshotStore: RuntimeSnapshotStore,
         flow: Flow,

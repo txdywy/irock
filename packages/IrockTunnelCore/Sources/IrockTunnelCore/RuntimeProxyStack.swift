@@ -48,6 +48,16 @@ public struct RuntimeProxyStack: Sendable {
         return ProxyAdapterRegistry(adapters: [vmess])
     }
 
+    public static func trustTunnelHTTP2<Stream: TransportStreamAdapter, CredentialResolver: ProxyCredentialResolver>(
+        stream: Stream,
+        credentialResolver: CredentialResolver
+    ) -> ProxyAdapterRegistry {
+        let http2 = HTTP2ConnectStreamTransportAdapter(underlying: stream)
+        let streamRegistry = TransportStreamAdapterRegistry(adapters: [http2])
+        let trustTunnel = TrustTunnelProxyAdapter(streamRegistry: streamRegistry, credentialResolver: credentialResolver)
+        return ProxyAdapterRegistry(adapters: [trustTunnel])
+    }
+
     public static func vlessTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
         plain: Plain,
         tls: TLS,
@@ -210,6 +220,42 @@ public extension TunnelRuntimeConfiguration {
         try TunnelRuntimeConfiguration(
             snapshot: snapshot,
             proxyAdapterRegistry: RuntimeProxyStack.vmessGRPC(stream: stream, credentialResolver: credentialResolver),
+            udpDatagramForwarder: udpDatagramForwarder,
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func trustTunnelHTTP2<Stream: TransportStreamAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        routingEngine: RoutingEngine,
+        stream: Stream,
+        credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        batchLimit: Int,
+        flowLimit: Int
+    ) -> TunnelRuntimeConfiguration {
+        TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            routingEngine: routingEngine,
+            proxyAdapterRegistry: RuntimeProxyStack.trustTunnelHTTP2(stream: stream, credentialResolver: credentialResolver),
+            udpDatagramForwarder: udpDatagramForwarder,
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func trustTunnelHTTP2<Stream: TransportStreamAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        stream: Stream,
+        credentialResolver: CredentialResolver,
+        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> TunnelRuntimeConfiguration {
+        try TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            proxyAdapterRegistry: RuntimeProxyStack.trustTunnelHTTP2(stream: stream, credentialResolver: credentialResolver),
             udpDatagramForwarder: udpDatagramForwarder,
             batchLimit: batchLimit,
             flowLimit: flowLimit

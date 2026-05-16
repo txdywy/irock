@@ -1103,7 +1103,7 @@ final class IrockProtocolsTests: XCTestCase {
                 adapter = Hysteria2ProxyAdapter(transportRegistry: registry, credentialResolver: StaticProxyCredentialResolver(credential: credential))
             case .tuic:
                 adapter = TUICProxyAdapter(transportRegistry: registry, credentialResolver: StaticProxyCredentialResolver(credential: credential))
-            case .shadowsocks:
+            case .shadowsocks, .trustTunnel:
                 XCTFail("Unexpected protocol type")
                 return
             }
@@ -1171,6 +1171,54 @@ final class IrockProtocolsTests: XCTestCase {
 
         XCTAssertEqual(streamAdapter.requests.count, 1)
         XCTAssertEqual(stream.writes.last, Data([0xde, 0xad]))
+    }
+
+    func testTrustTunnelProxyAdapterOpensHTTP2ConnectStreamWithBasicAuth() async throws {
+        let stream = RecordingProtocolByteStream(reads: [])
+        let streamAdapter = RecordingProtocolTransportStreamAdapter(transport: .http2, stream: stream)
+        let adapter = TrustTunnelProxyAdapter(
+            streamRegistry: TransportStreamAdapterRegistry(adapters: [streamAdapter]),
+            credentialResolver: StaticProxyCredentialResolver(credential: "admin:trust-secret")
+        )
+        let node = makeNode(protocolType: .trustTunnel, transport: .http2, credentialAccount: "node-tt")
+
+        let connection = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-tt"]))
+        _ = try await connection.writePayload([0xca, 0xfe])
+
+        XCTAssertEqual(streamAdapter.requests.count, 1)
+        XCTAssertEqual(streamAdapter.requests.first?.host, "example.com")
+        XCTAssertEqual(streamAdapter.requests.first?.port, 443)
+        XCTAssertEqual(streamAdapter.requests.first?.transport, .http2)
+        XCTAssertEqual(streamAdapter.requests.first?.tls?.serverName, "example.com")
+        XCTAssertEqual(streamAdapter.requests.first?.metadata["packetID"], "packet-tt")
+        XCTAssertEqual(streamAdapter.requests.first?.metadata["proxyProtocol"], "trustTunnel")
+        XCTAssertEqual(streamAdapter.requests.first?.metadata["http2Method"], "CONNECT")
+        XCTAssertEqual(streamAdapter.requests.first?.metadata["http2Authority"], "apple.com:443")
+        XCTAssertEqual(streamAdapter.requests.first?.metadata["userAgent"], "irock trusttunnel")
+        XCTAssertEqual(streamAdapter.requests.first?.metadata["proxyAuthorization"], "Basic YWRtaW46dHJ1c3Qtc2VjcmV0")
+        XCTAssertNil(streamAdapter.requests.first?.initialPayload)
+        XCTAssertEqual(stream.writes.last, Data([0xca, 0xfe]))
+    }
+
+    func testTrustTunnelProxyAdapterRejectsDisabledTLSBeforeSendingBasicAuth() async {
+        let stream = RecordingProtocolByteStream(reads: [])
+        let streamAdapter = RecordingProtocolTransportStreamAdapter(transport: .http2, stream: stream)
+        let adapter = TrustTunnelProxyAdapter(
+            streamRegistry: TransportStreamAdapterRegistry(adapters: [streamAdapter]),
+            credentialResolver: StaticProxyCredentialResolver(credential: "admin:trust-secret")
+        )
+        let tls = TLSOptions(enabled: false, serverName: nil, allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let node = makeNode(protocolType: .trustTunnel, transport: .http2, tls: tls, credentialAccount: "node-tt")
+
+        do {
+            _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
+            XCTFail("Expected TrustTunnel TLS validation failure")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .invalidConfiguration("trusttunnel requires tls"))
+            XCTAssertEqual(streamAdapter.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
     }
 
     func testVMessProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {

@@ -12,6 +12,7 @@ final class URIImportTests: XCTestCase {
         XCTAssertEqual(try URIImport.classify("hysteria2://abc").protocolType, .hysteria2)
         XCTAssertEqual(try URIImport.classify("hy2://abc").protocolType, .hysteria2)
         XCTAssertEqual(try URIImport.classify("tuic://abc").protocolType, .tuic)
+        XCTAssertEqual(try URIImport.classify("tt://?AQ90cnVzdC5leGFtcGxlLmNvbQ").protocolType.rawValue, "trustTunnel")
     }
 
     func testRejectsUnsupportedScheme() {
@@ -298,6 +299,38 @@ final class URIImportTests: XCTestCase {
         XCTAssertEqual(draft.tlsFingerprint, "example-pin+value/for+tests=")
     }
 
+    func testParsesTrustTunnelDeepLinkTLVPayload() throws {
+        let link = trustTunnelLink(fields: [
+            (0x01, Data("los.hackx86.com".utf8)),
+            (0x02, Data("los.hackx86.com:30443".utf8)),
+            (0x05, Data("admin".utf8)),
+            (0x06, Data("trust-secret".utf8)),
+            (0x07, Data([0x01])),
+            (0x09, Data([0x01])),
+            (0x0C, Data("tt.los".utf8))
+        ])
+
+        let draft = try URIImport.parseDraft(link)
+        let node = try draft.buildNode(id: NodeID(rawValue: "node-tt"), keychainService: "com.irock.nodes")
+
+        XCTAssertEqual(draft.name, "tt.los")
+        XCTAssertEqual(draft.protocolType.rawValue, "trustTunnel")
+        XCTAssertEqual(draft.serverHost, "los.hackx86.com")
+        XCTAssertEqual(draft.serverPortText, "30443")
+        XCTAssertEqual(draft.credentialAccount, "admin:trust-secret")
+        XCTAssertEqual(draft.transport, .http2)
+        XCTAssertTrue(draft.tlsEnabled)
+        XCTAssertEqual(draft.tlsServerName, "los.hackx86.com")
+        XCTAssertTrue(draft.tlsAllowInsecure)
+        XCTAssertTrue(draft.udpEnabled)
+        XCTAssertEqual(node.protocolType.rawValue, "trustTunnel")
+        XCTAssertEqual(node.serverPort, 30443)
+        XCTAssertEqual(node.transport, .http2)
+        XCTAssertEqual(node.tls.alpn, ["h2"])
+        let encoded = String(decoding: try JSONEncoder().encode(RuntimeSnapshot(id: SnapshotID(rawValue: "snapshot-tt"), selectedNode: node, routeMode: .ruleBased, logLevel: .user)), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("trust-secret"))
+    }
+
     func testParsesTUICShareLink() throws {
         let draft = try URIImport.parseDraft("tuic://00000000-0000-0000-0000-000000000003:tuic-password@tuic.example.com:443?sni=tuic.example.com&alpn=h3#TUIC")
         let node = try draft.buildNode(id: NodeID(rawValue: "node-tuic"), keychainService: "com.irock.nodes")
@@ -319,5 +352,23 @@ final class URIImportTests: XCTestCase {
 
         XCTAssertEqual(drafts.map(\.protocolType), [.trojan, .hysteria2])
         XCTAssertEqual(drafts.map(\.name), ["Trojan", "HY2"])
+    }
+
+    private func trustTunnelLink(fields: [(UInt64, Data)]) -> String {
+        var payload = Data()
+        for (tag, value) in fields {
+            payload.append(trustTunnelVarInt(tag))
+            payload.append(trustTunnelVarInt(UInt64(value.count)))
+            payload.append(value)
+        }
+        return "tt://?" + payload.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private func trustTunnelVarInt(_ value: UInt64) -> Data {
+        precondition(value < 0x40)
+        return Data([UInt8(value)])
     }
 }
