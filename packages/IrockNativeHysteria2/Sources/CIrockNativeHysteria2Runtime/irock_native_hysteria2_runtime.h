@@ -32,6 +32,8 @@ irock_hy2_result irock_hy2_connect(const irock_hy2_client_config *config, const 
 
 irock_hy2_result irock_hy2_connect_with_connected_udp_socket(const irock_hy2_client_config *config, const char *authentication, int udp_fd, int remote_port, irock_hy2_session_ref *session);
 
+irock_hy2_result irock_hy2_connect_quic_session(const irock_hy2_client_config *config, irock_hy2_session_ref *session);
+
 void irock_hy2_set_last_error_for_testing(const char *stage, int code);
 
 int irock_hy2_copy_last_error_for_testing(char *stage_buffer, int stage_buffer_length, int *code);
@@ -114,7 +116,13 @@ irock_hy2_result irock_hy2_session_apply_auth_status(irock_hy2_session_ref sessi
 
 irock_hy2_result irock_hy2_session_open_tcp_stream(irock_hy2_session_ref session, const char *address, irock_hy2_stream_ref *stream);
 
+irock_hy2_result irock_hy2_session_export_keying_material(irock_hy2_session_ref session, const uint8_t *label, int label_length, const uint8_t *context, int context_length, uint8_t *output, int output_length);
+
+irock_hy2_result irock_hy2_session_open_raw_quic_stream(irock_hy2_session_ref session, int bidirectional, const uint8_t *initial_payload, int initial_payload_length, irock_hy2_stream_ref *stream);
+
 irock_hy2_result irock_hy2_session_create_tcp_stream_for_testing(irock_hy2_session_ref session, int64_t stream_id, irock_hy2_stream_ref *stream);
+
+irock_hy2_result irock_hy2_session_create_raw_quic_stream_for_testing(irock_hy2_session_ref session, int64_t stream_id, const uint8_t *initial_payload, int initial_payload_length, irock_hy2_stream_ref *stream);
 
 irock_hy2_result irock_hy2_session_receive_tcp_stream_for_testing(irock_hy2_session_ref session, int64_t stream_id, const uint8_t *bytes, int byte_count, int fin, int *bytes_consumed);
 

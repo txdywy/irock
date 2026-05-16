@@ -54,6 +54,25 @@ final class IrockNativeHysteria2Tests: XCTestCase {
         }
     }
 
+    func testNativeSessionRejectsExporterBeforeTLSHandshake() async throws {
+        var nativeSession: irock_hy2_session_ref?
+        XCTAssertEqual(irock_hy2_session_create_for_testing(1, &nativeSession), IROCK_HY2_OK)
+        guard let nativeSession else {
+            XCTFail("Expected native session")
+            return
+        }
+        let session = NativeHysteria2Session(nativeSession: nativeSession)
+
+        do {
+            _ = try await session.exportKeyingMaterial(label: Data([0x01]), context: Data([0x02]), length: 32)
+            XCTFail("Expected missing TLS exporter failure")
+        } catch let error as NativeHysteria2Error {
+            XCTAssertEqual(error, .invalidConfiguration("native hysteria2 exporter unavailable"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testNativeRuntimeCanUseConnectedUDPSocketPreparedByRealmResolver() {
         let udpSocket = Darwin.socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
         XCTAssertGreaterThanOrEqual(udpSocket, 0)
@@ -226,6 +245,20 @@ final class IrockNativeHysteria2Tests: XCTestCase {
             XCTAssertEqual(error, .networkFailed("native hysteria2 connect network failed (quic_handshake: 4)"))
             XCTAssertFalse(error.description.contains("secret-password"))
             XCTAssertFalse(error.description.contains("ngtcp2/nghttp3 event loop is not wired"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testNativeRuntimeQUICSessionConnectsWithoutHysteria2AuthExchange() async throws {
+        let configuration = try NativeHysteria2ClientConfiguration(serverHost: "127.0.0.1", serverPort: 443)
+        let client = NativeHysteria2Client(configuration: configuration)
+
+        do {
+            _ = try await client.connectQUICSession()
+            XCTFail("Expected native QUIC session network failure")
+        } catch let error as NativeHysteria2Error {
+            XCTAssertEqual(error, .networkFailed("native hysteria2 quic session network failed (quic_handshake: 4)"))
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
@@ -1178,6 +1211,36 @@ final class IrockNativeHysteria2Tests: XCTestCase {
         XCTAssertEqual(irock_hy2_session_create_tcp_stream_for_testing(nativeSession, 4, &nativeStream), IROCK_HY2_OK)
         defer { irock_hy2_stream_free(nativeStream) }
         XCTAssertEqual(irock_hy2_stream_close_write(nativeStream), IROCK_HY2_INVALID_CONFIGURATION)
+    }
+
+    func testNativeSessionCreatesRawQUICStreamWithInitialPayload() async throws {
+        var nativeSession: irock_hy2_session_ref?
+        XCTAssertEqual(irock_hy2_session_create_for_testing(1, &nativeSession), IROCK_HY2_OK)
+        let session = NativeHysteria2Session(nativeSession: nativeSession!)
+
+        let stream = try await session.createRawQUICStreamForTesting(streamID: 8, initialPayload: Data([0x05, 0x00, 0x01]))
+
+        var streamID: Int64 = -1
+        var requestBytesWritten: Int32 = -1
+        XCTAssertEqual(irock_hy2_stream_copy_state_for_testing(stream.nativeStreamForTesting, &streamID, &requestBytesWritten), IROCK_HY2_OK)
+        XCTAssertEqual(streamID, 8)
+        XCTAssertEqual(requestBytesWritten, 3)
+    }
+
+    func testNativeRawByteStreamReadsPayloadWithoutHysteria2TCPDrain() async throws {
+        var nativeSession: irock_hy2_session_ref?
+        XCTAssertEqual(irock_hy2_session_create_for_testing(1, &nativeSession), IROCK_HY2_OK)
+        let session = NativeHysteria2Session(nativeSession: nativeSession!)
+        let stream = try await session.createRawQUICStreamForTesting(streamID: 4, initialPayload: Data())
+        let response = Data("tuic-payload".utf8)
+        var bytesConsumed: Int32 = -1
+        XCTAssertEqual(response.withUnsafeBytes { buffer in
+            irock_hy2_session_receive_tcp_stream_for_testing(nativeSession, 4, buffer.bindMemory(to: UInt8.self).baseAddress, Int32(response.count), 0, &bytesConsumed)
+        }, IROCK_HY2_OK)
+
+        let data = try await stream.read(maxLength: 32)
+
+        XCTAssertEqual(data, response)
     }
 
     func testNativeByteStreamWaitsForBlockedReadToReceiveData() async throws {

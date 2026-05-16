@@ -10,7 +10,7 @@ private final class AsyncResultBox<T>: @unchecked Sendable {
     var result: Result<T, Error>?
 }
 
-private struct Hysteria2TransportByteStream: TransportByteStream {
+private struct NativeTransportByteStream: TransportByteStream {
     let stream: any NativeHysteria2ByteStream
 
     func read(maxLength: Int) async throws -> Data? {
@@ -27,6 +27,36 @@ private struct Hysteria2TransportByteStream: TransportByteStream {
 
     func close() async {
         await stream.close()
+    }
+}
+
+private struct NativeTUICQUICSession: TUICQUICSession {
+    let session: NativeHysteria2Session
+
+    func exportKeyingMaterial(label: Data, context: Data, length: Int) async throws -> Data {
+        try await session.exportKeyingMaterial(label: label, context: context, length: length)
+    }
+
+    func openUnidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream {
+        NativeTransportByteStream(stream: try await session.openRawUnidirectionalStream(initialPayload: initialPayload))
+    }
+
+    func openBidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream {
+        NativeTransportByteStream(stream: try await session.openRawBidirectionalStream(initialPayload: initialPayload))
+    }
+}
+
+private struct NativeTUICQUICSessionDialer: TUICQUICSessionDialer {
+    func openSession(host: String, port: Int, tls: TLSOptions?, metadata: [String: String]) async throws -> any TUICQUICSession {
+        let configuration = try NativeHysteria2ClientConfiguration(
+            serverHost: host,
+            serverPort: port,
+            serverName: tls?.serverName ?? host,
+            alpn: tls?.alpn.isEmpty == false ? tls?.alpn ?? ["h3"] : ["h3"],
+            allowInsecure: tls?.allowInsecure ?? false,
+            certificatePinSHA256: tls?.fingerprint
+        )
+        return NativeTUICQUICSession(session: try await NativeHysteria2Client(configuration: configuration).connectQUICSession())
     }
 }
 
@@ -71,10 +101,13 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             return node.transport == .tcp
         case .hysteria2:
             return node.transport == .quic
+        case .tuic:
+            return node.transport == .quic
+                && node.tls.enabled
         case .trojan:
             return node.transport == .tcp
         case .vmess:
-            return (node.transport == .tcp || node.transport == .webSocket || node.transport == .http2)
+            return (node.transport == .tcp || node.transport == .webSocket || node.transport == .http2 || node.transport == .grpc)
                 && node.tls.enabled
                 && node.tls.fingerprint == nil
                 && node.tls.reality == nil
@@ -223,8 +256,28 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             try openVLESSOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
         case .hysteria2:
             try openHysteria2OutboundAndRelay(client: client, destination: destination, node: node, credential: credential, realmCredential: realmCredential, sendSuccess: sendSuccess)
+        case .tuic:
+            try openTUICOutboundAndRelay(client: client, destination: destination, node: node, credential: credential, sendSuccess: sendSuccess)
         default:
             throw LocalProxyError.unavailable
+        }
+    }
+
+    private func openTUICOutboundAndRelay(client: Int32, destination: ProxyDestination, node: ProxyNode, credential: String, sendSuccess: () throws -> Void) throws {
+        let stream = try runAsync {
+            try await TUICStreamOpener(sessionDialer: NativeTUICQUICSessionDialer()).openStream(
+                node: node,
+                credential: credential,
+                destination: destination,
+                metadata: ["source": "macos-local-proxy"]
+            )
+        }
+        do {
+            try sendSuccess()
+            relay(local: client, stream: stream)
+        } catch {
+            try? runAsync { await stream.close() }
+            throw error
         }
     }
 
@@ -251,7 +304,7 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             let session = try await nativeClient.connect(authentication: credential)
             return try await session.openTCPStream(address: Self.hysteria2AddressString(for: destination))
         }
-        let transportStream = Hysteria2TransportByteStream(stream: stream)
+        let transportStream = NativeTransportByteStream(stream: stream)
         do {
             try sendSuccess()
             relay(local: client, stream: transportStream)
@@ -314,6 +367,8 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             try openWebSocketTLSOutboundAndRelay(client: client, node: node, tls: tls, initialPayload: request.openBytes, sendSuccess: sendSuccess)
         case .http2:
             try openHTTP2TLSOutboundAndRelay(client: client, node: node, tls: tls, initialPayload: request.openBytes, sendSuccess: sendSuccess)
+        case .grpc:
+            try openGRPCTLSOutboundAndRelay(client: client, node: node, tls: tls, initialPayload: request.openBytes, sendSuccess: sendSuccess)
         default:
             try openTLSOutboundAndRelay(client: client, node: node, tls: tls, initialPayload: request.openBytes, sendSuccess: sendSuccess)
         }
@@ -346,16 +401,7 @@ final class MacOSLocalProxyController: LocalProxyControlling {
         guard let options = node.transportOptions.http2 else {
             throw TransportError.invalidConfiguration("missing http2 options")
         }
-        let alpn = ["h2"] + tls.alpn.filter { $0 != "h2" }
-        let http2TLS = TLSOptions(
-            enabled: true,
-            serverName: tls.serverName,
-            allowInsecure: tls.allowInsecure,
-            alpn: alpn,
-            fingerprint: tls.fingerprint,
-            reality: tls.reality
-        )
-        let tlsStream = try MacOSTLSByteStream(host: node.serverHost, port: node.serverPort, tls: http2TLS, initialPayload: nil)
+        let tlsStream = try MacOSTLSByteStream(host: node.serverHost, port: node.serverPort, tls: h2TLSOptions(from: tls), initialPayload: nil)
         let stream = HTTP2ClientByteStream(
             underlying: tlsStream,
             authority: options.authority ?? node.tls.serverName ?? node.serverHost,
@@ -372,6 +418,40 @@ final class MacOSLocalProxyController: LocalProxyControlling {
             try? runAsync { await stream.close() }
             throw error
         }
+    }
+
+    private func openGRPCTLSOutboundAndRelay(client: Int32, node: ProxyNode, tls: TLSOptions, initialPayload: Data, sendSuccess: () throws -> Void) throws {
+        guard let options = node.transportOptions.grpc else {
+            throw TransportError.invalidConfiguration("missing grpc options")
+        }
+        let tlsStream = try MacOSTLSByteStream(host: node.serverHost, port: node.serverPort, tls: h2TLSOptions(from: tls), initialPayload: nil)
+        let stream = GRPCClientByteStream(
+            underlying: tlsStream,
+            authority: options.authority ?? node.tls.serverName ?? node.serverHost,
+            service: options.service,
+            initialPayload: initialPayload
+        )
+        try runAsync { try await tlsStream.start() }
+        do {
+            try runAsync { try await stream.start() }
+            try runAsync { try await stream.waitForResponseHeaders() }
+            try sendSuccess()
+            relay(local: client, stream: stream)
+        } catch {
+            try? runAsync { await stream.close() }
+            throw error
+        }
+    }
+
+    private func h2TLSOptions(from tls: TLSOptions) -> TLSOptions {
+        TLSOptions(
+            enabled: true,
+            serverName: tls.serverName,
+            allowInsecure: tls.allowInsecure,
+            alpn: ["h2"] + tls.alpn.filter { $0 != "h2" },
+            fingerprint: tls.fingerprint,
+            reality: tls.reality
+        )
     }
 
     private func openTLSOutboundAndRelay(client: Int32, node: ProxyNode, tls: TLSOptions, initialPayload: Data, sendSuccess: () throws -> Void) throws {

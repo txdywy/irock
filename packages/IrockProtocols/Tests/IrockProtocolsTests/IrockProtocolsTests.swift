@@ -113,6 +113,22 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(request.addressFrameHex, "0426062800022000010248189325c8194601bb")
     }
 
+    func testShadowsocksUDPDatagramRequestBuildsAES256GCMHostPacket() throws {
+        let request = try ShadowsocksUDPDatagramRequest(
+            credential: "aes-256-gcm:pass",
+            destination: .host("apple.com", port: 53),
+            payload: Data([0x01, 0x02, 0x03]),
+            salt: Data(repeating: 8, count: 32)
+        )
+
+        XCTAssertEqual(request.cipher, "aes-256-gcm")
+        XCTAssertEqual(request.addressFrameHex, "03096170706c652e636f6d0035")
+        XCTAssertEqual(request.packet.prefix(32), Data(repeating: 8, count: 32))
+        XCTAssertFalse(request.packet.suffix(request.packet.count - 32).contains(Data("apple.com".utf8)))
+        XCTAssertEqual(try ShadowsocksUDPDatagramRequest.decryptPayload(request.packet, credential: "aes-256-gcm:pass"), Data([0x03, 0x09]) + Data("apple.com".utf8) + Data([0x00, 0x35, 0x01, 0x02, 0x03]))
+        XCTAssertEqual(request.metadata["shadowsocksUDPAddressFrameHex"], request.addressFrameHex)
+    }
+
     func testShadowsocksStreamRequestRejectsUnsupportedMethod() {
         XCTAssertThrowsError(try ShadowsocksStreamRequest(
             credential: "chacha20-ietf-poly1305:pass",
@@ -568,40 +584,89 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
-    func testTUICOpenRequestBuildsCredentialSafeMetadataAndPayload() throws {
-        let request = try TUICOpenRequest(
+    func testTUICAuthenticateCommandBuildsOfficialV5FrameWithoutPlaintextSecrets() throws {
+        let token = Data((0..<32).map(UInt8.init))
+        let command = try TUICAuthenticateCommand(
             credential: "00000000-0000-0000-0000-000000000003:tuic-password",
-            destination: .host("apple.com", port: 443),
-            sni: " tuic.example.com "
+            exportedToken: token
         )
 
-        XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
-        XCTAssertEqual(request.sni, "tuic.example.com")
-        XCTAssertEqual(request.openBytes.prefix(5), Data([0x54, 0x55, 0x49, 0x43, 0x05]))
-        XCTAssertTrue(request.openBytes.contains(Data("tuic.example.com".utf8)))
-        XCTAssertFalse(String(data: request.openBytes, encoding: .utf8)?.contains("tuic-foundation") == true)
-        XCTAssertEqual(request.metadata["tuicUUIDPresent"], "true")
-        XCTAssertEqual(request.metadata["tuicPasswordPresent"], "true")
-        XCTAssertEqual(request.metadata["tuicDestination"], "host:apple.com:443")
-        XCTAssertEqual(request.metadata["tuicSNI"], "tuic.example.com")
-        XCTAssertNil(request.metadata["tuicUUID"])
-        XCTAssertNil(request.metadata["tuicPassword"])
-        XCTAssertFalse(request.openBytes.contains(Data("00000000-0000-0000-0000-000000000003".utf8)))
-        XCTAssertFalse(request.openBytes.contains(Data("tuic-password".utf8)))
+        XCTAssertEqual(command.bytes.count, 50)
+        XCTAssertEqual(command.bytes.prefix(2), Data([0x05, 0x00]))
+        XCTAssertEqual(command.bytes.subdata(in: 2..<18), Data([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]))
+        XCTAssertEqual(command.bytes.suffix(32), token)
+        XCTAssertEqual(command.metadata["tuicUUIDPresent"], "true")
+        XCTAssertEqual(command.metadata["tuicPasswordPresent"], "true")
+        XCTAssertFalse(command.bytes.starts(with: Data([0x54, 0x55, 0x49, 0x43])))
+        XCTAssertFalse(command.bytes.contains(Data("00000000-0000-0000-0000-000000000003".utf8)))
+        XCTAssertFalse(command.bytes.contains(Data("tuic-password".utf8)))
     }
 
-    func testTUICOpenRequestRejectsInvalidCredentials() {
-        let cases: [(String, ProxyProtocolError)] = [
-            ("not-a-uuid:tuic-password", .invalidConfiguration("invalid tuic uuid")),
-            ("00000000-0000-0000-0000-000000000003:", .invalidConfiguration("missing tuic password")),
-            ("00000000-0000-0000-0000-000000000003", .invalidConfiguration("invalid tuic credential"))
+    func testTUICAuthenticateCommandRejectsInvalidCredentialsAndToken() {
+        let cases: [(String, Data, ProxyProtocolError)] = [
+            ("not-a-uuid:tuic-password", Data(repeating: 0x00, count: 32), .invalidConfiguration("invalid tuic uuid")),
+            ("00000000-0000-0000-0000-000000000003:", Data(repeating: 0x00, count: 32), .invalidConfiguration("missing tuic password")),
+            ("00000000-0000-0000-0000-000000000003", Data(repeating: 0x00, count: 32), .invalidConfiguration("invalid tuic credential")),
+            ("00000000-0000-0000-0000-000000000003:tuic-password", Data(repeating: 0x00, count: 31), .invalidConfiguration("invalid tuic exported token"))
         ]
 
-        for (credential, expectedError) in cases {
-            XCTAssertThrowsError(try TUICOpenRequest(credential: credential, destination: .host("apple.com", port: 443))) { error in
+        for (credential, token, expectedError) in cases {
+            XCTAssertThrowsError(try TUICAuthenticateCommand(credential: credential, exportedToken: token)) { error in
                 XCTAssertEqual(error as? ProxyProtocolError, expectedError)
             }
         }
+    }
+
+    func testTUICConnectCommandBuildsOfficialV5Frames() throws {
+        let fqdn = try TUICConnectCommand(destination: .host("apple.com", port: 443))
+        let ipv4 = try TUICConnectCommand(destination: .ipv4("1.2.3.4", port: 53))
+
+        XCTAssertEqual(fqdn.destinationDescription, "host:apple.com:443")
+        XCTAssertEqual(fqdn.bytes, Data([0x05, 0x01, 0x00, 0x09]) + Data("apple.com".utf8) + Data([0x01, 0xbb]))
+        XCTAssertEqual(ipv4.destinationDescription, "ipv4:1.2.3.4:53")
+        XCTAssertEqual(ipv4.bytes, Data([0x05, 0x01, 0x01, 0x01, 0x02, 0x03, 0x04, 0x00, 0x35]))
+        XCTAssertFalse(fqdn.bytes.starts(with: Data([0x54, 0x55, 0x49, 0x43])))
+    }
+
+    func testTUICStreamOpenerAuthenticatesWithTLSExporterBeforeConnectStream() async throws {
+        let token = Data((0..<32).map(UInt8.init))
+        let bidiStream = RecordingProtocolByteStream(reads: [])
+        let uniStream = RecordingProtocolByteStream(reads: [])
+        let session = RecordingTUICQUICSession(exportedToken: token, bidirectionalStream: bidiStream, unidirectionalStream: uniStream)
+        let dialer = RecordingTUICQUICSessionDialer(session: session)
+        let opener = TUICStreamOpener(sessionDialer: dialer)
+        let node = makeNode(
+            protocolType: .tuic,
+            transport: .quic,
+            tls: TLSOptions(enabled: true, serverName: "tuic.example.com", allowInsecure: false, alpn: ["h3"], fingerprint: nil, reality: nil),
+            credentialAccount: "00000000-0000-0000-0000-000000000003:tuic-password"
+        )
+
+        let opened = try await opener.openStream(
+            node: node,
+            credential: "00000000-0000-0000-0000-000000000003:tuic-password",
+            destination: .host("apple.com", port: 443),
+            metadata: ["source": "local-proxy"]
+        )
+        try await opened.write(Data("client-data".utf8))
+
+        XCTAssertEqual(uniStream.writes, [Data([0x05, 0x00]) + Data([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]) + token])
+        XCTAssertEqual(bidiStream.writes, [Data([0x05, 0x01, 0x00, 0x09]) + Data("apple.com".utf8) + Data([0x01, 0xbb]), Data("client-data".utf8)])
+        XCTAssertEqual(dialer.requests.count, 1)
+        XCTAssertEqual(dialer.requests.first?.host, "example.com")
+        XCTAssertEqual(dialer.requests.first?.port, 443)
+        XCTAssertEqual(dialer.requests.first?.tls, node.tls)
+        XCTAssertEqual(dialer.requests.first?.metadata["source"], "local-proxy")
+        XCTAssertEqual(dialer.requests.first?.metadata["proxyProtocol"], "tuic")
+        XCTAssertEqual(dialer.requests.first?.metadata["quicServerName"], "tuic.example.com")
+        XCTAssertEqual(dialer.requests.first?.metadata["quicProtocol"], "tuic")
+        XCTAssertEqual(dialer.requests.first?.metadata["quicALPN"], "h3")
+        XCTAssertEqual(session.exports.count, 1)
+        XCTAssertEqual(session.exports.first?.label, Data([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]))
+        XCTAssertEqual(session.exports.first?.context, Data("tuic-password".utf8))
+        XCTAssertEqual(session.exports.first?.length, 32)
+        XCTAssertEqual(session.unidirectionalPayloads, [Data()])
+        XCTAssertEqual(session.bidirectionalPayloads, [Data()])
     }
 
     func testEstablishedProxyConnectionStoresNodeIDAndDestination() {
@@ -612,6 +677,21 @@ final class IrockProtocolsTests: XCTestCase {
 
         XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
         XCTAssertEqual(connection.destination, ProxyDestination.host("apple.com", port: 443))
+    }
+
+    func testEstablishedProxyConnectionWritesPayloadWithoutReadingStream() async throws {
+        let stream = ReadCountingProtocolByteStream(readResponse: Data("server-data".utf8))
+        let connection = EstablishedProxyConnection(
+            nodeID: NodeID(rawValue: "node-1"),
+            destination: .host("apple.com", port: 443),
+            retainedStream: stream
+        )
+
+        let response = try await connection.writePayload([0xde, 0xad, 0xbe, 0xef])
+
+        XCTAssertNil(response)
+        XCTAssertEqual(stream.writes, [Data([0xde, 0xad, 0xbe, 0xef])])
+        XCTAssertEqual(stream.readCount, 0)
     }
 
     func testUnsupportedProxyAdapterFailsWithRequestedProtocol() async {
@@ -808,30 +888,37 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
-    func testTUICProxyAdapterOpensQUICTransportAndReturnsProxyConnection() async throws {
-        let transport = RecordingTransportAdapter(transport: .quic)
-        let adapter = TUICProxyAdapter(transportRegistry: TransportAdapterRegistry(adapters: [transport]), credentialResolver: StaticProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000003:tuic-password"))
+    func testTUICProxyAdapterAuthenticatesWithExporterSession() async throws {
+        let token = Data((0..<32).map(UInt8.init))
+        let bidiStream = RecordingProtocolByteStream(reads: [])
+        let uniStream = RecordingProtocolByteStream(reads: [])
+        let session = RecordingTUICQUICSession(exportedToken: token, bidirectionalStream: bidiStream, unidirectionalStream: uniStream)
+        let dialer = RecordingTUICQUICSessionDialer(session: session)
+        let adapter = TUICProxyAdapter(sessionDialer: dialer, credentialResolver: StaticProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000003:tuic-password"))
         let node = makeNode(protocolType: .tuic, transport: .quic, credentialAccount: "00000000-0000-0000-0000-000000000003:tuic-password")
         let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
 
         let connection = try await adapter.connect(request: request)
 
-        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
-        XCTAssertEqual(connection.destination, ProxyDestination.host("apple.com", port: 443))
-        XCTAssertEqual(transport.requests.count, 1)
-        XCTAssertEqual(transport.requests.first?.host, "example.com")
-        XCTAssertEqual(transport.requests.first?.port, 443)
-        XCTAssertEqual(transport.requests.first?.transport, .quic)
-        XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
-        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "tuic")
-        XCTAssertEqual(transport.requests.first?.metadata["tuicUUIDPresent"], "true")
-        XCTAssertEqual(transport.requests.first?.metadata["tuicPasswordPresent"], "true")
-        XCTAssertEqual(transport.requests.first?.metadata["tuicDestination"], "host:apple.com:443")
-        let payload = transport.requests.first?.initialPayload ?? Data()
-        XCTAssertEqual(payload.prefix(5), Data([0x54, 0x55, 0x49, 0x43, 0x05]))
-        XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("tuic-foundation") == true)
-        XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000003".utf8)))
-        XCTAssertFalse(payload.contains(Data("tuic-password".utf8)))
+        XCTAssertEqual(connection.nodeID, node.id)
+        XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
+        XCTAssertEqual(dialer.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(session.exports.count, 1)
+        XCTAssertEqual(session.unidirectionalPayloads.count, 1)
+        XCTAssertEqual(session.bidirectionalPayloads.count, 1)
+    }
+
+    func testTUICProxyAdapterRetainsOpenedStreamForConnectionLifetime() async throws {
+        let deinitFlag = DeinitFlag()
+        let session = TransientTUICQUICSession(exportedToken: Data((0..<32).map(UInt8.init)), deinitFlag: deinitFlag)
+        let adapter = TUICProxyAdapter(sessionDialer: TransientTUICQUICSessionDialer(session: session), credentialResolver: StaticProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000003:tuic-password"))
+        let node = makeNode(protocolType: .tuic, transport: .quic, credentialAccount: "00000000-0000-0000-0000-000000000003:tuic-password")
+
+        let connection = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
+
+        withExtendedLifetime(connection) {
+            XCTAssertFalse(deinitFlag.didDeinit)
+        }
     }
 
     func testTUICProxyAdapterRejectsInvalidConfigurationBeforeTransportOpen() async {
@@ -997,8 +1084,7 @@ final class IrockProtocolsTests: XCTestCase {
             (.vmess, .tcp, "00000000-0000-0000-0000-000000000001"),
             (.vless, .tcp, "00000000-0000-0000-0000-000000000002"),
             (.trojan, .tcp, "secret-password"),
-            (.hysteria2, .quic, "hysteria-secret"),
-            (.tuic, .quic, "00000000-0000-0000-0000-000000000003:tuic-password")
+            (.hysteria2, .quic, "hysteria-secret")
         ]
 
         for (protocolType, transportType, credential) in cases {
@@ -1068,6 +1154,23 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(payload.prefix(5), Data([0x01, 0x01, 0x00, 0x00, 0x01]))
         XCTAssertFalse(String(data: payload, encoding: .utf8)?.contains("vmess-foundation") == true)
         XCTAssertFalse(payload.contains(Data("00000000-0000-0000-0000-000000000001".utf8)))
+    }
+
+    func testVMessProxyAdapterRetainsGRPCStreamForRuntimePayloadWrites() async throws {
+        let stream = RecordingProtocolByteStream(reads: [])
+        let streamAdapter = RecordingProtocolTransportStreamAdapter(transport: .grpc, stream: stream)
+        let adapter = VMessProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: []),
+            streamRegistry: TransportStreamAdapterRegistry(adapters: [streamAdapter]),
+            credentialResolver: StaticProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000001")
+        )
+        let node = makeNode(protocolType: .vmess, transport: .grpc, credentialAccount: "00000000-0000-0000-0000-000000000001")
+
+        let connection = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
+        _ = try await connection.writePayload([0xde, 0xad])
+
+        XCTAssertEqual(streamAdapter.requests.count, 1)
+        XCTAssertEqual(stream.writes.last, Data([0xde, 0xad]))
     }
 
     func testVMessProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {
@@ -1454,6 +1557,36 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.initialPayload?.count, 16 + 11 + 16 + 16 + 16)
     }
 
+    func testShadowsocksProxyAdapterEncodesUDPDatagramToServerAndDecodesResponse() throws {
+        let adapter = ShadowsocksProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: []),
+            credentialResolver: StaticShadowsocksCredentialResolver(credential: "aes-256-gcm:pass")
+        )
+        let node = makeNode(protocolType: .shadowsocks, transport: .tcp)
+        let request = ProxyUDPDatagramRequest(
+            node: node,
+            destination: .host("apple.com", port: 53),
+            payload: Data([0x01, 0x02]),
+            metadata: ["packetID": "udp-1"]
+        )
+
+        let encoded = try adapter.encodeUDPDatagram(request: request)
+
+        XCTAssertEqual(encoded.server, .host("example.com", port: 443))
+        XCTAssertEqual(try ShadowsocksUDPDatagramRequest.decryptPayload(encoded.payload, credential: "aes-256-gcm:pass"), Data([0x03, 0x09]) + Data("apple.com".utf8) + Data([0x00, 0x35, 0x01, 0x02]))
+
+        let responsePacket = try ShadowsocksUDPDatagramRequest(
+            credential: "aes-256-gcm:pass",
+            destination: .host("apple.com", port: 53),
+            payload: Data([0x03, 0x04]),
+            salt: Data(repeating: 9, count: 32)
+        ).packet
+        let decoded = try adapter.decodeUDPDatagramResponse(responsePacket, request: request)
+
+        XCTAssertEqual(decoded?.source, .host("apple.com", port: 53))
+        XCTAssertEqual(decoded?.payload, Data([0x03, 0x04]))
+    }
+
     func testTransportBackedProxyAdapterMapsTransportErrorsToProtocolErrors() async {
         let cases: [(TransportError, ProxyProtocolError)] = [
             (.invalidConfiguration("secret invalid"), .invalidConfiguration("transport invalid")),
@@ -1646,6 +1779,24 @@ private struct StaticProxyCredentialResolver: ProxyCredentialResolver {
 
 private typealias StaticShadowsocksCredentialResolver = StaticProxyCredentialResolver
 
+private final class RecordingProtocolTransportStreamAdapter: TransportStreamAdapter, @unchecked Sendable {
+    let supportedTransport: TransportType
+    private let stream: RecordingProtocolByteStream
+    private var storedRequests: [TransportRequest] = []
+
+    init(transport: TransportType, stream: RecordingProtocolByteStream) {
+        self.supportedTransport = transport
+        self.stream = stream
+    }
+
+    var requests: [TransportRequest] { storedRequests }
+
+    func openStream(request: TransportRequest) async throws -> any TransportByteStream {
+        storedRequests.append(request)
+        return stream
+    }
+}
+
 private final class RecordingTransportAdapter: TransportAdapter, @unchecked Sendable {
     let supportedTransport: TransportType
     private let lock = NSLock()
@@ -1711,6 +1862,124 @@ private final class RecordingProtocolQUICStreamDialer: QUICStreamDialer, @unchec
     }
 }
 
+private struct TUICQUICSessionDialRequest: Equatable {
+    let host: String
+    let port: Int
+    let tls: TLSOptions?
+    let metadata: [String: String]
+}
+
+private struct TUICExporterRequest: Equatable {
+    let label: Data
+    let context: Data
+    let length: Int
+}
+
+private final class RecordingTUICQUICSessionDialer: TUICQUICSessionDialer, @unchecked Sendable {
+    private let session: RecordingTUICQUICSession
+    private var storedRequests: [TUICQUICSessionDialRequest] = []
+
+    init(session: RecordingTUICQUICSession) {
+        self.session = session
+    }
+
+    var requests: [TUICQUICSessionDialRequest] { storedRequests }
+
+    func openSession(host: String, port: Int, tls: TLSOptions?, metadata: [String: String]) async throws -> any TUICQUICSession {
+        storedRequests.append(TUICQUICSessionDialRequest(host: host, port: port, tls: tls, metadata: metadata))
+        return session
+    }
+}
+
+private final class RecordingTUICQUICSession: TUICQUICSession, @unchecked Sendable {
+    private let exportedToken: Data
+    private let bidirectionalStream: RecordingProtocolByteStream
+    private let unidirectionalStream: RecordingProtocolByteStream
+    private var storedExports: [TUICExporterRequest] = []
+    private var storedBidirectionalPayloads: [Data] = []
+    private var storedUnidirectionalPayloads: [Data] = []
+
+    init(exportedToken: Data, bidirectionalStream: RecordingProtocolByteStream, unidirectionalStream: RecordingProtocolByteStream) {
+        self.exportedToken = exportedToken
+        self.bidirectionalStream = bidirectionalStream
+        self.unidirectionalStream = unidirectionalStream
+    }
+
+    var exports: [TUICExporterRequest] { storedExports }
+    var bidirectionalPayloads: [Data] { storedBidirectionalPayloads }
+    var unidirectionalPayloads: [Data] { storedUnidirectionalPayloads }
+
+    func exportKeyingMaterial(label: Data, context: Data, length: Int) async throws -> Data {
+        storedExports.append(TUICExporterRequest(label: label, context: context, length: length))
+        return exportedToken
+    }
+
+    func openUnidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream {
+        storedUnidirectionalPayloads.append(initialPayload)
+        return unidirectionalStream
+    }
+
+    func openBidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream {
+        storedBidirectionalPayloads.append(initialPayload)
+        return bidirectionalStream
+    }
+}
+
+private final class DeinitFlag: @unchecked Sendable {
+    var didDeinit = false
+}
+
+private final class TransientTUICQUICSessionDialer: TUICQUICSessionDialer, @unchecked Sendable {
+    private let session: TransientTUICQUICSession
+
+    init(session: TransientTUICQUICSession) {
+        self.session = session
+    }
+
+    func openSession(host: String, port: Int, tls: TLSOptions?, metadata: [String: String]) async throws -> any TUICQUICSession {
+        session
+    }
+}
+
+private final class TransientTUICQUICSession: TUICQUICSession, @unchecked Sendable {
+    private let exportedToken: Data
+    private let deinitFlag: DeinitFlag
+
+    init(exportedToken: Data, deinitFlag: DeinitFlag) {
+        self.exportedToken = exportedToken
+        self.deinitFlag = deinitFlag
+    }
+
+    func exportKeyingMaterial(label: Data, context: Data, length: Int) async throws -> Data {
+        exportedToken
+    }
+
+    func openUnidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream {
+        RecordingProtocolByteStream(reads: [])
+    }
+
+    func openBidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream {
+        TransientProtocolByteStream(deinitFlag: deinitFlag)
+    }
+}
+
+private final class TransientProtocolByteStream: TransportByteStream, @unchecked Sendable {
+    private let deinitFlag: DeinitFlag
+
+    init(deinitFlag: DeinitFlag) {
+        self.deinitFlag = deinitFlag
+    }
+
+    deinit {
+        deinitFlag.didDeinit = true
+    }
+
+    func read(maxLength: Int) async throws -> Data? { nil }
+    func write(_ data: Data) async throws {}
+    func closeWrite() async {}
+    func close() async {}
+}
+
 private final class RecordingProtocolByteStream: TransportByteStream, @unchecked Sendable {
     private var reads: [Data?]
     private var storedWrites: [Data] = []
@@ -1727,6 +1996,31 @@ private final class RecordingProtocolByteStream: TransportByteStream, @unchecked
         guard data.count > maxLength else { return data }
         reads.insert(Data(data.dropFirst(maxLength)), at: 0)
         return Data(data.prefix(maxLength))
+    }
+
+    func write(_ data: Data) async throws {
+        storedWrites.append(data)
+    }
+
+    func closeWrite() async {}
+    func close() async {}
+}
+
+private final class ReadCountingProtocolByteStream: TransportByteStream, @unchecked Sendable {
+    private let readResponse: Data?
+    private var storedWrites: [Data] = []
+    private var storedReadCount = 0
+
+    init(readResponse: Data?) {
+        self.readResponse = readResponse
+    }
+
+    var writes: [Data] { storedWrites }
+    var readCount: Int { storedReadCount }
+
+    func read(maxLength: Int) async throws -> Data? {
+        storedReadCount += 1
+        return readResponse
     }
 
     func write(_ data: Data) async throws {

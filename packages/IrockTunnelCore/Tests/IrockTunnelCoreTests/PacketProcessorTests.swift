@@ -85,6 +85,28 @@ final class PacketProcessorTests: XCTestCase {
         XCTAssertNil(result.udpForwardingDecision(udpPolicy: .enabled))
     }
 
+    func testPacketProcessingPerformanceEvidenceRecordsHotPathThroughput() {
+        let packets = (0..<4_096).map { index in
+            Packet.ipv4UDP(
+                id: "udp-\(index)",
+                source: .v4(10, 0, 0, UInt8(index % 255)),
+                destination: .v4(1, 1, 1, 1),
+                sourcePort: 50_000 + (index % 1_000),
+                destinationPort: 53,
+                payload: [0x01, 0x02, 0x03, 0x04]
+            )
+        }
+        let evidence = PacketProcessingPerformanceEvidence.measure(
+            packets: packets,
+            configuration: configuration(routeMode: .direct, rules: [.final(.direct)], batchLimit: packets.count)
+        )
+
+        XCTAssertEqual(evidence.packetCount, 4_096)
+        XCTAssertEqual(evidence.dropCount, 0)
+        XCTAssertGreaterThan(evidence.packetsPerSecond, 10_000)
+        XCTAssertLessThan(evidence.averageNanosecondsPerPacket, 1_000_000)
+    }
+
     func testMalformedPacketDropsWithParseFailedReason() {
         var processor = PacketProcessor(configuration: configuration(routeMode: .globalProxy, rules: [.final(.proxy)]))
 
@@ -107,13 +129,13 @@ final class PacketProcessorTests: XCTestCase {
         FlowKey(sourceIP: .v4(10, 0, 0, 2), sourcePort: 55_555, destinationIP: .v4(1, 1, 1, 1), destinationPort: 53, transportProtocol: .udp)
     }
 
-    private func configuration(routeMode: RouteMode, rules: [RoutingRule]) -> TunnelRuntimeConfiguration {
+    private func configuration(routeMode: RouteMode, rules: [RoutingRule], batchLimit: Int = 16) -> TunnelRuntimeConfiguration {
         let snapshot = RuntimeSnapshot(
             id: SnapshotID(rawValue: "snapshot-1"),
             selectedNode: ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .trojan, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .tcp, tls: .disabled, udpPolicy: .disabled),
             routeMode: routeMode,
             logLevel: .user
         )
-        return TunnelRuntimeConfiguration(snapshot: snapshot, routingEngine: RoutingEngine(rules: rules), batchLimit: 16, flowLimit: 32)
+        return TunnelRuntimeConfiguration(snapshot: snapshot, routingEngine: RoutingEngine(rules: rules), batchLimit: batchLimit, flowLimit: batchLimit)
     }
 }

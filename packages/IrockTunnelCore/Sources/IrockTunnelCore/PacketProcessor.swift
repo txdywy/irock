@@ -1,3 +1,4 @@
+import Dispatch
 import IrockCore
 import IrockRouting
 
@@ -55,6 +56,42 @@ public struct PacketProcessingResult: Equatable, Sendable {
         default:
             return nil
         }
+    }
+}
+
+public struct PacketProcessingPerformanceEvidence: Equatable, Sendable {
+    public let packetCount: Int
+    public let dropCount: Int
+    public let elapsedNanoseconds: UInt64
+
+    public var averageNanosecondsPerPacket: UInt64 {
+        guard packetCount > 0 else { return 0 }
+        return elapsedNanoseconds / UInt64(packetCount)
+    }
+
+    public var packetsPerSecond: UInt64 {
+        guard elapsedNanoseconds > 0 else { return UInt64(packetCount) }
+        return UInt64(packetCount) * 1_000_000_000 / elapsedNanoseconds
+    }
+
+    public init(packetCount: Int, dropCount: Int, elapsedNanoseconds: UInt64) {
+        self.packetCount = packetCount
+        self.dropCount = dropCount
+        self.elapsedNanoseconds = elapsedNanoseconds
+    }
+
+    public static func measure(packets: [Packet], configuration: TunnelRuntimeConfiguration) -> PacketProcessingPerformanceEvidence {
+        var processor = PacketProcessor(configuration: configuration)
+        let start = DispatchTime.now().uptimeNanoseconds
+        let results = processor.process(packets)
+        let elapsed = DispatchTime.now().uptimeNanoseconds - start
+        let dropCount = results.filter { result in
+            if case .drop = result.action {
+                return true
+            }
+            return false
+        }.count
+        return PacketProcessingPerformanceEvidence(packetCount: results.count, dropCount: dropCount, elapsedNanoseconds: elapsed)
     }
 }
 

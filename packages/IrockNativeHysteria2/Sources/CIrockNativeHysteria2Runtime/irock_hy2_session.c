@@ -112,6 +112,47 @@ static void irock_hy2_session_release_fields(struct irock_hy2_session *session) 
   free(session->certificate_pin_sha256);
 }
 
+static irock_hy2_result irock_hy2_connect_quic_session_state(irock_hy2_session_ref created_session, irock_hy2_session_ref *session) {
+  irock_hy2_set_last_error_for_testing(0, 0);
+  irock_hy2_result result = irock_hy2_session_initialize_udp_for_testing(created_session);
+  if (result != IROCK_HY2_OK) {
+    irock_hy2_set_last_error_for_testing("udp_init", result);
+  }
+  if (result == IROCK_HY2_OK) {
+    result = irock_hy2_session_initialize_tls_for_testing(created_session);
+    if (result != IROCK_HY2_OK) {
+      irock_hy2_set_last_error_for_testing("tls_init", result);
+    }
+  }
+  if (result == IROCK_HY2_OK) {
+    result = irock_hy2_session_initialize_quic_for_testing(created_session);
+    if (result != IROCK_HY2_OK) {
+      irock_hy2_set_last_error_for_testing("quic_init", result);
+    }
+  }
+  if (result == IROCK_HY2_OK) {
+    int bytes_written = 0;
+    int packets_read = 0;
+    int handshake_completed = 0;
+    result = irock_hy2_session_run_quic_handshake_until_blocked_for_testing(created_session, 20, 100, &bytes_written, &packets_read, &handshake_completed);
+    if (result != IROCK_HY2_OK) {
+      irock_hy2_set_last_error_for_testing("quic_handshake", result);
+    }
+  }
+  if (result != IROCK_HY2_OK) {
+    if (result == IROCK_HY2_BLOCKED) {
+      irock_hy2_set_last_error_for_testing("connect_blocked", result);
+    }
+    irock_hy2_session_free(created_session);
+    return result == IROCK_HY2_BLOCKED ? IROCK_HY2_NETWORK_FAILED : result;
+  }
+
+  struct irock_hy2_session *hy2_session = created_session;
+  hy2_session->authenticated = 1;
+  *session = created_session;
+  return IROCK_HY2_OK;
+}
+
 static irock_hy2_result irock_hy2_connect_session(irock_hy2_session_ref created_session, const char *authentication, irock_hy2_session_ref *session) {
   irock_hy2_set_last_error_for_testing(0, 0);
   irock_hy2_result result = irock_hy2_session_initialize_udp_for_testing(created_session);
@@ -220,6 +261,27 @@ irock_hy2_result irock_hy2_connect_with_connected_udp_socket(const irock_hy2_cli
     return result;
   }
   return irock_hy2_connect_session(created_session, authentication, session);
+}
+
+irock_hy2_result irock_hy2_connect_quic_session(const irock_hy2_client_config *config, irock_hy2_session_ref *session) {
+  (void)ngtcp2_version(0);
+  (void)nghttp3_version(0);
+  (void)ngtcp2_crypto_ossl_init();
+
+  if (session) {
+    *session = 0;
+  }
+
+  if (!config || !config->server_host || !config->server_name || !config->alpn || !session) {
+    return IROCK_HY2_INVALID_CONFIGURATION;
+  }
+
+  irock_hy2_session_ref created_session = 0;
+  irock_hy2_result result = irock_hy2_session_create_configured_for_testing(config, "quic-session", 0, &created_session);
+  if (result != IROCK_HY2_OK) {
+    return result;
+  }
+  return irock_hy2_connect_quic_session_state(created_session, session);
 }
 
 irock_hy2_result irock_hy2_session_create_for_testing(int authenticated, irock_hy2_session_ref *session) {

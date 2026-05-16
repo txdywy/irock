@@ -59,6 +59,28 @@ irock_hy2_result irock_hy2_session_validate_peer_certificate_pin_for_testing(iro
   return result;
 }
 
+irock_hy2_result irock_hy2_session_export_keying_material(irock_hy2_session_ref session, const uint8_t *label, int label_length, const uint8_t *context, int context_length, uint8_t *output, int output_length) {
+  if (!session || !label || label_length <= 0 || !context || context_length < 0 || !output || output_length <= 0) {
+    return IROCK_HY2_INVALID_CONFIGURATION;
+  }
+
+  struct irock_hy2_session *hy2_session = session;
+  if (!hy2_session->ssl) {
+    return IROCK_HY2_INVALID_CONFIGURATION;
+  }
+
+  return SSL_export_keying_material(
+    hy2_session->ssl,
+    output,
+    (size_t)output_length,
+    (const char *)label,
+    (size_t)label_length,
+    context,
+    (size_t)context_length,
+    1
+  ) == 1 ? IROCK_HY2_OK : IROCK_HY2_NETWORK_FAILED;
+}
+
 static irock_hy2_result irock_hy2_set_alpn(SSL *ssl, const char *alpn) {
   if (!ssl || !alpn || !alpn[0]) {
     return IROCK_HY2_INVALID_CONFIGURATION;

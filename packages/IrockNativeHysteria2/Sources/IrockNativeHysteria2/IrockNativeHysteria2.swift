@@ -590,24 +590,50 @@ public struct NativeHysteria2Client: Sendable {
                 }
             }
         }
+        return try Self.session(from: result, nativeSession: session, operation: "connect")
+    }
+
+    public func connectQUICSession() async throws -> NativeHysteria2Session {
+        var session: irock_hy2_session_ref?
+        let result = configuration.serverHost.withCString { serverHost in
+            configuration.serverName.withCString { serverName in
+                configuration.alpn.joined(separator: ",").withCString { alpn in
+                    (configuration.certificatePinSHA256 ?? "").withCString { certificatePin in
+                        var nativeConfiguration = irock_hy2_client_config(
+                            server_host: serverHost,
+                            server_port: UInt16(configuration.serverPort),
+                            server_name: serverName,
+                            alpn: alpn,
+                            allow_insecure: configuration.allowInsecure ? 1 : 0,
+                            certificate_pin_sha256: certificatePin
+                        )
+                        return irock_hy2_connect_quic_session(&nativeConfiguration, &session)
+                    }
+                }
+            }
+        }
+        return try Self.session(from: result, nativeSession: session, operation: "quic session")
+    }
+
+    private static func session(from result: irock_hy2_result, nativeSession session: irock_hy2_session_ref?, operation: String) throws -> NativeHysteria2Session {
         switch result {
         case IROCK_HY2_OK:
             guard let session else {
-                throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 connect returned no session")
+                throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 \(operation) returned no session")
             }
             return NativeHysteria2Session(nativeSession: session)
         case IROCK_HY2_INVALID_CONFIGURATION:
             throw NativeHysteria2Error.invalidConfiguration("native hysteria2 configuration rejected")
         case IROCK_HY2_AUTH_FAILED:
-            throw NativeHysteria2Error.authenticationFailed(nativeHysteria2DiagnosticMessage("native hysteria2 authentication rejected"))
+            throw NativeHysteria2Error.authenticationFailed(nativeHysteria2DiagnosticMessage("native hysteria2 \(operation) authentication rejected"))
         case IROCK_HY2_NETWORK_FAILED:
-            throw NativeHysteria2Error.networkFailed(nativeHysteria2DiagnosticMessage("native hysteria2 connect network failed"))
+            throw NativeHysteria2Error.networkFailed(nativeHysteria2DiagnosticMessage("native hysteria2 \(operation) network failed"))
         case IROCK_HY2_BLOCKED:
-            throw NativeHysteria2Error.blocked("native hysteria2 connect blocked")
+            throw NativeHysteria2Error.blocked("native hysteria2 \(operation) blocked")
         case IROCK_HY2_UNSUPPORTED:
-            throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 connect returned unsupported")
+            throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 \(operation) returned unsupported")
         default:
-            throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 connect failed")
+            throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 \(operation) failed")
         }
     }
 }
@@ -636,6 +662,106 @@ public final class NativeHysteria2Session: @unchecked Sendable {
         withNativeSessionLock {
             var packetsRead: Int32 = 0
             _ = irock_hy2_session_receive_quic_for_testing(nativeSession, &packetsRead)
+        }
+    }
+
+    public func exportKeyingMaterial(label: Data, context: Data, length: Int) async throws -> Data {
+        guard !label.isEmpty, length > 0 else {
+            throw NativeHysteria2Error.invalidConfiguration("native hysteria2 exporter unavailable")
+        }
+        var output = [UInt8](repeating: 0, count: length)
+        let result = withNativeSessionLock {
+            label.withUnsafeBytes { labelBuffer in
+                context.withUnsafeBytes { contextBuffer in
+                    irock_hy2_session_export_keying_material(
+                        nativeSession,
+                        labelBuffer.bindMemory(to: UInt8.self).baseAddress,
+                        Int32(label.count),
+                        contextBuffer.bindMemory(to: UInt8.self).baseAddress,
+                        Int32(context.count),
+                        &output,
+                        Int32(output.count)
+                    )
+                }
+            }
+        }
+        switch result {
+        case IROCK_HY2_OK:
+            return Data(output)
+        case IROCK_HY2_INVALID_CONFIGURATION:
+            throw NativeHysteria2Error.invalidConfiguration("native hysteria2 exporter unavailable")
+        case IROCK_HY2_AUTH_FAILED:
+            throw NativeHysteria2Error.authenticationFailed("native hysteria2 exporter authentication failed")
+        case IROCK_HY2_NETWORK_FAILED:
+            throw NativeHysteria2Error.networkFailed("native hysteria2 exporter failed")
+        case IROCK_HY2_BLOCKED:
+            throw NativeHysteria2Error.blocked("native hysteria2 exporter blocked")
+        case IROCK_HY2_UNSUPPORTED:
+            throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 exporter unsupported")
+        default:
+            throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 exporter failed")
+        }
+    }
+
+    public func openRawBidirectionalStream(initialPayload: Data) async throws -> any NativeHysteria2ByteStream {
+        try openRawQUICStream(bidirectional: true, initialPayload: initialPayload)
+    }
+
+    public func openRawUnidirectionalStream(initialPayload: Data) async throws -> any NativeHysteria2ByteStream {
+        try openRawQUICStream(bidirectional: false, initialPayload: initialPayload)
+    }
+
+    func createRawQUICStreamForTesting(streamID: Int64, initialPayload: Data) async throws -> NativeHysteria2RawByteStream {
+        var stream: irock_hy2_stream_ref?
+        let result = withNativeSessionLock {
+            initialPayload.withUnsafeBytes { payloadBuffer in
+                irock_hy2_session_create_raw_quic_stream_for_testing(
+                    nativeSession,
+                    streamID,
+                    payloadBuffer.bindMemory(to: UInt8.self).baseAddress,
+                    Int32(initialPayload.count),
+                    &stream
+                )
+            }
+        }
+        return try rawStream(from: result, stream: stream, operation: "create raw stream")
+    }
+
+    private func openRawQUICStream(bidirectional: Bool, initialPayload: Data) throws -> NativeHysteria2RawByteStream {
+        var stream: irock_hy2_stream_ref?
+        let result = withNativeSessionLock {
+            initialPayload.withUnsafeBytes { payloadBuffer in
+                irock_hy2_session_open_raw_quic_stream(
+                    nativeSession,
+                    bidirectional ? 1 : 0,
+                    payloadBuffer.bindMemory(to: UInt8.self).baseAddress,
+                    Int32(initialPayload.count),
+                    &stream
+                )
+            }
+        }
+        return try rawStream(from: result, stream: stream, operation: "open raw stream")
+    }
+
+    private func rawStream(from result: irock_hy2_result, stream: irock_hy2_stream_ref?, operation: String) throws -> NativeHysteria2RawByteStream {
+        switch result {
+        case IROCK_HY2_OK:
+            guard let stream else {
+                throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 \(operation) returned no stream")
+            }
+            return NativeHysteria2RawByteStream(nativeStream: stream, session: self)
+        case IROCK_HY2_INVALID_CONFIGURATION:
+            throw NativeHysteria2Error.invalidConfiguration("native hysteria2 \(operation) rejected")
+        case IROCK_HY2_AUTH_FAILED:
+            throw NativeHysteria2Error.authenticationFailed("native hysteria2 \(operation) authentication failed")
+        case IROCK_HY2_NETWORK_FAILED:
+            throw NativeHysteria2Error.networkFailed("native hysteria2 \(operation) network failed")
+        case IROCK_HY2_BLOCKED:
+            throw NativeHysteria2Error.blocked("native hysteria2 \(operation) blocked")
+        case IROCK_HY2_UNSUPPORTED:
+            throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 \(operation) returned unsupported")
+        default:
+            throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 \(operation) failed")
         }
     }
 
@@ -672,20 +798,121 @@ public final class NativeHysteria2Session: @unchecked Sendable {
     }
 }
 
-final class NativeHysteria2NativeByteStream: NativeHysteria2ByteStream, @unchecked Sendable {
-    private let nativeStream: irock_hy2_stream_ref
+final class NativeHysteria2RawByteStream: NativeHysteria2ByteStream, @unchecked Sendable {
+    let nativeStreamForTesting: irock_hy2_stream_ref
     private let session: NativeHysteria2Session
-    private var didDrainTCPResponse = false
 
     init(nativeStream: irock_hy2_stream_ref, session: NativeHysteria2Session) {
-        self.nativeStream = nativeStream
+        self.nativeStreamForTesting = nativeStream
         self.session = session
     }
 
     deinit {
         session.withNativeSessionLock {
-            irock_hy2_stream_free(nativeStream)
+            irock_hy2_stream_free(nativeStreamForTesting)
         }
+    }
+
+    func read(maxLength: Int) async throws -> Data? {
+        guard maxLength > 0 else {
+            throw NativeHysteria2Error.invalidConfiguration("invalid stream read length")
+        }
+        return try await readRaw(maxLength: maxLength)
+    }
+
+    func write(_ data: Data) async throws {
+        try await writeRaw(data)
+    }
+
+    func closeWrite() async throws {
+        try closeWriteRaw()
+    }
+
+    func close() async {}
+
+    fileprivate func readRaw(maxLength: Int) async throws -> Data? {
+        while true {
+            var buffer = [UInt8](repeating: 0, count: maxLength)
+            var bytesRead: Int32 = 0
+            let result = session.withNativeSessionLock {
+                irock_hy2_stream_read(nativeStreamForTesting, &buffer, Int32(maxLength), &bytesRead)
+            }
+            switch result {
+            case IROCK_HY2_OK:
+                return bytesRead > 0 ? Data(buffer.prefix(Int(bytesRead))) : nil
+            case IROCK_HY2_INVALID_CONFIGURATION:
+                throw NativeHysteria2Error.invalidConfiguration("native hysteria2 stream read rejected")
+            case IROCK_HY2_AUTH_FAILED:
+                throw NativeHysteria2Error.authenticationFailed("native hysteria2 stream read authentication failed")
+            case IROCK_HY2_NETWORK_FAILED:
+                throw NativeHysteria2Error.networkFailed("native hysteria2 stream read network failed")
+            case IROCK_HY2_BLOCKED:
+                session.receivePendingPacketsForStreamRead()
+                try await Task.sleep(nanoseconds: 1_000_000)
+            case IROCK_HY2_UNSUPPORTED:
+                throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream read returned unsupported")
+            default:
+                throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream read failed")
+            }
+        }
+    }
+
+    fileprivate func writeRaw(_ data: Data) async throws {
+        while true {
+            let result = session.withNativeSessionLock {
+                data.withUnsafeBytes { rawBuffer in
+                    irock_hy2_stream_write(nativeStreamForTesting, rawBuffer.bindMemory(to: UInt8.self).baseAddress, Int32(data.count))
+                }
+            }
+            switch result {
+            case IROCK_HY2_OK:
+                return
+            case IROCK_HY2_INVALID_CONFIGURATION:
+                throw NativeHysteria2Error.invalidConfiguration("native hysteria2 stream write rejected")
+            case IROCK_HY2_AUTH_FAILED:
+                throw NativeHysteria2Error.authenticationFailed("native hysteria2 stream write authentication failed")
+            case IROCK_HY2_NETWORK_FAILED:
+                throw NativeHysteria2Error.networkFailed("native hysteria2 stream write network failed")
+            case IROCK_HY2_BLOCKED:
+                session.receivePendingPacketsForStreamRead()
+                try await Task.sleep(nanoseconds: 1_000_000)
+            case IROCK_HY2_UNSUPPORTED:
+                throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream write returned unsupported")
+            default:
+                throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream write failed")
+            }
+        }
+    }
+
+    fileprivate func closeWriteRaw() throws {
+        let result = session.withNativeSessionLock {
+            irock_hy2_stream_close_write(nativeStreamForTesting)
+        }
+        switch result {
+        case IROCK_HY2_OK:
+            return
+        case IROCK_HY2_INVALID_CONFIGURATION:
+            throw NativeHysteria2Error.invalidConfiguration("native hysteria2 stream closeWrite rejected")
+        case IROCK_HY2_AUTH_FAILED:
+            throw NativeHysteria2Error.authenticationFailed("native hysteria2 stream closeWrite authentication failed")
+        case IROCK_HY2_NETWORK_FAILED:
+            throw NativeHysteria2Error.networkFailed("native hysteria2 stream closeWrite network failed")
+        case IROCK_HY2_BLOCKED:
+            throw NativeHysteria2Error.blocked("native hysteria2 stream closeWrite blocked")
+        case IROCK_HY2_UNSUPPORTED:
+            throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream closeWrite returned unsupported")
+        default:
+            throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream closeWrite failed")
+        }
+    }
+}
+
+final class NativeHysteria2NativeByteStream: NativeHysteria2ByteStream, @unchecked Sendable {
+    private let rawStream: NativeHysteria2RawByteStream
+    private var didDrainTCPResponse = false
+
+    init(nativeStream: irock_hy2_stream_ref, session: NativeHysteria2Session) {
+        self.rawStream = NativeHysteria2RawByteStream(nativeStream: nativeStream, session: session)
     }
 
     func read(maxLength: Int) async throws -> Data? {
@@ -741,82 +968,20 @@ final class NativeHysteria2NativeByteStream: NativeHysteria2ByteStream, @uncheck
     }
 
     private func readRaw(maxLength: Int) async throws -> Data? {
-        while true {
-            var buffer = [UInt8](repeating: 0, count: maxLength)
-            var bytesRead: Int32 = 0
-            let result = session.withNativeSessionLock {
-                irock_hy2_stream_read(nativeStream, &buffer, Int32(maxLength), &bytesRead)
-            }
-            switch result {
-            case IROCK_HY2_OK:
-                return bytesRead > 0 ? Data(buffer.prefix(Int(bytesRead))) : nil
-            case IROCK_HY2_INVALID_CONFIGURATION:
-                throw NativeHysteria2Error.invalidConfiguration("native hysteria2 stream read rejected")
-            case IROCK_HY2_AUTH_FAILED:
-                throw NativeHysteria2Error.authenticationFailed("native hysteria2 stream read authentication failed")
-            case IROCK_HY2_NETWORK_FAILED:
-                throw NativeHysteria2Error.networkFailed("native hysteria2 stream read network failed")
-            case IROCK_HY2_BLOCKED:
-                session.receivePendingPacketsForStreamRead()
-                try await Task.sleep(nanoseconds: 1_000_000)
-            case IROCK_HY2_UNSUPPORTED:
-                throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream read returned unsupported")
-            default:
-                throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream read failed")
-            }
-        }
+        try await rawStream.readRaw(maxLength: maxLength)
     }
 
     func write(_ data: Data) async throws {
-        while true {
-            let result = session.withNativeSessionLock {
-                data.withUnsafeBytes { rawBuffer in
-                    irock_hy2_stream_write(nativeStream, rawBuffer.bindMemory(to: UInt8.self).baseAddress, Int32(data.count))
-                }
-            }
-            switch result {
-            case IROCK_HY2_OK:
-                return
-            case IROCK_HY2_INVALID_CONFIGURATION:
-                throw NativeHysteria2Error.invalidConfiguration("native hysteria2 stream write rejected")
-            case IROCK_HY2_AUTH_FAILED:
-                throw NativeHysteria2Error.authenticationFailed("native hysteria2 stream write authentication failed")
-            case IROCK_HY2_NETWORK_FAILED:
-                throw NativeHysteria2Error.networkFailed("native hysteria2 stream write network failed")
-            case IROCK_HY2_BLOCKED:
-                session.receivePendingPacketsForStreamRead()
-                try await Task.sleep(nanoseconds: 1_000_000)
-            case IROCK_HY2_UNSUPPORTED:
-                throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream write returned unsupported")
-            default:
-                throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream write failed")
-            }
-        }
+        try await rawStream.write(data)
     }
 
     func closeWrite() async throws {
-        let result = session.withNativeSessionLock {
-            irock_hy2_stream_close_write(nativeStream)
-        }
-        switch result {
-        case IROCK_HY2_OK:
-            return
-        case IROCK_HY2_INVALID_CONFIGURATION:
-            throw NativeHysteria2Error.invalidConfiguration("native hysteria2 stream closeWrite rejected")
-        case IROCK_HY2_AUTH_FAILED:
-            throw NativeHysteria2Error.authenticationFailed("native hysteria2 stream closeWrite authentication failed")
-        case IROCK_HY2_NETWORK_FAILED:
-            throw NativeHysteria2Error.networkFailed("native hysteria2 stream closeWrite network failed")
-        case IROCK_HY2_BLOCKED:
-            throw NativeHysteria2Error.blocked("native hysteria2 stream closeWrite blocked")
-        case IROCK_HY2_UNSUPPORTED:
-            throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream closeWrite returned unsupported")
-        default:
-            throw NativeHysteria2Error.unsupportedRuntime("native hysteria2 stream closeWrite failed")
-        }
+        try await rawStream.closeWrite()
     }
 
-    func close() async {}
+    func close() async {
+        await rawStream.close()
+    }
 }
 
 public protocol NativeHysteria2ByteStream: Sendable {

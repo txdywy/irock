@@ -115,6 +115,12 @@ public final class AppViewModel: ObservableObject {
                 appendLog("当前 Hysteria2 节点需要 QUIC 传输")
                 throw LocalProxyError.unsupportedCredential
             }
+        case .tuic:
+            guard node.transport == .quic, node.tls.enabled else {
+                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前 TUIC 节点需要 QUIC+TLS 传输")
+                appendLog("当前 TUIC 节点需要 QUIC+TLS 传输")
+                throw LocalProxyError.unsupportedCredential
+            }
         case .trojan:
             guard node.transport == .tcp else {
                 localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前 Trojan 节点需要 TCP 传输")
@@ -122,9 +128,9 @@ public final class AppViewModel: ObservableObject {
                 throw LocalProxyError.unsupportedCredential
             }
         case .vmess:
-            guard (node.transport == .tcp || node.transport == .webSocket || node.transport == .http2), node.tls.enabled else {
-                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前 VMess 节点需要 TCP/WebSocket/HTTP2+TLS 传输")
-                appendLog("当前 VMess 节点需要 TCP/WebSocket/HTTP2+TLS 传输")
+            guard (node.transport == .tcp || node.transport == .webSocket || node.transport == .http2 || node.transport == .grpc), node.tls.enabled else {
+                localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前 VMess 节点需要 TCP/WebSocket/HTTP2/gRPC+TLS 传输")
+                appendLog("当前 VMess 节点需要 TCP/WebSocket/HTTP2/gRPC+TLS 传输")
                 throw LocalProxyError.unsupportedCredential
             }
             guard node.tls.fingerprint == nil, node.tls.reality == nil else {
@@ -143,7 +149,7 @@ public final class AppViewModel: ObservableObject {
                 appendLog("当前 VLESS 节点暂不支持证书固定或 Reality")
                 throw LocalProxyError.unsupportedCredential
             }
-        default:
+        @unknown default:
             if localProxyState.phase != .running {
                 localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前协议暂不支持本地代理")
             }

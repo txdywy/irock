@@ -33,6 +33,30 @@ public protocol TransportByteStream: Sendable {
     func close() async
 }
 
+public struct AnyTransportByteStream: TransportByteStream {
+    private let stream: any TransportByteStream
+
+    public init(_ stream: any TransportByteStream) {
+        self.stream = stream
+    }
+
+    public func read(maxLength: Int) async throws -> Data? {
+        try await stream.read(maxLength: maxLength)
+    }
+
+    public func write(_ data: Data) async throws {
+        try await stream.write(data)
+    }
+
+    public func closeWrite() async {
+        await stream.closeWrite()
+    }
+
+    public func close() async {
+        await stream.close()
+    }
+}
+
 public struct EstablishedTransportConnection: TransportConnection, Equatable, Sendable {
     public let host: String
     public let port: Int
@@ -122,6 +146,22 @@ public struct TransportAdapterRegistry: Sendable {
     }
 }
 
+public struct TransportStreamAdapterRegistry: Sendable {
+    private let adapters: [TransportType: any TransportStreamAdapter]
+
+    public init(adapters: [any TransportStreamAdapter]) {
+        var indexed: [TransportType: any TransportStreamAdapter] = [:]
+        for adapter in adapters {
+            indexed[adapter.supportedTransport] = adapter
+        }
+        self.adapters = indexed
+    }
+
+    public func adapter(for transport: TransportType) -> (any TransportStreamAdapter)? {
+        adapters[transport]
+    }
+}
+
 public struct TCPDialResult: Equatable, Sendable {
     public let host: String
     public let port: Int
@@ -152,6 +192,11 @@ public protocol QUICDialer: Sendable {
 
 public protocol QUICStreamDialer: Sendable {
     func openBidirectionalStream(host: String, port: Int, tls: TLSOptions?, metadata: [String: String], initialPayload: Data?) async throws -> any TransportByteStream
+}
+
+public protocol TransportStreamAdapter: Sendable {
+    var supportedTransport: TransportType { get }
+    func openStream(request: TransportRequest) async throws -> any TransportByteStream
 }
 
 public struct TCPTransportAdapter<Dialer: TCPDialer>: TransportAdapter {
@@ -264,7 +309,8 @@ public struct QUICTransportAdapter<Dialer: QUICDialer>: TransportAdapter {
     }
 }
 
-public struct QUICStreamTransportAdapter<Dialer: QUICStreamDialer>: Sendable {
+public struct QUICStreamTransportAdapter<Dialer: QUICStreamDialer>: TransportStreamAdapter {
+    public let supportedTransport: TransportType = .quic
     private let dialer: Dialer
 
     public init(dialer: Dialer) {
@@ -759,15 +805,19 @@ public final class HTTP2ClientByteStream<Underlying: TransportByteStream>: Trans
     private let state = HTTP2ClientStreamState()
     private let authority: String
     private let path: String
+    private let contentType: String
+    private let additionalHeaders: [(String, String)]
     private let initialPayload: Data?
     private var readerTask: Task<Void, Never>?
     private static var maximumDataFramePayloadSize: Int { 16_384 }
 
-    public init(underlying: Underlying, authority: String, path: String, initialPayload: Data? = nil) {
+    public init(underlying: Underlying, authority: String, path: String, contentType: String = "application/octet-stream", additionalHeaders: [(String, String)] = [], initialPayload: Data? = nil) {
         self.underlying = underlying
         self.writer = HTTP2UnderlyingWriter(underlying: underlying)
         self.authority = authority.trimmingCharacters(in: .whitespacesAndNewlines)
         self.path = path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "/" : path.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.contentType = contentType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "application/octet-stream" : contentType.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.additionalHeaders = additionalHeaders
         self.initialPayload = initialPayload
     }
 
@@ -839,8 +889,24 @@ public final class HTTP2ClientByteStream<Underlying: TransportByteStream>: Trans
         block.append(0x87)
         try appendLiteralHeader(nameIndex: 4, value: path.hasPrefix("/") ? path : "/\(path)", to: &block)
         try appendLiteralHeader(nameIndex: 1, value: authority, to: &block)
-        try appendLiteralHeader(nameIndex: 31, value: "application/octet-stream", to: &block)
+        try appendLiteralHeader(nameIndex: 31, value: contentType, to: &block)
+        for (name, value) in additionalHeaders {
+            try appendLiteralHeader(name: name, value: value, to: &block)
+        }
         return block
+    }
+
+    private func appendLiteralHeader(name: String, value: String, to block: inout Data) throws {
+        let nameData = Data(name.utf8)
+        let valueData = Data(value.utf8)
+        guard !nameData.isEmpty, nameData.count < 128, !valueData.isEmpty, valueData.count < 128 else {
+            throw TransportError.invalidConfiguration("invalid http2 header value")
+        }
+        block.append(0x00)
+        block.append(UInt8(nameData.count))
+        block.append(nameData)
+        block.append(UInt8(valueData.count))
+        block.append(valueData)
     }
 
     private func appendLiteralHeader(nameIndex: Int, value: String, to block: inout Data) throws {
@@ -897,6 +963,87 @@ public final class HTTP2ClientByteStream<Underlying: TransportByteStream>: Trans
         ])
         frame.append(payload)
         return frame
+    }
+}
+
+public final class GRPCClientByteStream<Underlying: TransportByteStream>: TransportByteStream, @unchecked Sendable {
+    private let http2: HTTP2ClientByteStream<Underlying>
+    private var inboundBuffer = Data()
+
+    public init(underlying: Underlying, authority: String, service: String, initialPayload: Data? = nil) {
+        self.http2 = HTTP2ClientByteStream(
+            underlying: underlying,
+            authority: authority,
+            path: service,
+            contentType: "application/grpc",
+            additionalHeaders: [("te", "trailers")],
+            initialPayload: initialPayload.map(Self.frameMessage)
+        )
+    }
+
+    public func start() async throws {
+        try await http2.start()
+    }
+
+    public func waitForResponseHeaders() async throws {
+        try await http2.waitForResponseHeaders()
+    }
+
+    public func read(maxLength: Int) async throws -> Data? {
+        while true {
+            if let message = try takeMessage(maxLength: maxLength) {
+                return message
+            }
+            guard let data = try await http2.read(maxLength: max(5, maxLength + 5)) else {
+                return nil
+            }
+            inboundBuffer.append(data)
+        }
+    }
+
+    public func write(_ data: Data) async throws {
+        try await http2.write(Self.frameMessage(data))
+    }
+
+    public func closeWrite() async {
+        await http2.closeWrite()
+    }
+
+    public func close() async {
+        await http2.close()
+    }
+
+    private func takeMessage(maxLength: Int) throws -> Data? {
+        guard inboundBuffer.count >= 5 else { return nil }
+        guard inboundBuffer[0] == 0x00 else {
+            throw TransportError.invalidConfiguration("unsupported grpc compressed message")
+        }
+        let length = (Int(inboundBuffer[1]) << 24) | (Int(inboundBuffer[2]) << 16) | (Int(inboundBuffer[3]) << 8) | Int(inboundBuffer[4])
+        guard inboundBuffer.count >= 5 + length else { return nil }
+        let count = min(maxLength, length)
+        let payloadStart = 5
+        let payloadEnd = payloadStart + count
+        let data = inboundBuffer.subdata(in: payloadStart..<payloadEnd)
+        if count == length {
+            inboundBuffer.removeSubrange(..<(5 + length))
+        } else {
+            inboundBuffer.removeSubrange(payloadStart..<payloadEnd)
+            inboundBuffer[1] = UInt8(((length - count) >> 24) & 0xff)
+            inboundBuffer[2] = UInt8(((length - count) >> 16) & 0xff)
+            inboundBuffer[3] = UInt8(((length - count) >> 8) & 0xff)
+            inboundBuffer[4] = UInt8((length - count) & 0xff)
+        }
+        return data
+    }
+
+    private static func frameMessage(_ payload: Data) -> Data {
+        var data = Data([0x00])
+        data.append(UInt8((payload.count >> 24) & 0xff))
+        data.append(UInt8((payload.count >> 16) & 0xff))
+        data.append(UInt8((payload.count >> 8) & 0xff))
+        data.append(UInt8(payload.count & 0xff))
+        data.append(payload)
+        return data
     }
 }
 
@@ -1340,6 +1487,36 @@ private enum HTTP2LocalPrelude {
     }
 }
 
+public struct GRPCStreamTransportAdapter<Underlying: TransportStreamAdapter>: TransportStreamAdapter {
+    public let supportedTransport: TransportType = .grpc
+    private let underlying: Underlying
+
+    public init(underlying: Underlying) {
+        self.underlying = underlying
+    }
+
+    public func openStream(request: TransportRequest) async throws -> any TransportByteStream {
+        let descriptor = try GRPCOpenDescriptor(request: request)
+        let underlyingRequest = TransportRequest(
+            host: descriptor.host,
+            port: request.port,
+            transport: underlying.supportedTransport,
+            tls: request.tls,
+            metadata: descriptor.metadata,
+            initialPayload: nil
+        )
+        let stream = try await underlying.openStream(request: underlyingRequest)
+        let grpc = GRPCClientByteStream(
+            underlying: AnyTransportByteStream(stream),
+            authority: descriptor.authority,
+            service: descriptor.service,
+            initialPayload: request.initialPayload
+        )
+        try await grpc.start()
+        return grpc
+    }
+}
+
 public struct GRPCTransportAdapter<Underlying: TransportAdapter>: TransportAdapter {
     public let supportedTransport: TransportType = .grpc
     private let underlying: Underlying
@@ -1363,6 +1540,17 @@ public struct GRPCTransportAdapter<Underlying: TransportAdapter>: TransportAdapt
     }
 
     private func descriptor(for request: TransportRequest) throws -> GRPCOpenDescriptor {
+        try GRPCOpenDescriptor(request: request)
+    }
+}
+
+private struct GRPCOpenDescriptor {
+    let host: String
+    let authority: String
+    let service: String
+    let protocolName: String
+
+    init(request: TransportRequest) throws {
         guard request.transport == .grpc else {
             throw TransportError.unsupportedTransport(request.transport)
         }
@@ -1381,16 +1569,11 @@ public struct GRPCTransportAdapter<Underlying: TransportAdapter>: TransportAdapt
         guard !authority.isEmpty else {
             throw TransportError.invalidConfiguration("invalid grpc authority")
         }
-        let protocolName = request.metadata["grpcProtocol"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return GRPCOpenDescriptor(host: host, authority: authority, service: service, protocolName: protocolName)
+        self.host = host
+        self.authority = authority
+        self.service = service
+        self.protocolName = request.metadata["grpcProtocol"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
-}
-
-private struct GRPCOpenDescriptor {
-    let host: String
-    let authority: String
-    let service: String
-    let protocolName: String
 
     var metadata: [String: String] {
         var metadata = [

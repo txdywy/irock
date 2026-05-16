@@ -17,9 +17,16 @@ struct MacOSPacketTunnelLoopRunner: Sendable {
     }
 
     func run(packetFlow: NEPacketTunnelFlow) async throws {
-        while !Task.isCancelled {
-            _ = try await smokeRunner.runOnce(packetFlow: packetFlow)
-            try await Task.sleep(nanoseconds: loopDelayNanoseconds)
+        let runtime = try smokeRunner.makeSession(packetFlow: packetFlow)
+        do {
+            while !Task.isCancelled {
+                _ = try await runtime.runOnce()
+                try await Task.sleep(nanoseconds: loopDelayNanoseconds)
+            }
+            await runtime.closeProxyConnections()
+        } catch {
+            await runtime.closeProxyConnections()
+            throw error
         }
     }
 }
