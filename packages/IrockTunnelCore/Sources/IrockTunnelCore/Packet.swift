@@ -1,3 +1,5 @@
+import Darwin
+
 public struct Packet: Equatable, Hashable, Sendable {
     public let id: String
     public let bytes: [UInt8]
@@ -60,8 +62,23 @@ public extension Packet {
         ipv4Packet(id: id, source: source, destination: destination, transportProtocol: .udp, sourcePort: sourcePort, destinationPort: destinationPort, payload: payload)
     }
 
+    static func ipv6UDP(id: String, source: IPAddress, destination: IPAddress, sourcePort: Int, destinationPort: Int, payload: [UInt8] = []) -> Packet {
+        ipv6Packet(id: id, source: source, destination: destination, transportProtocol: .udp, sourcePort: sourcePort, destinationPort: destinationPort, payload: payload)
+    }
+
+    static func udpResponse(id: String, request: ParsedPacket, payload: [UInt8]) -> Packet {
+        switch (request.destinationIP, request.sourceIP) {
+        case (.v4, .v4):
+            return ipv4UDP(id: id, source: request.destinationIP, destination: request.sourceIP, sourcePort: request.destinationPort, destinationPort: request.sourcePort, payload: payload)
+        case (.v6, .v6):
+            return ipv6UDP(id: id, source: request.destinationIP, destination: request.sourceIP, sourcePort: request.destinationPort, destinationPort: request.sourcePort, payload: payload)
+        default:
+            return Packet(id: id, bytes: [])
+        }
+    }
+
     static func ipv4UDPResponse(id: String, request: ParsedPacket, payload: [UInt8]) -> Packet {
-        ipv4UDP(id: id, source: request.destinationIP, destination: request.sourceIP, sourcePort: request.destinationPort, destinationPort: request.sourcePort, payload: payload)
+        udpResponse(id: id, request: request, payload: payload)
     }
 
     private static func ipv4Packet(id: String, source: IPAddress, destination: IPAddress, transportProtocol: TransportProtocol, sourcePort: Int, destinationPort: Int, payload: [UInt8] = []) -> Packet {
@@ -101,6 +118,37 @@ public extension Packet {
         return Packet(id: id, bytes: bytes)
     }
 
+    private static func ipv6Packet(id: String, source: IPAddress, destination: IPAddress, transportProtocol: TransportProtocol, sourcePort: Int, destinationPort: Int, payload: [UInt8] = []) -> Packet {
+        guard case let .v6(sourceAddress) = source,
+              case let .v6(destinationAddress) = destination,
+              let sourceBytes = ipv6AddressBytes(sourceAddress),
+              let destinationBytes = ipv6AddressBytes(destinationAddress) else {
+            return Packet(id: id, bytes: [])
+        }
+
+        let transportHeaderLength = transportProtocol == .udp ? 8 : 20
+        let payloadLength = transportHeaderLength + payload.count
+        var bytes = [UInt8](repeating: 0, count: 40 + payloadLength)
+        bytes[0] = 0x60
+        writeUInt16(payloadLength, into: &bytes, at: 4)
+        bytes[6] = transportProtocol.rawValue
+        bytes[7] = 64
+        bytes.replaceSubrange(8..<24, with: sourceBytes)
+        bytes.replaceSubrange(24..<40, with: destinationBytes)
+        writeUInt16(sourcePort, into: &bytes, at: 40)
+        writeUInt16(destinationPort, into: &bytes, at: 42)
+        if transportProtocol == .udp {
+            writeUInt16(payloadLength, into: &bytes, at: 44)
+        } else {
+            bytes[52] = 0x50
+        }
+        if !payload.isEmpty {
+            let payloadOffset = 40 + transportHeaderLength
+            bytes.replaceSubrange(payloadOffset..<payloadOffset + payload.count, with: payload)
+        }
+        return Packet(id: id, bytes: bytes)
+    }
+
     private static func ipv4HeaderChecksum(_ bytes: [UInt8]) -> UInt16 {
         var sum = 0
         for index in stride(from: 0, to: 20, by: 2) {
@@ -110,6 +158,29 @@ public extension Packet {
             }
         }
         return UInt16((~sum) & 0xffff)
+    }
+
+    private static func ipv6AddressBytes(_ address: String) -> [UInt8]? {
+        var storage = in6_addr()
+        guard address.withCString({ inet_pton(AF_INET6, $0, &storage) }) == 1 else { return nil }
+        return withUnsafeBytes(of: storage) { Array($0) }
+    }
+
+    private static func ipv6AddressString(_ bytes: ArraySlice<UInt8>) -> String? {
+        guard bytes.count == 16 else { return nil }
+        var storage = in6_addr()
+        withUnsafeMutableBytes(of: &storage) { storageBytes in
+            for (index, byte) in bytes.enumerated() {
+                storageBytes[index] = byte
+            }
+        }
+        var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+        guard inet_ntop(AF_INET6, &storage, &buffer, socklen_t(INET6_ADDRSTRLEN)) != nil else { return nil }
+        return String(cString: buffer)
+    }
+
+    static func parseIPv6AddressString(_ bytes: ArraySlice<UInt8>) -> String? {
+        ipv6AddressString(bytes)
     }
 
     private static func writeUInt16(_ value: Int, into bytes: inout [UInt8], at offset: Int) {

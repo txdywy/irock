@@ -41,6 +41,10 @@ private struct NativeTunTUICQUICSession: TUICQUICSession {
     func openBidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream {
         NativeTunTransportByteStream(stream: try await session.openRawBidirectionalStream(initialPayload: initialPayload))
     }
+
+    func sendDatagram(_ payload: Data) async throws -> Data? {
+        try await session.sendDatagram(payload)
+    }
 }
 
 private struct NativeTUICQUICSessionDialer: TUICQUICSessionDialer {
@@ -239,7 +243,6 @@ final class MacOSUserModeTunController: UserModeTunControlling {
                         logStore: stores.logStore,
                         sessionDialer: NativeTUICQUICSessionDialer(),
                         credentialResolver: MacOSImportedProxyCredentialResolver(nodeID: node.id, credential: credential),
-                        udpDatagramForwarder: DirectUDPDatagramForwarder(client: MacOSPlatformUDPDatagramClient()),
                         batchLimit: batchLimit,
                         flowLimit: flowLimit
                     )

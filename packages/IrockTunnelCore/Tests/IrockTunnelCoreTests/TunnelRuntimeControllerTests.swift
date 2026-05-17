@@ -590,6 +590,8 @@ private final class ControllerRecordingTUICQUICSession: TUICQUICSession, @unchec
         bidirectionalStream.initialPayloads.append(initialPayload)
         return bidirectionalStream
     }
+
+    func sendDatagram(_ payload: Data) async throws -> Data? { nil }
 }
 
 private final class ControllerRecordingByteStream: TransportByteStream, @unchecked Sendable {

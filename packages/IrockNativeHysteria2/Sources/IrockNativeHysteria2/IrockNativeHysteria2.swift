@@ -703,6 +703,49 @@ public final class NativeHysteria2Session: @unchecked Sendable {
         }
     }
 
+    public func sendDatagram(_ payload: Data, responseMaxLength: Int = 65_535) async throws -> Data? {
+        guard responseMaxLength > 0 else {
+            throw NativeHysteria2Error.invalidConfiguration("invalid native hysteria2 datagram response limit")
+        }
+        var bytesWritten: Int32 = 0
+        let sendResult = withNativeSessionLock {
+            payload.withUnsafeBytes { payloadBuffer in
+                irock_hy2_session_send_quic_datagram(
+                    nativeSession,
+                    payloadBuffer.bindMemory(to: UInt8.self).baseAddress,
+                    Int32(payload.count),
+                    &bytesWritten
+                )
+            }
+        }
+        switch sendResult {
+        case IROCK_HY2_OK:
+            break
+        case IROCK_HY2_BLOCKED:
+            throw NativeHysteria2Error.blocked("native hysteria2 datagram send blocked")
+        case IROCK_HY2_INVALID_CONFIGURATION:
+            throw NativeHysteria2Error.invalidConfiguration("native hysteria2 datagram send rejected")
+        default:
+            throw NativeHysteria2Error.networkFailed("native hysteria2 datagram send failed")
+        }
+        receivePendingPacketsForStreamRead()
+        var buffer = [UInt8](repeating: 0, count: responseMaxLength)
+        var bytesRead: Int32 = 0
+        let readResult = withNativeSessionLock {
+            irock_hy2_session_receive_quic_datagram(nativeSession, &buffer, Int32(buffer.count), &bytesRead)
+        }
+        switch readResult {
+        case IROCK_HY2_OK:
+            return Data(buffer.prefix(Int(bytesRead)))
+        case IROCK_HY2_BLOCKED:
+            return nil
+        case IROCK_HY2_INVALID_CONFIGURATION:
+            throw NativeHysteria2Error.invalidConfiguration("native hysteria2 datagram receive rejected")
+        default:
+            throw NativeHysteria2Error.networkFailed("native hysteria2 datagram receive failed")
+        }
+    }
+
     public func openRawBidirectionalStream(initialPayload: Data) async throws -> any NativeHysteria2ByteStream {
         try openRawQUICStream(bidirectional: true, initialPayload: initialPayload)
     }

@@ -12,9 +12,17 @@ public struct PacketParser: Sendable {
         let bytes = packet.bytes
         guard bytes.count >= 20 else { throw PacketParseError.tooShort }
 
-        let version = bytes[0] >> 4
-        guard version == 4 else { throw PacketParseError.unsupportedIPVersion }
+        switch bytes[0] >> 4 {
+        case 4:
+            return try parseIPv4(packet, bytes: bytes)
+        case 6:
+            return try parseIPv6(packet, bytes: bytes)
+        default:
+            throw PacketParseError.unsupportedIPVersion
+        }
+    }
 
+    private func parseIPv4(_ packet: Packet, bytes: [UInt8]) throws -> ParsedPacket {
         let headerLength = Int(bytes[0] & 0x0f) * 4
         guard headerLength >= 20 else { throw PacketParseError.truncatedHeader }
         guard bytes.count >= headerLength else { throw PacketParseError.truncatedHeader }
@@ -27,6 +35,28 @@ public struct PacketParser: Sendable {
 
         let sourceIP = IPAddress.v4(bytes[12], bytes[13], bytes[14], bytes[15])
         let destinationIP = IPAddress.v4(bytes[16], bytes[17], bytes[18], bytes[19])
+        return try parsedPacket(packet, bytes: bytes, headerLength: headerLength, sourceIP: sourceIP, destinationIP: destinationIP, transportProtocol: transportProtocol)
+    }
+
+    private func parseIPv6(_ packet: Packet, bytes: [UInt8]) throws -> ParsedPacket {
+        let headerLength = 40
+        guard bytes.count >= headerLength else { throw PacketParseError.truncatedHeader }
+        let payloadLength = readUInt16(bytes, at: 4)
+        guard bytes.count >= headerLength + payloadLength else { throw PacketParseError.truncatedHeader }
+        guard bytes.count >= headerLength + 4 else { throw PacketParseError.truncatedHeader }
+
+        guard let transportProtocol = TransportProtocol(rawValue: bytes[6]) else {
+            throw PacketParseError.unsupportedTransportProtocol
+        }
+        guard transportProtocol != .udp || bytes.count >= headerLength + 8 else { throw PacketParseError.truncatedHeader }
+        guard let sourceAddress = Packet.parseIPv6AddressString(bytes[8..<24]), let destinationAddress = Packet.parseIPv6AddressString(bytes[24..<40]) else {
+            throw PacketParseError.truncatedHeader
+        }
+
+        return try parsedPacket(packet, bytes: bytes, headerLength: headerLength, sourceIP: .v6(sourceAddress), destinationIP: .v6(destinationAddress), transportProtocol: transportProtocol)
+    }
+
+    private func parsedPacket(_ packet: Packet, bytes: [UInt8], headerLength: Int, sourceIP: IPAddress, destinationIP: IPAddress, transportProtocol: TransportProtocol) throws -> ParsedPacket {
         let sourcePort = readUInt16(bytes, at: headerLength)
         let destinationPort = readUInt16(bytes, at: headerLength + 2)
         let udpPayload = try udpPayload(bytes: bytes, headerLength: headerLength, transportProtocol: transportProtocol)

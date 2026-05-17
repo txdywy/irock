@@ -64,16 +64,15 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(writer.writtenResults.count, 1)
     }
 
-    func testVMessGRPCConfigurationWiresStackIntoPacketTunnelRuntime() async throws {
-        let plain = RecordingTransportAdapter(transport: .tcp)
-        let tlsChild = RecordingTransportAdapter(transport: .tcp)
-        let reader = InMemoryPacketReader(packets: [Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)])
+    func testVMessGRPCStreamConfigurationWritesRuntimePayloadIntoRetainedGRPCStream() async throws {
+        let stream = RecordingRuntimeByteStream()
+        let streamAdapter = RecordingRuntimeTransportStreamAdapter(transport: .tcp, stream: stream)
+        let reader = InMemoryPacketReader(packets: [Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443, payload: [0xde, 0xad])])
         let writer = InMemoryPacketWriter()
         let configuration = TunnelRuntimeConfiguration.vmessGRPC(
             snapshot: RuntimeSnapshot(id: SnapshotID(rawValue: "snapshot-1"), selectedNode: makeVMessGRPCNode(), routeMode: .globalProxy, logLevel: .user),
             routingEngine: RoutingEngine(rules: [.final(.proxy)]),
-            plain: plain,
-            tls: tlsChild,
+            stream: streamAdapter,
             credentialResolver: TestProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000001"),
             batchLimit: 16,
             flowLimit: 32
@@ -85,12 +84,12 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(summary.readCount, 1)
         XCTAssertEqual(summary.writtenCount, 1)
         XCTAssertEqual(summary.proxyConnectCount, 1)
-        XCTAssertEqual(plain.requests, [])
-        XCTAssertEqual(tlsChild.requests.count, 1)
-        XCTAssertEqual(tlsChild.requests.first?.transport, .tcp)
-        XCTAssertEqual(tlsChild.requests.first?.metadata["grpcProtocol"], "vmess")
-        XCTAssertEqual(tlsChild.requests.first?.metadata["grpcService"], "/TunnelService/Connect")
+        XCTAssertEqual(streamAdapter.requests.count, 1)
+        XCTAssertEqual(streamAdapter.requests.first?.transport, .tcp)
+        XCTAssertEqual(streamAdapter.requests.first?.metadata["grpcProtocol"], "vmess")
+        XCTAssertEqual(streamAdapter.requests.first?.metadata["grpcService"], "/TunnelService/Connect")
         XCTAssertEqual(writer.writtenResults.count, 1)
+        XCTAssertTrue(stream.writes.reduce(Data(), +).contains(Data([0x00, 0x00, 0x00, 0x00, 0x02, 0xde, 0xad])))
     }
 
     func testShadowsocksTCPConfigurationPublishesFailureWhenTLSChildFails() async throws {
@@ -422,6 +421,48 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertEqual(bidiStream.writes, [Data([0x05, 0x01, 0x01, 93, 184, 216, 34, 0x01, 0xbb])])
     }
 
+    func testTUICQUICUDPForwarderAuthenticatesOnceAndIncrementsPacketIDPerFlow() async throws {
+        let token = Data((0..<32).map(UInt8.init))
+        let uniStream = RecordingRuntimeByteStream()
+        let bidiStream = RecordingRuntimeByteStream()
+        let firstResponse = try TUICPacketCommand(associationID: 1, packetID: 1, destination: .ipv4("1.1.1.1", port: 53), payload: Data([0xde, 0xad])).bytes
+        let secondResponse = try TUICPacketCommand(associationID: 1, packetID: 2, destination: .ipv4("1.1.1.1", port: 53), payload: Data([0xbe, 0xef])).bytes
+        let session = RecordingRuntimeTUICQUICSession(exportedToken: token, bidirectionalStream: bidiStream, unidirectionalStream: uniStream, datagramResponses: [firstResponse, secondResponse])
+        let dialer = RecordingRuntimeTUICQUICSessionDialer(session: session)
+        let forwarder = TUICQUICUDPDatagramForwarder(sessionDialer: dialer, credentialResolver: TestProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000003:tuic-password"))
+        let parsed = try PacketParser().parse(Packet.ipv4UDP(id: "udp-tuic", source: .v4(10, 0, 0, 2), destination: .v4(1, 1, 1, 1), sourcePort: 55_555, destinationPort: 53, payload: [0x01, 0x02]))
+        let request = UDPDatagramForwardingRequest(mode: .proxy, node: makeTUICNode(udpPolicy: .enabled), flowKey: FlowKey(parsed), parsedPacket: parsed, payload: parsed.udpPayload)
+
+        let firstPayload = try await forwarder.forward(request)
+        let secondPayload = try await forwarder.forward(request)
+
+        XCTAssertEqual(firstPayload, [0xde, 0xad])
+        XCTAssertEqual(secondPayload, [0xbe, 0xef])
+        XCTAssertEqual(dialer.requests.count, 1)
+        XCTAssertEqual(dialer.requests.first?.metadata["proxyProtocol"], "tuic")
+        XCTAssertEqual(session.exports.count, 1)
+        XCTAssertEqual(session.exports.first?.label, Data([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]))
+        XCTAssertEqual(uniStream.writes, [Data([0x05, 0x00]) + Data([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]) + token])
+        XCTAssertEqual(session.datagramPayloads, [
+            Data([0x05, 0x02, 0x00, 0x01, 0x00, 0x01, 0x01, 0x00, 0x00, 0x02, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x35, 0x01, 0x02]),
+            Data([0x05, 0x02, 0x00, 0x01, 0x00, 0x02, 0x01, 0x00, 0x00, 0x02, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x35, 0x01, 0x02])
+        ])
+    }
+
+    func testTUICQUICUDPForwarderAcceptsIndependentResponsePacketIDForAssociation() async throws {
+        let token = Data((0..<32).map(UInt8.init))
+        let response = try TUICPacketCommand(associationID: 1, packetID: 99, destination: .ipv4("1.1.1.1", port: 53), payload: Data([0xca, 0xfe])).bytes
+        let session = RecordingRuntimeTUICQUICSession(exportedToken: token, bidirectionalStream: RecordingRuntimeByteStream(), unidirectionalStream: RecordingRuntimeByteStream(), datagramResponses: [response])
+        let dialer = RecordingRuntimeTUICQUICSessionDialer(session: session)
+        let forwarder = TUICQUICUDPDatagramForwarder(sessionDialer: dialer, credentialResolver: TestProxyCredentialResolver(credential: "00000000-0000-0000-0000-000000000003:tuic-password"))
+        let parsed = try PacketParser().parse(Packet.ipv4UDP(id: "udp-tuic", source: .v4(10, 0, 0, 2), destination: .v4(1, 1, 1, 1), sourcePort: 55_555, destinationPort: 53, payload: [0x01, 0x02]))
+        let request = UDPDatagramForwardingRequest(mode: .proxy, node: makeTUICNode(udpPolicy: .enabled), flowKey: FlowKey(parsed), parsedPacket: parsed, payload: parsed.udpPayload)
+
+        let payload = try await forwarder.forward(request)
+
+        XCTAssertEqual(payload, [0xca, 0xfe])
+    }
+
     func testTrojanTCPStackRoutesDisabledTLSToPlainChild() async throws {
         let plain = RecordingTransportAdapter(transport: .tcp)
         let tlsChild = RecordingTransportAdapter(transport: .tcp)
@@ -554,19 +595,23 @@ private final class RecordingRuntimeTUICQUICSession: TUICQUICSession, @unchecked
     private let exportedToken: Data
     private let bidirectionalStream: RecordingRuntimeByteStream
     private let unidirectionalStream: RecordingRuntimeByteStream
+    private var datagramResponses: [Data]
     private var storedExports: [RuntimeTUICExporterRequest] = []
     private var storedBidirectionalPayloads: [Data] = []
     private var storedUnidirectionalPayloads: [Data] = []
+    private var storedDatagramPayloads: [Data] = []
 
-    init(exportedToken: Data, bidirectionalStream: RecordingRuntimeByteStream, unidirectionalStream: RecordingRuntimeByteStream) {
+    init(exportedToken: Data, bidirectionalStream: RecordingRuntimeByteStream, unidirectionalStream: RecordingRuntimeByteStream, datagramResponses: [Data] = []) {
         self.exportedToken = exportedToken
         self.bidirectionalStream = bidirectionalStream
         self.unidirectionalStream = unidirectionalStream
+        self.datagramResponses = datagramResponses
     }
 
     var exports: [RuntimeTUICExporterRequest] { storedExports }
     var bidirectionalPayloads: [Data] { storedBidirectionalPayloads }
     var unidirectionalPayloads: [Data] { storedUnidirectionalPayloads }
+    var datagramPayloads: [Data] { storedDatagramPayloads }
 
     func exportKeyingMaterial(label: Data, context: Data, length: Int) async throws -> Data {
         storedExports.append(RuntimeTUICExporterRequest(label: label, context: context, length: length))
@@ -581,6 +626,11 @@ private final class RecordingRuntimeTUICQUICSession: TUICQUICSession, @unchecked
     func openBidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream {
         storedBidirectionalPayloads.append(initialPayload)
         return bidirectionalStream
+    }
+
+    func sendDatagram(_ payload: Data) async throws -> Data? {
+        storedDatagramPayloads.append(payload)
+        return datagramResponses.isEmpty ? nil : datagramResponses.removeFirst()
     }
 }
 
@@ -662,7 +712,7 @@ private func makeHysteria2Node() -> ProxyNode {
     return ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .hysteria2, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .quic, tls: tls, udpPolicy: .disabled)
 }
 
-private func makeTUICNode() -> ProxyNode {
+private func makeTUICNode(udpPolicy: UDPPolicy = .disabled) -> ProxyNode {
     let tls = TLSOptions(enabled: true, serverName: "tuic.example.com", allowInsecure: false, alpn: ["h3"], fingerprint: nil, reality: nil)
-    return ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .tuic, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .quic, tls: tls, udpPolicy: .disabled)
+    return ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .tuic, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .quic, tls: tls, udpPolicy: udpPolicy)
 }

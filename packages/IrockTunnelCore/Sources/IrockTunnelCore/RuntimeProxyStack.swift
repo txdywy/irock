@@ -397,7 +397,7 @@ public extension TunnelRuntimeConfiguration {
         routingEngine: RoutingEngine,
         sessionDialer: SessionDialer,
         credentialResolver: CredentialResolver,
-        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        udpDatagramForwarder: (any UDPDatagramForwarder)? = nil,
         batchLimit: Int,
         flowLimit: Int
     ) -> TunnelRuntimeConfiguration {
@@ -405,7 +405,7 @@ public extension TunnelRuntimeConfiguration {
             snapshot: snapshot,
             routingEngine: routingEngine,
             proxyAdapterRegistry: RuntimeProxyStack.tuicQUIC(sessionDialer: sessionDialer, credentialResolver: credentialResolver),
-            udpDatagramForwarder: udpDatagramForwarder,
+            udpDatagramForwarder: udpDatagramForwarder ?? TUICQUICUDPDatagramForwarder(sessionDialer: sessionDialer, credentialResolver: credentialResolver),
             batchLimit: batchLimit,
             flowLimit: flowLimit
         )
@@ -415,14 +415,14 @@ public extension TunnelRuntimeConfiguration {
         snapshot: RuntimeSnapshot,
         sessionDialer: SessionDialer,
         credentialResolver: CredentialResolver,
-        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        udpDatagramForwarder: (any UDPDatagramForwarder)? = nil,
         batchLimit: Int,
         flowLimit: Int
     ) throws -> TunnelRuntimeConfiguration {
         try TunnelRuntimeConfiguration(
             snapshot: snapshot,
             proxyAdapterRegistry: RuntimeProxyStack.tuicQUIC(sessionDialer: sessionDialer, credentialResolver: credentialResolver),
-            udpDatagramForwarder: udpDatagramForwarder,
+            udpDatagramForwarder: udpDatagramForwarder ?? TUICQUICUDPDatagramForwarder(sessionDialer: sessionDialer, credentialResolver: credentialResolver),
             batchLimit: batchLimit,
             flowLimit: flowLimit
         )

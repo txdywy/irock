@@ -1227,6 +1227,44 @@ final class IrockNativeHysteria2Tests: XCTestCase {
         XCTAssertEqual(requestBytesWritten, 3)
     }
 
+    func testNativeSessionPreservesQUICDatagramMessageBoundaries() {
+        var nativeSession: irock_hy2_session_ref?
+        XCTAssertEqual(irock_hy2_session_create_for_testing(1, &nativeSession), IROCK_HY2_OK)
+        defer { irock_hy2_session_free(nativeSession) }
+        let first = Data("first".utf8)
+        let second = Data("second".utf8)
+        XCTAssertEqual(first.withUnsafeBytes { buffer in
+            irock_hy2_session_receive_quic_datagram_for_testing(nativeSession, buffer.bindMemory(to: UInt8.self).baseAddress, Int32(first.count))
+        }, IROCK_HY2_OK)
+        XCTAssertEqual(second.withUnsafeBytes { buffer in
+            irock_hy2_session_receive_quic_datagram_for_testing(nativeSession, buffer.bindMemory(to: UInt8.self).baseAddress, Int32(second.count))
+        }, IROCK_HY2_OK)
+
+        var buffer = [UInt8](repeating: 0, count: 16)
+        var bytesRead: Int32 = -1
+        XCTAssertEqual(irock_hy2_session_receive_quic_datagram(nativeSession, &buffer, Int32(buffer.count), &bytesRead), IROCK_HY2_OK)
+        XCTAssertEqual(Data(buffer.prefix(Int(bytesRead))), first)
+        XCTAssertEqual(irock_hy2_session_receive_quic_datagram(nativeSession, &buffer, Int32(buffer.count), &bytesRead), IROCK_HY2_OK)
+        XCTAssertEqual(Data(buffer.prefix(Int(bytesRead))), second)
+        XCTAssertEqual(irock_hy2_session_receive_quic_datagram(nativeSession, &buffer, Int32(buffer.count), &bytesRead), IROCK_HY2_BLOCKED)
+        XCTAssertEqual(bytesRead, 0)
+    }
+
+    func testNativeSessionSendDatagramRequiresActiveQUICConnection() async throws {
+        var nativeSession: irock_hy2_session_ref?
+        XCTAssertEqual(irock_hy2_session_create_for_testing(1, &nativeSession), IROCK_HY2_OK)
+        let session = NativeHysteria2Session(nativeSession: nativeSession!)
+
+        do {
+            _ = try await session.sendDatagram(Data("datagram-request".utf8), responseMaxLength: 64)
+            XCTFail("Expected blocked datagram send")
+        } catch let error as NativeHysteria2Error {
+            XCTAssertEqual(error, .blocked("native hysteria2 datagram send blocked"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testNativeRawByteStreamReadsPayloadWithoutHysteria2TCPDrain() async throws {
         var nativeSession: irock_hy2_session_ref?
         XCTAssertEqual(irock_hy2_session_create_for_testing(1, &nativeSession), IROCK_HY2_OK)

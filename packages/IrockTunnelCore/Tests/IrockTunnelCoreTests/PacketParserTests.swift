@@ -97,7 +97,7 @@ final class PacketParserTests: XCTestCase {
         )
         let parsed = try PacketParser().parse(request)
 
-        let response = Packet.ipv4UDPResponse(id: "udp-response", request: parsed, payload: [0x03, 0x04, 0x05])
+        let response = Packet.udpResponse(id: "udp-response", request: parsed, payload: [0x03, 0x04, 0x05])
         let responseParsed = try PacketParser().parse(response)
 
         XCTAssertEqual(responseParsed.sourceIP, .v4(1, 1, 1, 1))
@@ -107,6 +107,47 @@ final class PacketParserTests: XCTestCase {
         XCTAssertEqual(responseParsed.udpPayload, [0x03, 0x04, 0x05])
         XCTAssertEqual(ipv4HeaderChecksum(response.bytes), 0)
         XCTAssertNotEqual(response.bytes[10...11], [0, 0])
+    }
+
+    func testParsesIPv6UDPPayloadBytes() throws {
+        let packet = Packet.ipv6UDP(
+            id: "udp-v6",
+            source: .v6("2001:db8::1"),
+            destination: .v6("2606:4700:4700::1111"),
+            sourcePort: 55_555,
+            destinationPort: 53,
+            payload: [0xde, 0xad, 0xbe, 0xef]
+        )
+
+        let parsed = try PacketParser().parse(packet)
+
+        XCTAssertEqual(parsed.sourceIP, .v6("2001:db8::1"))
+        XCTAssertEqual(parsed.destinationIP, .v6("2606:4700:4700::1111"))
+        XCTAssertEqual(parsed.transportProtocol, .udp)
+        XCTAssertEqual(parsed.sourcePort, 55_555)
+        XCTAssertEqual(parsed.destinationPort, 53)
+        XCTAssertEqual(parsed.udpPayload, [0xde, 0xad, 0xbe, 0xef])
+    }
+
+    func testBuildsIPv6UDPResponsePacketFromParsedRequest() throws {
+        let request = Packet.ipv6UDP(
+            id: "udp-v6-request",
+            source: .v6("2001:db8::1"),
+            destination: .v6("2606:4700:4700::1111"),
+            sourcePort: 55_555,
+            destinationPort: 53,
+            payload: [0x01, 0x02]
+        )
+        let parsed = try PacketParser().parse(request)
+
+        let response = Packet.udpResponse(id: "udp-v6-response", request: parsed, payload: [0x03, 0x04, 0x05])
+        let responseParsed = try PacketParser().parse(response)
+
+        XCTAssertEqual(responseParsed.sourceIP, .v6("2606:4700:4700::1111"))
+        XCTAssertEqual(responseParsed.destinationIP, .v6("2001:db8::1"))
+        XCTAssertEqual(responseParsed.sourcePort, 53)
+        XCTAssertEqual(responseParsed.destinationPort, 55_555)
+        XCTAssertEqual(responseParsed.udpPayload, [0x03, 0x04, 0x05])
     }
 
     func testRejectsTooShortPacket() {
@@ -119,7 +160,7 @@ final class PacketParserTests: XCTestCase {
 
     func testRejectsUnsupportedIPVersion() {
         var bytes = Packet.ipv4TCP(id: "bad-version", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 1_000, destinationPort: 443).bytes
-        bytes[0] = 0x60
+        bytes[0] = 0x70
 
         XCTAssertThrowsError(try PacketParser().parse(Packet(id: "bad-version", bytes: bytes))) { error in
             XCTAssertEqual(error as? PacketParseError, .unsupportedIPVersion)

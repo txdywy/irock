@@ -120,6 +120,12 @@ irock_hy2_result irock_hy2_session_export_keying_material(irock_hy2_session_ref 
 
 irock_hy2_result irock_hy2_session_open_raw_quic_stream(irock_hy2_session_ref session, int bidirectional, const uint8_t *initial_payload, int initial_payload_length, irock_hy2_stream_ref *stream);
 
+irock_hy2_result irock_hy2_session_send_quic_datagram(irock_hy2_session_ref session, const uint8_t *bytes, int byte_count, int *bytes_written);
+
+irock_hy2_result irock_hy2_session_receive_quic_datagram(irock_hy2_session_ref session, uint8_t *buffer, int buffer_length, int *bytes_read);
+
+irock_hy2_result irock_hy2_session_receive_quic_datagram_for_testing(irock_hy2_session_ref session, const uint8_t *bytes, int byte_count);
+
 irock_hy2_result irock_hy2_session_create_tcp_stream_for_testing(irock_hy2_session_ref session, int64_t stream_id, irock_hy2_stream_ref *stream);
 
 irock_hy2_result irock_hy2_session_create_raw_quic_stream_for_testing(irock_hy2_session_ref session, int64_t stream_id, const uint8_t *initial_payload, int initial_payload_length, irock_hy2_stream_ref *stream);

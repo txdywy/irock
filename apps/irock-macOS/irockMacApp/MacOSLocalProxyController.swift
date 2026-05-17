@@ -44,6 +44,10 @@ private struct NativeTUICQUICSession: TUICQUICSession {
     func openBidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream {
         NativeTransportByteStream(stream: try await session.openRawBidirectionalStream(initialPayload: initialPayload))
     }
+
+    func sendDatagram(_ payload: Data) async throws -> Data? {
+        try await session.sendDatagram(payload)
+    }
 }
 
 private struct NativeTUICQUICSessionDialer: TUICQUICSessionDialer {

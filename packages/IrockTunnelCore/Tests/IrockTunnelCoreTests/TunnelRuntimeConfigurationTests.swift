@@ -144,7 +144,7 @@ final class TunnelRuntimeConfigurationTests: XCTestCase {
         XCTAssertEqual(try ShadowsocksUDPDatagramRequest.decryptPayload(Data(try XCTUnwrap(client.requests.first?.payload)), credential: "aes-256-gcm:pass"), Data([0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x35, 0x01, 0x02]))
     }
 
-    private func makeNode(protocolType: ProxyProtocolType = .trojan, udpPolicy: UDPPolicy = .disabled) -> ProxyNode {
+    private func makeNode(protocolType: ProxyProtocolType = .trojan, transport: TransportType = .tcp, udpPolicy: UDPPolicy = .disabled) -> ProxyNode {
         ProxyNode(
             id: NodeID(rawValue: "node-1"),
             name: "Demo",
@@ -152,7 +152,7 @@ final class TunnelRuntimeConfigurationTests: XCTestCase {
             serverHost: "example.com",
             serverPort: 443,
             credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"),
-            transport: .tcp,
+            transport: transport,
             tls: .disabled,
             udpPolicy: udpPolicy
         )

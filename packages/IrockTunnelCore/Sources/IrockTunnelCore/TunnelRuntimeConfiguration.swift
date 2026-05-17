@@ -98,6 +98,91 @@ public struct ProtocolUDPDatagramForwarder<Client: UDPDatagramClient>: UDPDatagr
     }
 }
 
+public struct TUICQUICUDPDatagramForwarder<SessionDialer: TUICQUICSessionDialer, CredentialResolver: ProxyCredentialResolver>: UDPDatagramForwarder {
+    private let sessionDialer: SessionDialer
+    private let credentialResolver: CredentialResolver
+    private let state = TUICQUICUDPForwarderState()
+
+    public init(sessionDialer: SessionDialer, credentialResolver: CredentialResolver) {
+        self.sessionDialer = sessionDialer
+        self.credentialResolver = credentialResolver
+    }
+
+    public func forward(_ request: UDPDatagramForwardingRequest) async throws -> [UInt8]? {
+        guard request.mode == .proxy else { return nil }
+        guard request.node.protocolType == .tuic else { return nil }
+        let credential = try credentialResolver.credential(for: request.node.credentialReference)
+        let associationID = await state.associationID(for: request.flowKey)
+        let packetID = await state.nextPacketID(for: request.flowKey)
+        let destination = destination(for: request.parsedPacket)
+        let command = try TUICPacketCommand(associationID: associationID, packetID: packetID, destination: destination, payload: Data(request.payload))
+        let session = try await authenticatedSession(for: request, credential: credential, associationID: associationID, packetID: packetID)
+        guard let response = try await session.sendDatagram(command.bytes) else { return nil }
+        let responseCommand = try TUICPacketCommand.parse(response)
+        guard responseCommand.associationID == associationID else {
+            throw ProxyProtocolError.invalidConfiguration("tuic udp response association mismatch")
+        }
+        return responseCommand.payload.map { $0 }
+    }
+
+    private func authenticatedSession(for request: UDPDatagramForwardingRequest, credential: String, associationID: UInt16, packetID: UInt16) async throws -> any TUICQUICSession {
+        if let session = await state.session(for: request.flowKey) {
+            return session
+        }
+        let session = try await TUICSessionAuthenticator(sessionDialer: sessionDialer).openAuthenticatedSession(
+            node: request.node,
+            credential: credential,
+            metadata: [
+                "tuicUDPRelay": "quic",
+                "tuicAssociationID": "\(associationID)",
+                "tuicPacketID": "\(packetID)"
+            ]
+        )
+        await state.setSession(session, for: request.flowKey)
+        return session
+    }
+
+    private func destination(for packet: ParsedPacket) -> ProxyDestination {
+        switch packet.destinationIP {
+        case .v4:
+            return .ipv4(packet.destinationIP.stringValue, port: packet.destinationPort)
+        case .v6:
+            return .ipv6(packet.destinationIP.stringValue, port: packet.destinationPort)
+        }
+    }
+}
+
+private actor TUICQUICUDPForwarderState {
+    private var sessions: [FlowKey: any TUICQUICSession] = [:]
+    private var associationIDs: [FlowKey: UInt16] = [:]
+    private var packetIDs: [FlowKey: UInt16] = [:]
+    private var nextAssociationID: UInt16 = 1
+
+    func session(for flowKey: FlowKey) -> (any TUICQUICSession)? {
+        sessions[flowKey]
+    }
+
+    func setSession(_ session: any TUICQUICSession, for flowKey: FlowKey) {
+        sessions[flowKey] = session
+    }
+
+    func associationID(for flowKey: FlowKey) -> UInt16 {
+        if let associationID = associationIDs[flowKey] {
+            return associationID
+        }
+        let associationID = nextAssociationID
+        associationIDs[flowKey] = associationID
+        nextAssociationID = nextAssociationID == UInt16.max ? 1 : nextAssociationID + 1
+        return associationID
+    }
+
+    func nextPacketID(for flowKey: FlowKey) -> UInt16 {
+        let packetID = packetIDs[flowKey, default: 1]
+        packetIDs[flowKey] = packetID == UInt16.max ? 1 : packetID + 1
+        return packetID
+    }
+}
+
 public struct NoopUDPDatagramForwarder: UDPDatagramForwarder {
     public init() {}
 

@@ -12,6 +12,45 @@ final class IrockPerformanceKitTests: XCTestCase {
         XCTAssertEqual(budget.maximumTunnelMemoryMB, 50)
     }
 
+    func testPerformanceBudgetAssessmentReportsPassAndFailures() {
+        let passing = PerformanceMeasurement(
+            throughputMbps: 750,
+            addedLatencyMs: 6,
+            tunnelMemoryMB: 42
+        )
+        let failing = PerformanceMeasurement(
+            throughputMbps: 120,
+            addedLatencyMs: 18,
+            tunnelMemoryMB: 64
+        )
+
+        let passingAssessment = PerformanceBudget.alphaFlagship.assess(passing)
+        let failingAssessment = PerformanceBudget.alphaFlagship.assess(failing)
+
+        XCTAssertTrue(passingAssessment.passed)
+        XCTAssertEqual(passingAssessment.failures, [])
+        XCTAssertFalse(failingAssessment.passed)
+        XCTAssertEqual(failingAssessment.failures, [.throughputBelowMinimum, .latencyAboveMaximum, .memoryAboveMaximum])
+    }
+
+    func testRuntimePerformanceEvidenceConvertsPacketTunnelStatsIntoBudgetMeasurement() {
+        let evidence = RuntimePerformanceEvidence(
+            bytesProcessed: 150_000_000,
+            elapsedNanoseconds: 1_000_000_000,
+            baselineLatencyMs: 2,
+            observedLatencyMs: 7,
+            tunnelMemoryMB: 44
+        )
+
+        let measurement = PerformanceMeasurement(runtimeEvidence: evidence)
+        let assessment = PerformanceBudget.alphaFlagship.assess(runtimeEvidence: evidence)
+
+        XCTAssertEqual(measurement.throughputMbps, 1_200)
+        XCTAssertEqual(measurement.addedLatencyMs, 5)
+        XCTAssertEqual(measurement.tunnelMemoryMB, 44)
+        XCTAssertTrue(assessment.passed)
+    }
+
     func testRoutingLookupPerformanceBudgetRecordsHotPathEvidence() {
         let rules = (0..<128).flatMap { index in
             [

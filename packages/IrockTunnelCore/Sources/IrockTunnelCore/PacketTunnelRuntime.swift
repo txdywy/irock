@@ -197,7 +197,7 @@ public struct PacketTunnelRuntime<Reader: PacketReader, Writer: PacketWriter>: S
                     guard let payload = try await configuration.udpDatagramForwarder.forward(request) else {
                         return (index, nil)
                     }
-                    return (index, Packet.ipv4UDPResponse(id: "\(result.packet.id)-udp-response", request: request.parsedPacket, payload: payload).bytes)
+                    return (index, Packet.udpResponse(id: "\(result.packet.id)-udp-response", request: request.parsedPacket, payload: payload).bytes)
                 }
             }
 

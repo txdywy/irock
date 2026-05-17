@@ -85,6 +85,13 @@ static void irock_hy2_session_release_fields(struct irock_hy2_session *session) 
     irock_hy2_stream_release(stream);
     free(stream);
   }
+  while (session->datagram_head) {
+    struct irock_hy2_datagram *datagram = session->datagram_head;
+    session->datagram_head = datagram->next;
+    free(datagram->bytes);
+    free(datagram);
+  }
+  session->datagram_tail = 0;
 
   if (session->udp_fd >= 0 && session->owns_udp_fd) {
     close(session->udp_fd);
@@ -319,6 +326,9 @@ irock_hy2_result irock_hy2_session_create_for_testing(int authenticated, irock_h
   created_session->http3_open_stream_count = 0;
   created_session->has_quic_path = 0;
   created_session->last_quic_bytes_written = 0;
+  created_session->next_datagram_id = 1;
+  created_session->datagram_head = 0;
+  created_session->datagram_tail = 0;
   created_session->streams = 0;
   *session = created_session;
   return IROCK_HY2_OK;
@@ -359,6 +369,9 @@ irock_hy2_result irock_hy2_session_create_configured_for_testing(const irock_hy2
   created_session->http3_open_stream_count = 0;
   created_session->has_quic_path = 0;
   created_session->last_quic_bytes_written = 0;
+  created_session->next_datagram_id = 1;
+  created_session->datagram_head = 0;
+  created_session->datagram_tail = 0;
   created_session->streams = 0;
   if (!created_session->server_host || !created_session->server_host[0] || !created_session->server_name || !created_session->server_name[0] || !created_session->alpn || !created_session->alpn[0]) {
     irock_hy2_session_release_fields(created_session);

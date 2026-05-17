@@ -608,6 +608,47 @@ final class PacketTunnelRuntimeTests: XCTestCase {
         XCTAssertEqual(response.udpPayload, [0x03, 0x04, 0x05])
     }
 
+    func testRuntimeForwardsDirectIPv6UDPDatagramAndWritesIPv6ResponsePacket() async throws {
+        let udpPacket = Packet.ipv6UDP(
+            id: "udp-v6-direct",
+            source: .v6("2001:db8::1"),
+            destination: .v6("2606:4700:4700::1111"),
+            sourcePort: 55_555,
+            destinationPort: 53,
+            payload: [0x01, 0x02]
+        )
+        let forwarder = RuntimeRecordingUDPDatagramForwarder(responsePayload: [0x03, 0x04, 0x05])
+        let reader = InMemoryPacketReader(packets: [udpPacket])
+        let writer = InMemoryPacketWriter()
+        let runtime = PacketTunnelRuntime(
+            reader: reader,
+            writer: writer,
+            configuration: TunnelRuntimeConfiguration(
+                snapshot: snapshot(routeMode: .direct),
+                routingEngine: RoutingEngine(rules: [.final(.direct)]),
+                udpDatagramForwarder: forwarder,
+                batchLimit: 16,
+                flowLimit: 32
+            )
+        )
+
+        let summary = try await runtime.runOnce()
+
+        XCTAssertEqual(summary.readCount, 1)
+        XCTAssertEqual(summary.writtenCount, 1)
+        XCTAssertEqual(summary.proxyConnectCount, 0)
+        XCTAssertEqual(forwarder.requests.count, 1)
+        XCTAssertEqual(forwarder.requests.first?.mode, .direct)
+        XCTAssertEqual(forwarder.requests.first?.payload, [0x01, 0x02])
+        let responseBytes = try XCTUnwrap(writer.writtenResults.first?.responsePacketBytes)
+        let response = try PacketParser().parse(Packet(id: "udp-v6-response", bytes: responseBytes))
+        XCTAssertEqual(response.sourceIP, .v6("2606:4700:4700::1111"))
+        XCTAssertEqual(response.destinationIP, .v6("2001:db8::1"))
+        XCTAssertEqual(response.sourcePort, 53)
+        XCTAssertEqual(response.destinationPort, 55_555)
+        XCTAssertEqual(response.udpPayload, [0x03, 0x04, 0x05])
+    }
+
     func testRuntimeForwardsProxyUDPDatagramWithoutOpeningStreamConnection() async throws {
         let udpPacket = Packet.ipv4UDP(
             id: "udp-proxy",

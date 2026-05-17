@@ -14,9 +14,13 @@ final class BenchmarkRunnerTests: XCTestCase {
         XCTAssertGreaterThan(report.elapsedNanoseconds, 0)
         XCTAssertGreaterThan(report.packetsPerSecond, 1_000)
         XCTAssertLessThan(report.averageNanosecondsPerPacket, 2_000_000)
+        XCTAssertNil(report.budgetAssessment)
         XCTAssertTrue(report.renderedSummary.contains("runtime-packet-batch"))
         XCTAssertTrue(report.renderedSummary.contains("packets=2048"))
         XCTAssertTrue(report.renderedSummary.contains("pps="))
+        XCTAssertTrue(report.renderedSummary.contains("budget=evidence-incomplete"))
+        XCTAssertFalse(report.renderedSummary.contains("budget=pass"))
+        XCTAssertFalse(report.renderedSummary.contains("budget=fail"))
     }
 
     func testRuntimePacketBatchBenchmarkRejectsNegativePacketCount() async {

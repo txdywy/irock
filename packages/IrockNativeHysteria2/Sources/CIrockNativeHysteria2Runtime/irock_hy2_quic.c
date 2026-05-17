@@ -38,6 +38,42 @@ static int irock_hy2_get_path_challenge_data(ngtcp2_conn *conn, ngtcp2_path_chal
   return 0;
 }
 
+static irock_hy2_result irock_hy2_session_enqueue_quic_datagram(struct irock_hy2_session *session, const uint8_t *bytes, int byte_count) {
+  if (!session || byte_count < 0 || (byte_count > 0 && !bytes)) {
+    return IROCK_HY2_INVALID_CONFIGURATION;
+  }
+
+  struct irock_hy2_datagram *datagram = malloc(sizeof(struct irock_hy2_datagram));
+  if (!datagram) {
+    return IROCK_HY2_NETWORK_FAILED;
+  }
+  datagram->bytes = 0;
+  datagram->length = byte_count;
+  datagram->next = 0;
+  if (byte_count > 0) {
+    datagram->bytes = malloc((size_t)byte_count);
+    if (!datagram->bytes) {
+      free(datagram);
+      return IROCK_HY2_NETWORK_FAILED;
+    }
+    memcpy(datagram->bytes, bytes, (size_t)byte_count);
+  }
+  if (session->datagram_tail) {
+    session->datagram_tail->next = datagram;
+  } else {
+    session->datagram_head = datagram;
+  }
+  session->datagram_tail = datagram;
+  return IROCK_HY2_OK;
+}
+
+static int irock_hy2_recv_datagram(ngtcp2_conn *conn, uint32_t flags, const uint8_t *data, size_t datalen, void *user_data) {
+  (void)conn;
+  (void)flags;
+  irock_hy2_result result = irock_hy2_session_enqueue_quic_datagram(user_data, data, (int)datalen);
+  return result == IROCK_HY2_OK ? 0 : NGTCP2_ERR_CALLBACK_FAILURE;
+}
+
 static int irock_hy2_recv_stream_data(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id, uint64_t offset, const uint8_t *data, size_t datalen, void *user_data, void *stream_user_data) {
   (void)conn;
   (void)offset;
@@ -120,6 +156,7 @@ irock_hy2_result irock_hy2_session_initialize_quic_for_testing(irock_hy2_session
   callbacks.hp_mask = ngtcp2_crypto_hp_mask_cb;
   callbacks.recv_retry = ngtcp2_crypto_recv_retry_cb;
   callbacks.recv_stream_data = irock_hy2_recv_stream_data;
+  callbacks.recv_datagram = irock_hy2_recv_datagram;
   callbacks.rand = irock_hy2_rand;
   callbacks.update_key = ngtcp2_crypto_update_key_cb;
   callbacks.delete_crypto_aead_ctx = ngtcp2_crypto_delete_crypto_aead_ctx_cb;
@@ -136,6 +173,7 @@ irock_hy2_result irock_hy2_session_initialize_quic_for_testing(irock_hy2_session
   params.initial_max_stream_data_bidi_remote = 256 * 1024;
   params.initial_max_streams_bidi = 100;
   params.initial_max_streams_uni = 3;
+  params.max_datagram_frame_size = 65535;
 
   ngtcp2_conn *conn = 0;
   int result = ngtcp2_conn_client_new(&conn, &dcid, &scid, &path_storage.path, NGTCP2_PROTO_VER_V1, &callbacks, &settings, &params, 0, hy2_session);
@@ -214,6 +252,91 @@ irock_hy2_result irock_hy2_session_write_quic_initial_for_testing(irock_hy2_sess
   hy2_session->last_quic_bytes_written = (int)sent_length;
   *bytes_written = hy2_session->last_quic_bytes_written;
   return IROCK_HY2_OK;
+}
+
+irock_hy2_result irock_hy2_session_send_quic_datagram(irock_hy2_session_ref session, const uint8_t *bytes, int byte_count, int *bytes_written) {
+  if (bytes_written) {
+    *bytes_written = 0;
+  }
+  if (!session || !bytes_written || byte_count < 0 || (byte_count > 0 && !bytes)) {
+    return IROCK_HY2_INVALID_CONFIGURATION;
+  }
+
+  struct irock_hy2_session *hy2_session = session;
+  if (hy2_session->udp_fd < 0 || !hy2_session->quic_conn) {
+    return IROCK_HY2_BLOCKED;
+  }
+
+  ngtcp2_path_storage path_storage;
+  irock_hy2_result path_result = irock_hy2_copy_connected_path(hy2_session->udp_fd, &path_storage);
+  if (path_result != IROCK_HY2_OK) {
+    return path_result;
+  }
+
+  uint8_t packet[NGTCP2_MAX_UDP_PAYLOAD_SIZE];
+  ngtcp2_pkt_info packet_info;
+  memset(&packet_info, 0, sizeof(packet_info));
+  int accepted = 0;
+  ngtcp2_ssize packet_length = ngtcp2_conn_write_datagram(
+    hy2_session->quic_conn,
+    &path_storage.path,
+    &packet_info,
+    packet,
+    sizeof(packet),
+    &accepted,
+    NGTCP2_WRITE_DATAGRAM_FLAG_NONE,
+    hy2_session->next_datagram_id++,
+    bytes,
+    (size_t)byte_count,
+    irock_hy2_timestamp()
+  );
+  if (packet_length == 0 || !accepted) {
+    return IROCK_HY2_BLOCKED;
+  }
+  if (packet_length < 0) {
+    irock_hy2_set_last_error_for_testing("quic_datagram_write", (int)packet_length);
+    return IROCK_HY2_NETWORK_FAILED;
+  }
+
+  ssize_t sent_length = send(hy2_session->udp_fd, packet, (size_t)packet_length, 0);
+  if (sent_length != packet_length) {
+    return IROCK_HY2_NETWORK_FAILED;
+  }
+  *bytes_written = byte_count;
+  return IROCK_HY2_OK;
+}
+
+irock_hy2_result irock_hy2_session_receive_quic_datagram(irock_hy2_session_ref session, uint8_t *buffer, int buffer_length, int *bytes_read) {
+  if (bytes_read) {
+    *bytes_read = 0;
+  }
+  if (!session || !buffer || buffer_length <= 0 || !bytes_read) {
+    return IROCK_HY2_INVALID_CONFIGURATION;
+  }
+
+  struct irock_hy2_session *hy2_session = session;
+  if (!hy2_session->datagram_head) {
+    return IROCK_HY2_BLOCKED;
+  }
+  struct irock_hy2_datagram *datagram = hy2_session->datagram_head;
+  if (datagram->length > buffer_length) {
+    return IROCK_HY2_INVALID_CONFIGURATION;
+  }
+  if (datagram->length > 0) {
+    memcpy(buffer, datagram->bytes, (size_t)datagram->length);
+  }
+  *bytes_read = datagram->length;
+  hy2_session->datagram_head = datagram->next;
+  if (!hy2_session->datagram_head) {
+    hy2_session->datagram_tail = 0;
+  }
+  free(datagram->bytes);
+  free(datagram);
+  return IROCK_HY2_OK;
+}
+
+irock_hy2_result irock_hy2_session_receive_quic_datagram_for_testing(irock_hy2_session_ref session, const uint8_t *bytes, int byte_count) {
+  return irock_hy2_session_enqueue_quic_datagram(session, bytes, byte_count);
 }
 
 irock_hy2_result irock_hy2_session_receive_quic_for_testing(irock_hy2_session_ref session, int *packets_read) {

@@ -112,7 +112,7 @@ public struct TunnelRuntimeBootstrap: Sendable {
         logStore: RuntimeLogStore,
         sessionDialer: SessionDialer,
         credentialResolver: CredentialResolver,
-        udpDatagramForwarder: any UDPDatagramForwarder = NoopUDPDatagramForwarder(),
+        udpDatagramForwarder: (any UDPDatagramForwarder)? = nil,
         batchLimit: Int,
         flowLimit: Int
     ) throws -> PacketTunnelRuntime<Reader, Writer> {

@@ -628,6 +628,24 @@ final class IrockProtocolsTests: XCTestCase {
         XCTAssertFalse(fqdn.bytes.starts(with: Data([0x54, 0x55, 0x49, 0x43])))
     }
 
+    func testTUICPacketCommandBuildsAndParsesOfficialV5UDPFrame() throws {
+        let command = try TUICPacketCommand(
+            associationID: 0x0102,
+            packetID: 0x0304,
+            destination: .host("apple.com", port: 53),
+            payload: Data([0xaa, 0xbb, 0xcc])
+        )
+
+        XCTAssertEqual(command.bytes, Data([0x05, 0x02, 0x01, 0x02, 0x03, 0x04, 0x01, 0x00, 0x00, 0x03, 0x00, 0x09]) + Data("apple.com".utf8) + Data([0x00, 0x35, 0xaa, 0xbb, 0xcc]))
+        XCTAssertEqual(command.metadata["tuicAssociationID"], "258")
+        XCTAssertEqual(command.metadata["tuicPacketID"], "772")
+
+        let parsed = try TUICPacketCommand.parse(command.bytes)
+
+        XCTAssertEqual(parsed.destination, .host("apple.com", port: 53))
+        XCTAssertEqual(parsed.payload, Data([0xaa, 0xbb, 0xcc]))
+    }
+
     func testTUICStreamOpenerAuthenticatesWithTLSExporterBeforeConnectStream() async throws {
         let token = Data((0..<32).map(UInt8.init))
         let bidiStream = RecordingProtocolByteStream(reads: [])
@@ -1971,6 +1989,8 @@ private final class RecordingTUICQUICSession: TUICQUICSession, @unchecked Sendab
         storedBidirectionalPayloads.append(initialPayload)
         return bidirectionalStream
     }
+
+    func sendDatagram(_ payload: Data) async throws -> Data? { nil }
 }
 
 private final class DeinitFlag: @unchecked Sendable {
@@ -2009,6 +2029,8 @@ private final class TransientTUICQUICSession: TUICQUICSession, @unchecked Sendab
     func openBidirectionalStream(initialPayload: Data) async throws -> any TransportByteStream {
         TransientProtocolByteStream(deinitFlag: deinitFlag)
     }
+
+    func sendDatagram(_ payload: Data) async throws -> Data? { nil }
 }
 
 private final class TransientProtocolByteStream: TransportByteStream, @unchecked Sendable {

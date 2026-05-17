@@ -14,6 +14,12 @@ typedef struct nghttp3_conn nghttp3_conn;
 
 struct irock_hy2_session;
 
+struct irock_hy2_datagram {
+  uint8_t *bytes;
+  int length;
+  struct irock_hy2_datagram *next;
+};
+
 struct irock_hy2_stream {
   struct irock_hy2_session *session;
   int64_t stream_id;
@@ -60,6 +66,9 @@ struct irock_hy2_session {
   int http3_open_stream_count;
   int has_quic_path;
   int last_quic_bytes_written;
+  uint64_t next_datagram_id;
+  struct irock_hy2_datagram *datagram_head;
+  struct irock_hy2_datagram *datagram_tail;
   struct irock_hy2_stream *streams;
 };
 

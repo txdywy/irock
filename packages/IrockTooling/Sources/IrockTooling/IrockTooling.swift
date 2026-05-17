@@ -1,5 +1,6 @@
 import Foundation
 import IrockCore
+import IrockPerformanceKit
 import IrockRouting
 import IrockTunnelCore
 
@@ -13,9 +14,11 @@ public struct BenchmarkReport: Equatable, Sendable {
     public let elapsedNanoseconds: UInt64
     public let averageNanosecondsPerPacket: UInt64
     public let packetsPerSecond: UInt64
+    public let budgetAssessment: PerformanceBudgetAssessment?
 
     public var renderedSummary: String {
-        "\(name) packets=\(packetCount) written=\(writtenCount) dropped=\(dropCount) elapsedNs=\(elapsedNanoseconds) avgNs=\(averageNanosecondsPerPacket) pps=\(packetsPerSecond)"
+        let budgetSummary = budgetAssessment.map { $0.passed ? "pass" : "fail" } ?? "evidence-incomplete"
+        return "\(name) packets=\(packetCount) written=\(writtenCount) dropped=\(dropCount) elapsedNs=\(elapsedNanoseconds) avgNs=\(averageNanosecondsPerPacket) pps=\(packetsPerSecond) budget=\(budgetSummary)"
     }
 }
 
@@ -155,7 +158,8 @@ public struct BenchmarkRunner: Sendable {
             dropCount: summary.performanceEvidence.dropCount,
             elapsedNanoseconds: summary.performanceEvidence.elapsedNanoseconds,
             averageNanosecondsPerPacket: summary.performanceEvidence.averageNanosecondsPerPacket,
-            packetsPerSecond: summary.performanceEvidence.packetsPerSecond
+            packetsPerSecond: summary.performanceEvidence.packetsPerSecond,
+            budgetAssessment: nil
         )
     }
 
