@@ -1,0 +1,67 @@
+name: Package Apps
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  package:
+    name: Build unsigned app artifacts
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install native protocol dependencies
+        run: brew install libngtcp2 libnghttp3 openssl@3
+
+      - name: Run SwiftPM tests
+        run: swift test
+
+      - name: Build unsigned macOS app bundle
+        run: apps/irock-macOS/build-unsigned-app.sh
+
+      - name: Package unsigned macOS app artifact
+        run: |
+          mkdir -p build/artifacts
+          ditto -c -k --keepParent apps/irock-macOS/build/unsigned/irockMacApp.app build/artifacts/irockMacApp-unsigned.zip
+
+      - name: Build iOS simulator app bundle
+        run: |
+          xcodebuild -project apps/irock-iOS/irock.xcodeproj \
+            -scheme irockApp \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/ios-simulator-derived-data \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package iOS simulator app artifact
+        run: |
+          IOS_APP="build/ios-simulator-derived-data/Build/Products/Debug-iphonesimulator/irockApp.app"
+          test -d "$IOS_APP"
+          mkdir -p build/artifacts
+          ditto -c -k --keepParent "$IOS_APP" build/artifacts/irockApp-ios-simulator.zip
+
+      - name: Upload unsigned macOS app
+        uses: actions/upload-artifact@v4
+        with:
+          name: irock-macos-unsigned-app
+          path: build/artifacts/irockMacApp-unsigned.zip
+          if-no-files-found: error
+
+      - name: Upload iOS simulator app
+        uses: actions/upload-artifact@v4
+        with:
+          name: irock-ios-simulator-app
+          path: build/artifacts/irockApp-ios-simulator.zip
+          if-no-files-found: error

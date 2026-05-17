@@ -571,6 +571,28 @@ final class XcodeScaffoldTests: XCTestCase {
         XCTAssertTrue(provider.contains("apply(to: self)"))
     }
 
+    func testGitHubActionsPackagingWorkflowBuildsUnsignedArtifacts() throws {
+        let workflowPath = ".github/workflows/package.yml"
+        let workflowURL = repositoryRoot.appendingPathComponent(workflowPath)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workflowURL.path), "Missing \(workflowPath)")
+        let workflow = try String(contentsOf: workflowURL)
+
+        XCTAssertTrue(workflow.contains("workflow_dispatch:"))
+        XCTAssertTrue(workflow.contains("actions/checkout@v4"))
+        XCTAssertTrue(workflow.contains("brew install libngtcp2 libnghttp3 openssl@3"))
+        XCTAssertTrue(workflow.contains("swift test"))
+        XCTAssertTrue(workflow.contains("apps/irock-macOS/build-unsigned-app.sh"))
+        XCTAssertTrue(workflow.contains("xcodebuild -project apps/irock-iOS/irock.xcodeproj"))
+        XCTAssertTrue(workflow.contains("-scheme irockApp"))
+        XCTAssertTrue(workflow.contains("-destination 'generic/platform=iOS Simulator'"))
+        XCTAssertTrue(workflow.contains("CODE_SIGNING_ALLOWED=NO"))
+        XCTAssertTrue(workflow.contains("actions/upload-artifact@v4"))
+        XCTAssertTrue(workflow.contains("irock-macos-unsigned-app"))
+        XCTAssertTrue(workflow.contains("irock-ios-simulator-app"))
+        XCTAssertFalse(workflow.contains("secrets."))
+        XCTAssertFalse(workflow.contains("CODE_SIGNING_ALLOWED=YES"))
+    }
+
     private var repositoryRoot: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
