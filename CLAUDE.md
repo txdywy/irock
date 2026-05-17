@@ -2,89 +2,91 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project status
+## Project overview
 
-irock has a SwiftPM package graph, M1 app feature configuration scaffolding, M2 tunnel core, M3 runtime snapshot persistence foundation, M4 runtime snapshot publishing foundation, M5 Shadowsocks URI import foundation, M6 local routing rule parsing foundation, M7 runtime rule manifest foundation, and M8 runtime rule adapter foundation in the working tree. The committed product/architecture spec is `docs/superpowers/specs/2026-05-09-irock-design.md`. Implementation plans live under `docs/superpowers/plans/`, including M0 engineering foundation, M1 UI configuration, M2 TUN data path, M3 runtime snapshot persistence, M4 runtime snapshot publishing, M5 Shadowsocks URI import, M6 local routing rules, M7 runtime rule manifest, and M8 runtime rule adapter.
+`irock` is a Swift-first iOS/macOS network proxy client inspired by Shadowrocket's information architecture. The runtime is built from this repository's own Swift packages plus small native bindings; do not embed sing-box, xray, clash, or other full proxy cores in the app runtime. Those projects may be used only as development-time protocol comparison references.
 
-There is not yet an Xcode workspace, app target, or Packet Tunnel target in the working tree. Do not assume `xcodebuild` or app schemes exist until Xcode targets are created.
+The product/architecture spec is `docs/superpowers/specs/2026-05-09-irock-design.md`. Historical implementation plans live under `docs/superpowers/plans/`; treat them as background unless the user points to an active plan.
 
-## Intended architecture
+## Common commands
 
-The project is planned as a Swift-first iOS/macOS network proxy client with:
+Native QUIC/Hysteria2 support depends on Homebrew system libraries used by SwiftPM and the app packaging script:
 
-- Thin iOS/macOS SwiftUI app shells.
-- iOS/macOS Packet Tunnel extensions for system-level TUN VPN.
-- Shared Swift packages for core models, protocols, transport, routing, storage, diagnostics, and performance.
-- App Group runtime snapshots between the main app and tunnel extension.
-- Local-first storage; no iCloud, account system, or backend in the Alpha scope.
-
-Current and planned package boundaries:
-
-- `IrockCore`: shared domain types such as nodes, runtime snapshots, connection state, and errors.
-- `IrockAppFeature`: reusable app-facing configuration, validation, URI import, runtime snapshot publishing, and snapshot coordination logic for future thin platform app shells.
-- `IrockTunnelCore`: reusable TUN data-path primitives, packet processing, runtime configuration, and in-memory packet I/O for future Packet Tunnel targets.
-- `IrockProtocols`: protocol adapters for Shadowsocks, VMess, VLESS, Trojan, Hysteria2, TUIC, and Reality-related behavior.
-- `IrockTransport`: TCP, TLS, WebSocket, HTTP/2, gRPC, and QUIC transport abstractions.
-- `IrockRouting`: rule parsing, rule precompilation, and routing decisions.
-- `IrockStorage`: local configuration, file-backed App Group-ready runtime snapshots, credentials, and basic logs.
-- `IrockDiagnostics`: user-facing logs, debug logs, and error presentation.
-- `IrockPerformanceKit`: throughput, latency, memory, handshake, and rule-matching measurements.
-
-The app runtime must not embed sing-box, xray, clash, or other full proxy cores. They may be used only as development-time protocol comparison references.
-
-## Current repository structure
-
-The working tree currently contains the SwiftPM package graph, including `IrockAppFeature`, `IrockTunnelCore`, and file-backed runtime snapshot persistence in `IrockStorage`, plus fixture and tooling directories:
-
-```text
-Package.swift
-apps/
-  irock-iOS/
-  irock-macOS/
-packages/
-  IrockAppFeature/
-  IrockCore/
-  IrockDiagnostics/
-  IrockPerformanceKit/
-  IrockProtocols/
-  IrockRouting/
-  IrockStorage/
-  IrockTransport/
-  IrockTunnelCore/
-tools/
-  protocol-lab/
-  benchmark-runner/
-  config-fixtures/
-tests/
-  protocol-fixtures/
-  routing-fixtures/
-  performance-baselines/
+```sh
+brew install libngtcp2 libnghttp3 openssl@3
 ```
 
-Xcode workspace, app targets, and Network Extension targets remain planned separately because signing, App Groups, and Network Extension capabilities depend on local Apple Developer Team choices.
+SwiftPM from the repository root:
 
-## Commands
+```sh
+swift test
+swift test --filter IrockCoreTests
+swift test --filter IrockAppFeatureTests
+swift test --filter IrockTunnelCoreTests
+swift test --filter IrockProtocolsTests
+swift test --filter IrockTransportTests
+swift test --filter IrockToolingTests
+swift test --filter XcodeScaffoldTests
+```
 
-Current state:
+Performance evidence from the repository root:
 
-- Inspect git state: `git status --short`
-- Review the design spec: `less docs/superpowers/specs/2026-05-09-irock-design.md`
-- Review the M0 plan: `less docs/superpowers/plans/2026-05-09-irock-m0-engineering-foundation.md`
+```sh
+swift run irock-benchmark-runner packet-processor
+swift run irock-benchmark-runner runtime-packet-batch
+swift run irock-benchmark-runner routing-lookup
+```
 
-SwiftPM commands:
+Platform builds:
 
-- Run all SwiftPM tests: `swift test`
-- Run a single test target: `swift test --filter IrockCoreTests`
-- Run app feature tests: `swift test --filter IrockAppFeatureTests`
-- Run tunnel core tests: `swift test --filter IrockTunnelCoreTests`
+```sh
+apps/irock-macOS/build-unsigned-app.sh
+xcodebuild -project apps/irock-iOS/irock.xcodeproj -scheme irockApp -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build/ios-simulator-derived-data CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+```
 
-After Xcode targets exist, add concrete `xcodebuild` commands here based on the actual workspace, schemes, and signing setup.
+CI packaging is defined in `.github/workflows/package.yml`; it runs `swift test`, builds the unsigned macOS app, builds the iOS simulator app, and uploads zipped app artifacts under `build/artifacts/`.
 
-## Development guidance specific to this repo
+No SwiftLint, SwiftFormat, Makefile, Cursor rules, or Copilot instructions are currently configured in this repository.
 
-- Follow the active milestone plan before extending app, protocol, tunnel, or routing behavior.
-- Keep `.omc/` and `.superpowers/` out of commits; they are planning/runtime scratch state.
-- Keep platform app code thin and put reusable logic in shared Swift packages.
+## High-level architecture
+
+The root `Package.swift` is the shared package graph. Platform app projects under `apps/` consume these packages rather than owning reusable business logic.
+
+- `IrockCore`: canonical domain models for proxy nodes, protocol/transport configuration, runtime snapshots, routing manifests, connection status, and log entries.
+- `IrockTransport`: byte-stream and datagram abstractions plus TCP/TLS, WebSocket, HTTP/2, gRPC, QUIC, and Reality transport helpers.
+- `IrockProtocols`: protocol adapters and handshakes for Shadowsocks, VMess, VLESS, Trojan, Hysteria2, TUIC, TrustTunnel, and related UDP/datagram behavior.
+- `IrockRouting`: Clash-like local rule parsing, precompilation, and routing decisions.
+- `IrockStorage`: in-memory and file-backed configuration/runtime stores, including App Group-ready runtime snapshot, status, and log persistence.
+- `IrockDiagnostics`: user-facing diagnostics assembled from core, protocol, routing, and transport errors.
+- `IrockPerformanceKit`: throughput, latency, memory, handshake, and rule-matching measurement primitives.
+- `IrockAppFeature`: shared SwiftUI app state, views, URI import, node selection, runtime snapshot publishing, local proxy mode, and user-mode TUN state.
+- `IrockTunnelCore`: packet parsing/processing, flow tracking, runtime routing adaptation, proxy outbound execution, tunnel controllers, and packet batch runtime.
+- `IrockTooling`: readiness checks and benchmark scenarios used by `irock-benchmark-runner` and scaffold tests.
+- `IrockNativeHysteria2`: Swift/C wrappers around ngtcp2, nghttp3, and OpenSSL for native QUIC/Hysteria2 support.
+
+The main data boundary is `RuntimeSnapshot`: app-facing configuration is edited and published by `IrockAppFeature`/platform apps, persisted through `IrockStorage`, then loaded by `IrockTunnelCore` and platform Packet Tunnel runners. Keep platform-specific APIs such as NetworkExtension, Network, AppKit/UIKit, TUN device management, and signing concerns inside `apps/irock-iOS` or `apps/irock-macOS`.
+
+## Platform app layout
+
+`apps/irock-macOS` contains the committed macOS Xcode project:
+
+- `irockMacApp`: SwiftUI shell hosting shared `IrockAppFeature` UI plus macOS local proxy, VPN manager, user-mode TUN, App Group store resolution, and platform TLS/TCP glue.
+- `irockMacTunnelExtension`: Packet Tunnel extension shell that wires NetworkExtension packet flow into `IrockTunnelCore` with macOS TCP/UDP adapters.
+- `build-unsigned-app.sh`: local Debug unsigned app build that copies required Homebrew dylibs into the app bundle and ad-hoc signs it.
+
+Unsigned macOS builds support UI, Shadowsocks URI import, runtime snapshot publishing, and local proxy mode. Local proxy listeners are SOCKS5 `127.0.0.1:10808` and HTTP CONNECT `127.0.0.1:10809`; the app shows `networksetup` commands but does not silently mutate system proxy settings. Unsigned builds cannot install/start the Packet Tunnel extension, and user-mode TUN requires administrator authorization.
+
+`apps/irock-iOS` contains the committed iOS Xcode project:
+
+- `irockApp`: SwiftUI shell hosting shared `IrockAppFeature` UI plus iOS VPN manager and App Group store resolution.
+- `irockTunnelExtension`: Packet Tunnel extension shell that wires NetworkExtension packet flow into `IrockTunnelCore` with iOS platform TCP glue.
+
+Signing files and identifiers in app directories are placeholders. Do not commit real Team IDs, provisioning profiles, certificates, private keys, or real server credentials in fixtures.
+
+## Repository-specific guidance
+
+- Keep platform app code thin; reusable protocol, routing, storage, diagnostics, performance, and runtime behavior belongs in shared packages.
 - Treat Packet Tunnel hot paths as performance-sensitive: avoid database access, unbounded logging, and unnecessary allocations in packet processing.
 - Use `RuntimeSnapshot` as the boundary between editable app configuration and tunnel runtime state.
+- Keep `.omc/`, `.superpowers/`, and `.serena/` out of commits; they are local planning/runtime state.
 - Keep Shadowrocket similarity at the information-architecture level; do not copy proprietary assets, exact visuals, or product identity.
