@@ -60,14 +60,19 @@ public struct BenchmarkRunner: Sendable {
             throw BenchmarkRunnerError.invalidPacketCount(packetCount)
         }
 
-        let packets = (0..<packetCount).map { index in
-            Packet.ipv4UDP(
-                id: "packet-processor-benchmark-\(index)",
-                source: .v4(10, 0, UInt8((index / 255) % 255), UInt8(index % 255)),
-                destination: .v4(1, 1, 1, 1),
-                sourcePort: 50_000 + (index % 1_000),
-                destinationPort: 53,
-                payload: [0x01, 0x02, 0x03, 0x04]
+        var packets: [Packet] = []
+        packets.reserveCapacity(packetCount)
+        for index in 0..<packetCount {
+            let source = IPAddress.v4(10, 0, UInt8((index / 255) % 255), UInt8(index % 255))
+            packets.append(
+                Packet.ipv4UDP(
+                    id: "packet-processor-benchmark-\(index)",
+                    source: source,
+                    destination: .v4(1, 1, 1, 1),
+                    sourcePort: 50_000 + (index % 1_000),
+                    destinationPort: 53,
+                    payload: [0x01, 0x02, 0x03, 0x04]
+                )
             )
         }
         let evidence = PacketProcessingPerformanceEvidence.measure(
@@ -130,13 +135,18 @@ public struct BenchmarkRunner: Sendable {
             throw BenchmarkRunnerError.invalidPacketCount(packetCount)
         }
 
-        let packets = (0..<packetCount).map { index in
-            Packet.ipv4TCP(
-                id: "runtime-benchmark-\(index)",
-                source: .v4(10, 0, UInt8((index / 255) % 255), UInt8(index % 255)),
-                destination: .v4(93, 184, 216, 34),
-                sourcePort: 40_000 + (index % 1_000),
-                destinationPort: 443
+        var packets: [Packet] = []
+        packets.reserveCapacity(packetCount)
+        for index in 0..<packetCount {
+            let source = IPAddress.v4(10, 0, UInt8((index / 255) % 255), UInt8(index % 255))
+            packets.append(
+                Packet.ipv4TCP(
+                    id: "runtime-benchmark-\(index)",
+                    source: source,
+                    destination: .v4(93, 184, 216, 34),
+                    sourcePort: 40_000 + (index % 1_000),
+                    destinationPort: 443
+                )
             )
         }
         let runtime = PacketTunnelRuntime(
