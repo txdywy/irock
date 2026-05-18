@@ -16,9 +16,144 @@ final class URIImportTests: XCTestCase {
     }
 
     func testRejectsUnsupportedScheme() {
-        XCTAssertThrowsError(try URIImport.classify("https://example.com")) { error in
-            XCTAssertEqual(error as? URIImportError, .unsupportedScheme("https"))
+        XCTAssertThrowsError(try URIImport.classify("ftp://example.com")) { error in
+            XCTAssertEqual(error as? URIImportError, .unsupportedScheme("ftp"))
         }
+    }
+
+    func testClassifiesAdditionalShadowrocketSchemes() throws {
+        XCTAssertEqual(try URIImport.classify("ssr://abc").protocolType, .shadowsocksR)
+        XCTAssertEqual(try URIImport.classify("socks://example.com:1080").protocolType, .socks)
+        XCTAssertEqual(try URIImport.classify("socks5://example.com:1080").protocolType, .socks)
+        XCTAssertEqual(try URIImport.classify("http://example.com:8080").protocolType, .httpProxy)
+        XCTAssertEqual(try URIImport.classify("https://example.com:8443").protocolType, .httpProxy)
+        XCTAssertEqual(try URIImport.classify("snell://password@example.com:440").protocolType, .snell)
+        XCTAssertEqual(try URIImport.classify("ssh://user:password@example.com:22").protocolType, .ssh)
+        XCTAssertEqual(try URIImport.classify("wireguard://private-key@example.com:51820?publicKey=peer&address=10.0.0.2%2F32").protocolType, .wireGuard)
+        XCTAssertEqual(try URIImport.classify("wg://private-key@example.com:51820?publicKey=peer&address=10.0.0.2%2F32").protocolType, .wireGuard)
+        XCTAssertEqual(try URIImport.classify("hysteria://password@example.com:443").protocolType, .hysteria2)
+    }
+
+    func testParsesSocksAndHTTPProxyShareLinksWithoutLeakingPasswordsIntoNames() throws {
+        let socks = try URIImport.parseDraft("socks5://proxy-user:proxy-pass@socks.example.com:1080#SOCKS%20Proxy")
+        let http = try URIImport.parseDraft("http://http-user:http-pass@http.example.com:8080#HTTP%20Proxy")
+        let https = try URIImport.parseDraft("https://secure.example.com:8443#HTTPS%20Proxy")
+
+        XCTAssertEqual(socks.protocolType, .socks)
+        XCTAssertEqual(socks.name, "SOCKS Proxy")
+        XCTAssertEqual(socks.serverHost, "socks.example.com")
+        XCTAssertEqual(socks.serverPortText, "1080")
+        XCTAssertEqual(socks.credentialAccount, "proxy-user:proxy-pass")
+        XCTAssertEqual(socks.transport, .tcp)
+        XCTAssertFalse(socks.tlsEnabled)
+        XCTAssertFalse(socks.name.contains("proxy-pass"))
+
+        XCTAssertEqual(http.protocolType, .httpProxy)
+        XCTAssertEqual(http.credentialAccount, "http-user:http-pass")
+        XCTAssertEqual(http.transport, .tcp)
+        XCTAssertFalse(http.tlsEnabled)
+        XCTAssertFalse(http.name.contains("http-pass"))
+
+        XCTAssertEqual(https.protocolType, .httpProxy)
+        XCTAssertEqual(https.credentialAccount, "anonymous")
+        XCTAssertEqual(https.transport, .tcp)
+        XCTAssertTrue(https.tlsEnabled)
+        XCTAssertEqual(https.tlsServerName, "secure.example.com")
+    }
+
+    func testParsesCompatibleShadowsocksRShareLinkAndRejectsUnsupportedOptions() throws {
+        let draft = try URIImport.parseDraft(shadowsocksRLink(host: "ssr.example.com", port: 8388, protocolName: "origin", method: "aes-256-gcm", obfs: "plain", password: "ssr-pass", remarks: "SSR Demo"))
+
+        XCTAssertEqual(draft.protocolType, .shadowsocksR)
+        XCTAssertEqual(draft.name, "SSR Demo")
+        XCTAssertEqual(draft.serverHost, "ssr.example.com")
+        XCTAssertEqual(draft.serverPortText, "8388")
+        XCTAssertEqual(draft.credentialAccount, "aes-256-gcm:ssr-pass")
+        XCTAssertEqual(draft.transport, .tcp)
+
+        XCTAssertThrowsError(try URIImport.parseDraft(shadowsocksRLink(host: "ssr.example.com", port: 8388, protocolName: "auth_sha1_v4", method: "aes-256-gcm", obfs: "plain", password: "ssr-pass", remarks: "SSR Demo"))) { error in
+            XCTAssertEqual(error as? URIImportError, .unsupportedOption("ssr protocol"))
+        }
+        XCTAssertThrowsError(try URIImport.parseDraft(shadowsocksRLink(host: "ssr.example.com", port: 8388, protocolName: "origin", method: "aes-256-gcm", obfs: "tls1.2_ticket_auth", password: "ssr-pass", remarks: "SSR Demo"))) { error in
+            XCTAssertEqual(error as? URIImportError, .unsupportedOption("ssr obfs"))
+        }
+    }
+
+    func testParsesSnellSSHWireGuardAndHysteriaFamilyShareLinks() throws {
+        let snell = try URIImport.parseDraft("snell://snell-pass@snell.example.com:440?version=1#Snell")
+        let ssh = try URIImport.parseDraft("ssh://ssh-user:ssh-pass@ssh.example.com:22#SSH")
+        let wireGuard = try URIImport.parseDraft("wireguard://private-key@wg.example.com:51820?publicKey=peer-key&address=10.0.0.2%2F32#WG")
+        let hysteria = try URIImport.parseDraft("hysteria://hy-password@hy.example.com:443?sni=hy.example.com&insecure=1#Hysteria")
+
+        XCTAssertEqual(snell.protocolType, .snell)
+        XCTAssertEqual(snell.credentialAccount, "1:snell-pass")
+        XCTAssertEqual(snell.transport, .tcp)
+        XCTAssertFalse(snell.name.contains("snell-pass"))
+
+        let snellDefaultVersion = try URIImport.parseDraft("snell://snell-pass@snell.example.com:440#Snell")
+        XCTAssertEqual(snellDefaultVersion.credentialAccount, "1:snell-pass")
+
+        XCTAssertEqual(ssh.protocolType, .ssh)
+        XCTAssertEqual(ssh.credentialAccount, "ssh-user:ssh-pass")
+        XCTAssertEqual(ssh.transport, .tcp)
+        XCTAssertFalse(ssh.name.contains("ssh-pass"))
+
+        XCTAssertEqual(wireGuard.protocolType, .wireGuard)
+        XCTAssertEqual(wireGuard.credentialAccount, "privateKey=private-key;publicKey=peer-key;address=10.0.0.2/32")
+        XCTAssertEqual(wireGuard.transport, .quic)
+        XCTAssertTrue(wireGuard.udpEnabled)
+        XCTAssertFalse(wireGuard.name.contains("private-key"))
+        XCTAssertFalse(wireGuard.name.contains("peer-key"))
+
+        XCTAssertEqual(hysteria.protocolType, .hysteria2)
+        XCTAssertEqual(hysteria.transport, .quic)
+        XCTAssertTrue(hysteria.tlsEnabled)
+        XCTAssertTrue(hysteria.tlsAllowInsecure)
+    }
+
+    func testWireGuardAndSSHImportsRequireNativePlanningCredentials() throws {
+        let wgAlias = try URIImport.parseDraft("wg://private-key@wg.example.com?publicKey=peer-key&address=10.0.0.2%2F32#WG")
+        XCTAssertEqual(wgAlias.protocolType, .wireGuard)
+        XCTAssertEqual(wgAlias.serverPortText, "51820")
+
+        XCTAssertThrowsError(try URIImport.parseDraft("wireguard://private-key@wg.example.com:51820?address=10.0.0.2%2F32")) { error in
+            XCTAssertEqual(error as? URIImportError, .missingUserInfo)
+        }
+        XCTAssertThrowsError(try URIImport.parseDraft("wireguard://private-key@wg.example.com:51820?publicKey=peer-key")) { error in
+            XCTAssertEqual(error as? URIImportError, .missingUserInfo)
+        }
+        XCTAssertThrowsError(try URIImport.parseDraft("wireguard://wg.example.com:51820?publicKey=peer-key&address=10.0.0.2%2F32")) { error in
+            XCTAssertEqual(error as? URIImportError, .missingUserInfo)
+        }
+        XCTAssertThrowsError(try URIImport.parseDraft("ssh://ssh-user@ssh.example.com:22#SSH")) { error in
+            XCTAssertEqual(error as? URIImportError, .missingUserInfo)
+        }
+        XCTAssertThrowsError(try URIImport.parseDraft("ssh://ssh-user:ssh-pass@:22#SSH")) { error in
+            XCTAssertEqual(error as? URIImportError, .missingHost)
+        }
+    }
+
+    func testSnellImportRejectsUnsupportedVersionAndObfsBeforeRuntime() {
+        XCTAssertThrowsError(try URIImport.parseDraft("snell://snell-pass@snell.example.com:440?version=3#Snell")) { error in
+            XCTAssertEqual(error as? URIImportError, .unsupportedOption("snell version"))
+        }
+        XCTAssertThrowsError(try URIImport.parseDraft("snell://snell-pass@snell.example.com:440?version=1&obfs=http#Snell")) { error in
+            XCTAssertEqual(error as? URIImportError, .unsupportedOption("snell obfs"))
+        }
+    }
+
+    func testParsesMixedShadowrocketSubscriptionDrafts() throws {
+        let plain = [
+            shadowsocksRLink(host: "ssr.example.com", port: 8388, protocolName: "origin", method: "aes-256-gcm", obfs: "plain", password: "ssr-pass", remarks: "SSR"),
+            "socks5://proxy-user:proxy-pass@socks.example.com:1080#SOCKS",
+            "https://secure.example.com:8443#HTTPS"
+        ].joined(separator: "\n")
+        let base64 = Data(plain.utf8).base64EncodedString()
+
+        let drafts = try URIImport.parseSubscriptionDrafts(base64)
+
+        XCTAssertEqual(drafts.map(\.protocolType), [.shadowsocksR, .socks, .httpProxy])
+        XCTAssertEqual(drafts.map(\.name), ["SSR", "SOCKS", "HTTPS"])
     }
 
     func testParsesFullyBase64EncodedShadowsocksURI() throws {
@@ -352,6 +487,23 @@ final class URIImportTests: XCTestCase {
 
         XCTAssertEqual(drafts.map(\.protocolType), [.trojan, .hysteria2])
         XCTAssertEqual(drafts.map(\.name), ["Trojan", "HY2"])
+    }
+
+    private func shadowsocksRLink(host: String, port: Int, protocolName: String, method: String, obfs: String, password: String, remarks: String) -> String {
+        let encodedPassword = Data(password.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        let encodedRemarks = Data(remarks.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        let payload = "\(host):\(port):\(protocolName):\(method):\(obfs):\(encodedPassword)/?remarks=\(encodedRemarks)"
+        let encodedPayload = Data(payload.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return "ssr://\(encodedPayload)"
     }
 
     private func trustTunnelLink(fields: [(UInt64, Data)]) -> String {

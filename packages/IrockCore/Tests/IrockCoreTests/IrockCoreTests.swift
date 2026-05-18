@@ -75,6 +75,60 @@ final class IrockCoreTests: XCTestCase {
         XCTAssertFalse(encoded.contains("token"))
     }
 
+    func testProxyProtocolTypeCoversShadowrocketOutboundFamilies() {
+        let protocolTypes: [ProxyProtocolType] = [
+            .shadowsocks,
+            .shadowsocksR,
+            .vmess,
+            .vless,
+            .trojan,
+            .hysteria2,
+            .tuic,
+            .socks,
+            .httpProxy,
+            .snell,
+            .wireGuard,
+            .ssh,
+            .trustTunnel
+        ]
+
+        XCTAssertEqual(protocolTypes.map(\.rawValue), [
+            "shadowsocks",
+            "shadowsocksR",
+            "vmess",
+            "vless",
+            "trojan",
+            "hysteria2",
+            "tuic",
+            "socks",
+            "httpProxy",
+            "snell",
+            "wireGuard",
+            "ssh",
+            "trustTunnel"
+        ])
+    }
+
+    func testProxyNodeCodableRoundTripsNewShadowrocketProtocolCase() throws {
+        let node = ProxyNode(
+            id: NodeID(rawValue: "node-socks"),
+            name: "SOCKS Demo",
+            protocolType: .socks,
+            serverHost: "proxy.example.com",
+            serverPort: 1080,
+            credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-socks"),
+            transport: .tcp,
+            tls: .disabled,
+            udpPolicy: .disabled
+        )
+
+        let data = try JSONEncoder().encode(node)
+        let decoded = try JSONDecoder().decode(ProxyNode.self, from: data)
+
+        XCTAssertEqual(decoded, node)
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("socks"))
+    }
+
     func testRuntimeSnapshotDefaultsToEmptyRoutingRuleManifest() {
         let snapshot = RuntimeSnapshot(
             id: SnapshotID(rawValue: "snapshot-1"),

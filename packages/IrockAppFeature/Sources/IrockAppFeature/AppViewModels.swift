@@ -155,6 +155,10 @@ public final class AppViewModel: ObservableObject {
                 appendLog("当前 VLESS 节点暂不支持证书固定或 Reality")
                 throw LocalProxyError.unsupportedCredential
             }
+        case .shadowsocksR, .socks, .httpProxy, .snell, .wireGuard, .ssh:
+            localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前协议暂不支持本地代理")
+            appendLog("当前协议暂不支持本地代理")
+            throw LocalProxyError.unsupportedCredential
         @unknown default:
             if localProxyState.phase != .running {
                 localProxyState = LocalProxyState(phase: .failed, endpoint: nil, message: "当前协议暂不支持本地代理")

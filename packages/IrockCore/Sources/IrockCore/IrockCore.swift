@@ -22,12 +22,34 @@ public struct SnapshotID: Hashable, Codable, Sendable {
 
 public enum ProxyProtocolType: String, Codable, Sendable {
     case shadowsocks
+    case shadowsocksR
     case vmess
     case vless
     case trojan
     case hysteria2
     case tuic
+    case socks
+    case httpProxy
+    case snell
+    case wireGuard
+    case ssh
     case trustTunnel
+
+    public static let shadowrocketDisplayNames: [String] = [
+        "Shadowsocks",
+        "ShadowsocksR",
+        "VMess",
+        "VLESS",
+        "Trojan",
+        "Hysteria2",
+        "TUIC",
+        "SOCKS",
+        "HTTP Proxy",
+        "Snell",
+        "WireGuard",
+        "SSH",
+        "TrustTunnel"
+    ]
 }
 
 public enum TransportType: String, Codable, Sendable {

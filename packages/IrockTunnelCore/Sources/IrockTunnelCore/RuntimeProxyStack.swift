@@ -4,6 +4,10 @@ import IrockRouting
 import IrockTransport
 
 public struct RuntimeProxyStack: Sendable {
+    public static func nativeBoundary(for protocolType: ProxyProtocolType) -> ProxyAdapterRegistry {
+        ProxyAdapterRegistry(adapters: [UnsupportedNativeRuntimeProxyAdapter(protocolType: protocolType)])
+    }
+
     public static func shadowsocksTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ShadowsocksCredentialResolver>(
         plain: Plain,
         tls: TLS,
@@ -15,6 +19,17 @@ public struct RuntimeProxyStack: Sendable {
         return ProxyAdapterRegistry(adapters: [shadowsocks])
     }
 
+    public static func shadowsocksRTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ShadowsocksCredentialResolver>(
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver
+    ) -> ProxyAdapterRegistry {
+        let selector = TCPTLSTransportAdapter(plain: plain, tls: tls)
+        let transportRegistry = TransportAdapterRegistry(adapters: [selector])
+        let shadowsocksR = ShadowsocksRProxyAdapter(transportRegistry: transportRegistry, credentialResolver: credentialResolver)
+        return ProxyAdapterRegistry(adapters: [shadowsocksR])
+    }
+
     public static func vmessTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
         plain: Plain,
         tls: TLS,
@@ -24,6 +39,39 @@ public struct RuntimeProxyStack: Sendable {
         let transportRegistry = TransportAdapterRegistry(adapters: [selector])
         let vmess = VMessProxyAdapter(transportRegistry: transportRegistry, credentialResolver: credentialResolver)
         return ProxyAdapterRegistry(adapters: [vmess])
+    }
+
+    public static func socksTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver
+    ) -> ProxyAdapterRegistry {
+        let selector = TCPTLSTransportAdapter(plain: plain, tls: tls)
+        let transportRegistry = TransportAdapterRegistry(adapters: [selector])
+        let socks = SOCKSProxyAdapter(transportRegistry: transportRegistry, credentialResolver: credentialResolver)
+        return ProxyAdapterRegistry(adapters: [socks])
+    }
+
+    public static func httpProxyTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver
+    ) -> ProxyAdapterRegistry {
+        let selector = TCPTLSTransportAdapter(plain: plain, tls: tls)
+        let transportRegistry = TransportAdapterRegistry(adapters: [selector])
+        let httpProxy = HTTPProxyAdapter(transportRegistry: transportRegistry, credentialResolver: credentialResolver)
+        return ProxyAdapterRegistry(adapters: [httpProxy])
+    }
+
+    public static func snellTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver
+    ) -> ProxyAdapterRegistry {
+        let selector = TCPTLSTransportAdapter(plain: plain, tls: tls)
+        let transportRegistry = TransportAdapterRegistry(adapters: [selector])
+        let snell = SnellProxyAdapter(transportRegistry: transportRegistry, credentialResolver: credentialResolver)
+        return ProxyAdapterRegistry(adapters: [snell])
     }
 
     public static func vmessGRPC<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
@@ -152,6 +200,108 @@ public extension TunnelRuntimeConfiguration {
         )
     }
 
+    static func socksTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        routingEngine: RoutingEngine,
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver,
+        batchLimit: Int,
+        flowLimit: Int
+    ) -> TunnelRuntimeConfiguration {
+        TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            routingEngine: routingEngine,
+            proxyAdapterRegistry: RuntimeProxyStack.socksTCP(plain: plain, tls: tls, credentialResolver: credentialResolver),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func socksTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver,
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> TunnelRuntimeConfiguration {
+        try TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            proxyAdapterRegistry: RuntimeProxyStack.socksTCP(plain: plain, tls: tls, credentialResolver: credentialResolver),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func httpProxyTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        routingEngine: RoutingEngine,
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver,
+        batchLimit: Int,
+        flowLimit: Int
+    ) -> TunnelRuntimeConfiguration {
+        TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            routingEngine: routingEngine,
+            proxyAdapterRegistry: RuntimeProxyStack.httpProxyTCP(plain: plain, tls: tls, credentialResolver: credentialResolver),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func httpProxyTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver,
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> TunnelRuntimeConfiguration {
+        try TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            proxyAdapterRegistry: RuntimeProxyStack.httpProxyTCP(plain: plain, tls: tls, credentialResolver: credentialResolver),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func snellTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        routingEngine: RoutingEngine,
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver,
+        batchLimit: Int,
+        flowLimit: Int
+    ) -> TunnelRuntimeConfiguration {
+        TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            routingEngine: routingEngine,
+            proxyAdapterRegistry: RuntimeProxyStack.snellTCP(plain: plain, tls: tls, credentialResolver: credentialResolver),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func snellTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver,
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> TunnelRuntimeConfiguration {
+        try TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            proxyAdapterRegistry: RuntimeProxyStack.snellTCP(plain: plain, tls: tls, credentialResolver: credentialResolver),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
     static func vmessGRPC<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ProxyCredentialResolver>(
         snapshot: RuntimeSnapshot,
         routingEngine: RoutingEngine,
@@ -457,6 +607,22 @@ public extension TunnelRuntimeConfiguration {
         try TunnelRuntimeConfiguration(
             snapshot: snapshot,
             proxyAdapterRegistry: RuntimeProxyStack.trojanTCP(plain: plain, tls: tls, credentialResolver: credentialResolver),
+            batchLimit: batchLimit,
+            flowLimit: flowLimit
+        )
+    }
+
+    static func shadowsocksRTCP<Plain: TransportAdapter, TLS: TransportAdapter, CredentialResolver: ShadowsocksCredentialResolver>(
+        snapshot: RuntimeSnapshot,
+        plain: Plain,
+        tls: TLS,
+        credentialResolver: CredentialResolver,
+        batchLimit: Int,
+        flowLimit: Int
+    ) throws -> TunnelRuntimeConfiguration {
+        try TunnelRuntimeConfiguration(
+            snapshot: snapshot,
+            proxyAdapterRegistry: RuntimeProxyStack.shadowsocksRTCP(plain: plain, tls: tls, credentialResolver: credentialResolver),
             batchLimit: batchLimit,
             flowLimit: flowLimit
         )

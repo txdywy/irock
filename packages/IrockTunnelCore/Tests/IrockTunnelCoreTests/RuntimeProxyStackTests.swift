@@ -501,6 +501,289 @@ final class RuntimeProxyStackTests: XCTestCase {
         XCTAssertNil(tlsChild.requests.first?.metadata["trojanPassword"])
         XCTAssertFalse(tlsChild.requests.first?.metadata.values.contains("node-1") == true)
     }
+
+    func testSOCKSTCPStackRoutesDisabledTLSToPlainChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let registry = RuntimeProxyStack.socksTCP(plain: plain, tls: tlsChild, credentialResolver: TestProxyCredentialResolver(credential: "user:secret"))
+        let outbound = ProxyOutbound(node: makeSOCKSNode(tls: .disabled), registry: registry)
+        let result = proxyResult(packetID: "tcp-1")
+
+        let connection = try await outbound.connect(result: result)
+
+        XCTAssertEqual(connection?.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(plain.requests.count, 1)
+        XCTAssertNil(plain.requests.first?.tls)
+        XCTAssertEqual(plain.requests.first?.metadata["packetID"], "tcp-1")
+        XCTAssertEqual(plain.requests.first?.metadata["transportProtocol"], "tcp")
+        XCTAssertEqual(plain.requests.first?.metadata["proxyProtocol"], "socks")
+        XCTAssertEqual(plain.requests.first?.metadata["socksAuthenticationPresent"], "true")
+        XCTAssertNil(plain.requests.first?.metadata["socksPassword"])
+        XCTAssertFalse(plain.requests.first?.metadata.values.contains("secret") == true)
+        XCTAssertEqual(plain.requests.first?.initialPayload, Data([0x05, 0x02, 0x00, 0x02, 0x01, 0x04]) + Data("user".utf8) + Data([0x06]) + Data("secret".utf8) + Data([0x05, 0x01, 0x00, 0x01, 93, 184, 216, 34, 0x01, 0xbb]))
+        XCTAssertEqual(tlsChild.requests, [])
+    }
+
+    func testSOCKSTCPStackRoutesEnabledTLSToTLSChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let registry = RuntimeProxyStack.socksTCP(plain: plain, tls: tlsChild, credentialResolver: TestProxyCredentialResolver(credential: "anonymous"))
+        let tls = TLSOptions(enabled: true, serverName: "socks.example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let outbound = ProxyOutbound(node: makeSOCKSNode(tls: tls), registry: registry)
+        let result = proxyResult(packetID: "tcp-1")
+
+        let connection = try await outbound.connect(result: result)
+
+        XCTAssertEqual(connection?.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(plain.requests, [])
+        XCTAssertEqual(tlsChild.requests.count, 1)
+        XCTAssertEqual(tlsChild.requests.first?.tls, tls)
+        XCTAssertEqual(tlsChild.requests.first?.metadata["proxyProtocol"], "socks")
+        XCTAssertEqual(tlsChild.requests.first?.metadata["socksAuthenticationPresent"], "false")
+        XCTAssertNil(tlsChild.requests.first?.metadata["socksPassword"])
+    }
+
+    func testSOCKSTCPConfigurationWiresStackIntoPacketTunnelRuntime() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let reader = InMemoryPacketReader(packets: [Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)])
+        let writer = InMemoryPacketWriter()
+        let configuration = TunnelRuntimeConfiguration.socksTCP(
+            snapshot: RuntimeSnapshot(id: SnapshotID(rawValue: "snapshot-1"), selectedNode: makeSOCKSNode(tls: .disabled), routeMode: .globalProxy, logLevel: .user),
+            routingEngine: RoutingEngine(rules: [.final(.proxy)]),
+            plain: plain,
+            tls: tlsChild,
+            credentialResolver: TestProxyCredentialResolver(credential: "anonymous"),
+            batchLimit: 16,
+            flowLimit: 32
+        )
+        let runtime = PacketTunnelRuntime(reader: reader, writer: writer, configuration: configuration)
+
+        let summary = try await runtime.runOnce()
+
+        XCTAssertEqual(summary.readCount, 1)
+        XCTAssertEqual(summary.writtenCount, 1)
+        XCTAssertEqual(summary.proxyConnectCount, 1)
+        XCTAssertEqual(plain.requests.count, 1)
+        XCTAssertEqual(tlsChild.requests, [])
+    }
+
+    func testSOCKSTCPBootstrapCreatesRuntime() throws {
+        let runtime = try TunnelRuntimeBootstrap.socksTCP(
+            snapshot: RuntimeSnapshot(id: SnapshotID(rawValue: "snapshot-1"), selectedNode: makeSOCKSNode(tls: .disabled), routeMode: .globalProxy, logLevel: .user),
+            reader: InMemoryPacketReader(packets: []),
+            writer: InMemoryPacketWriter(),
+            statusStore: InMemoryRuntimeStatusStore(),
+            logStore: InMemoryRuntimeLogStore(),
+            plain: RecordingTransportAdapter(transport: .tcp),
+            tls: RecordingTransportAdapter(transport: .tcp),
+            credentialResolver: TestProxyCredentialResolver(credential: "anonymous"),
+            batchLimit: 16,
+            flowLimit: 32
+        )
+
+        XCTAssertNotNil(runtime)
+    }
+
+    func testHTTPProxyTCPStackRoutesDisabledTLSToPlainChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let registry = RuntimeProxyStack.httpProxyTCP(plain: plain, tls: tlsChild, credentialResolver: TestProxyCredentialResolver(credential: "user:secret"))
+        let outbound = ProxyOutbound(node: makeHTTPProxyNode(tls: .disabled), registry: registry)
+        let result = proxyResult(packetID: "tcp-1")
+
+        let connection = try await outbound.connect(result: result)
+
+        XCTAssertEqual(connection?.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(plain.requests.count, 1)
+        XCTAssertNil(plain.requests.first?.tls)
+        XCTAssertEqual(plain.requests.first?.metadata["proxyProtocol"], "httpProxy")
+        XCTAssertEqual(plain.requests.first?.metadata["httpProxyAuthorizationPresent"], "true")
+        XCTAssertNil(plain.requests.first?.metadata["proxyAuthorization"])
+        XCTAssertFalse(plain.requests.first?.metadata.values.contains("secret") == true)
+        XCTAssertEqual(plain.requests.first?.initialPayload, Data("CONNECT 93.184.216.34:443 HTTP/1.1\r\nHost: 93.184.216.34:443\r\nProxy-Authorization: Basic dXNlcjpzZWNyZXQ=\r\n\r\n".utf8))
+        XCTAssertEqual(tlsChild.requests, [])
+    }
+
+    func testHTTPProxyTCPStackRoutesEnabledTLSToTLSChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let registry = RuntimeProxyStack.httpProxyTCP(plain: plain, tls: tlsChild, credentialResolver: TestProxyCredentialResolver(credential: "anonymous"))
+        let tls = TLSOptions(enabled: true, serverName: "http-proxy.example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let outbound = ProxyOutbound(node: makeHTTPProxyNode(tls: tls), registry: registry)
+        let result = proxyResult(packetID: "tcp-1")
+
+        let connection = try await outbound.connect(result: result)
+
+        XCTAssertEqual(connection?.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(plain.requests, [])
+        XCTAssertEqual(tlsChild.requests.count, 1)
+        XCTAssertEqual(tlsChild.requests.first?.tls, tls)
+        XCTAssertEqual(tlsChild.requests.first?.metadata["proxyProtocol"], "httpProxy")
+        XCTAssertEqual(tlsChild.requests.first?.metadata["httpProxyAuthorizationPresent"], "false")
+    }
+
+    func testHTTPProxyTCPConfigurationWiresStackIntoPacketTunnelRuntime() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let reader = InMemoryPacketReader(packets: [Packet.ipv4TCP(id: "tcp-1", source: .v4(10, 0, 0, 2), destination: .v4(93, 184, 216, 34), sourcePort: 51_234, destinationPort: 443)])
+        let writer = InMemoryPacketWriter()
+        let configuration = TunnelRuntimeConfiguration.httpProxyTCP(
+            snapshot: RuntimeSnapshot(id: SnapshotID(rawValue: "snapshot-1"), selectedNode: makeHTTPProxyNode(tls: .disabled), routeMode: .globalProxy, logLevel: .user),
+            routingEngine: RoutingEngine(rules: [.final(.proxy)]),
+            plain: plain,
+            tls: tlsChild,
+            credentialResolver: TestProxyCredentialResolver(credential: "anonymous"),
+            batchLimit: 16,
+            flowLimit: 32
+        )
+        let runtime = PacketTunnelRuntime(reader: reader, writer: writer, configuration: configuration)
+
+        let summary = try await runtime.runOnce()
+
+        XCTAssertEqual(summary.readCount, 1)
+        XCTAssertEqual(summary.writtenCount, 1)
+        XCTAssertEqual(summary.proxyConnectCount, 1)
+        XCTAssertEqual(plain.requests.count, 1)
+        XCTAssertEqual(tlsChild.requests, [])
+    }
+
+    func testHTTPProxyTCPBootstrapCreatesRuntime() throws {
+        let runtime = try TunnelRuntimeBootstrap.httpProxyTCP(
+            snapshot: RuntimeSnapshot(id: SnapshotID(rawValue: "snapshot-1"), selectedNode: makeHTTPProxyNode(tls: .disabled), routeMode: .globalProxy, logLevel: .user),
+            reader: InMemoryPacketReader(packets: []),
+            writer: InMemoryPacketWriter(),
+            statusStore: InMemoryRuntimeStatusStore(),
+            logStore: InMemoryRuntimeLogStore(),
+            plain: RecordingTransportAdapter(transport: .tcp),
+            tls: RecordingTransportAdapter(transport: .tcp),
+            credentialResolver: TestProxyCredentialResolver(credential: "anonymous"),
+            batchLimit: 16,
+            flowLimit: 32
+        )
+
+        XCTAssertNotNil(runtime)
+    }
+
+    func testSnellTCPStackRoutesDisabledTLSToPlainChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let registry = RuntimeProxyStack.snellTCP(plain: plain, tls: tlsChild, credentialResolver: TestProxyCredentialResolver(credential: "1:snell-secret"))
+        let outbound = ProxyOutbound(node: makeSnellNode(tls: .disabled), registry: registry)
+        let result = proxyResult(packetID: "tcp-1")
+
+        let connection = try await outbound.connect(result: result)
+
+        XCTAssertEqual(connection?.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(plain.requests.count, 1)
+        XCTAssertEqual(plain.requests.first?.metadata["packetID"], "tcp-1")
+        XCTAssertEqual(plain.requests.first?.metadata["proxyProtocol"], "snell")
+        XCTAssertEqual(plain.requests.first?.metadata["snellVersion"], "1")
+        XCTAssertEqual(plain.requests.first?.metadata["snellPasswordPresent"], "true")
+        XCTAssertNil(plain.requests.first?.metadata["snellPassword"])
+        XCTAssertFalse(plain.requests.first?.metadata.values.contains("snell-secret") == true)
+        XCTAssertEqual(plain.requests.first?.initialPayload, Data("irock-snell-native:v1:ipv4:93.184.216.34:443".utf8))
+        XCTAssertEqual(tlsChild.requests, [])
+    }
+
+    func testSnellTCPStackRoutesEnabledTLSToTLSChild() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let registry = RuntimeProxyStack.snellTCP(plain: plain, tls: tlsChild, credentialResolver: TestProxyCredentialResolver(credential: "1:snell-secret"))
+        let tls = TLSOptions(enabled: true, serverName: "snell.example.com", allowInsecure: false, alpn: [], fingerprint: nil, reality: nil)
+        let outbound = ProxyOutbound(node: makeSnellNode(tls: tls), registry: registry)
+        let result = proxyResult(packetID: "tcp-1")
+
+        _ = try await outbound.connect(result: result)
+
+        XCTAssertEqual(plain.requests, [])
+        XCTAssertEqual(tlsChild.requests.count, 1)
+        XCTAssertEqual(tlsChild.requests.first?.tls, tls)
+        XCTAssertEqual(tlsChild.requests.first?.metadata["proxyProtocol"], "snell")
+    }
+
+    func testSnellTCPConfigurationAndBootstrapCreateRuntime() throws {
+        let configuration = try TunnelRuntimeConfiguration.snellTCP(
+            snapshot: RuntimeSnapshot(id: SnapshotID(rawValue: "snapshot-1"), selectedNode: makeSnellNode(tls: .disabled), routeMode: .globalProxy, logLevel: .user),
+            plain: RecordingTransportAdapter(transport: .tcp),
+            tls: RecordingTransportAdapter(transport: .tcp),
+            credentialResolver: TestProxyCredentialResolver(credential: "1:snell-secret"),
+            batchLimit: 16,
+            flowLimit: 32
+        )
+        let runtime = try TunnelRuntimeBootstrap.snellTCP(
+            snapshot: RuntimeSnapshot(id: SnapshotID(rawValue: "snapshot-1"), selectedNode: makeSnellNode(tls: .disabled), routeMode: .globalProxy, logLevel: .user),
+            reader: InMemoryPacketReader(packets: []),
+            writer: InMemoryPacketWriter(),
+            statusStore: InMemoryRuntimeStatusStore(),
+            logStore: InMemoryRuntimeLogStore(),
+            plain: RecordingTransportAdapter(transport: .tcp),
+            tls: RecordingTransportAdapter(transport: .tcp),
+            credentialResolver: TestProxyCredentialResolver(credential: "1:snell-secret"),
+            batchLimit: 16,
+            flowLimit: 32
+        )
+
+        XCTAssertEqual(configuration.proxyAdapterRegistry.adapter(for: .snell).supportedProtocol, .snell)
+        XCTAssertNotNil(runtime)
+    }
+
+    func testShadowsocksRTCPStackRoutesCompatibleNodeThroughNativeStream() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let tlsChild = RecordingTransportAdapter(transport: .tcp)
+        let registry = RuntimeProxyStack.shadowsocksRTCP(plain: plain, tls: tlsChild, credentialResolver: TestProxyCredentialResolver(credential: "aes-256-gcm:ssr-pass"))
+        let outbound = ProxyOutbound(node: makeShadowsocksRNode(tls: .disabled), registry: registry)
+        let result = proxyResult(packetID: "tcp-1")
+
+        _ = try await outbound.connect(result: result)
+
+        XCTAssertEqual(plain.requests.count, 1)
+        XCTAssertEqual(plain.requests.first?.metadata["proxyProtocol"], "shadowsocksR")
+        XCTAssertEqual(plain.requests.first?.metadata["shadowsocksCipher"], "aes-256-gcm")
+        XCTAssertEqual(tlsChild.requests, [])
+    }
+
+    func testShadowsocksRTCPBootstrapCreatesRuntime() throws {
+        let runtime = try TunnelRuntimeBootstrap.shadowsocksRTCP(
+            snapshot: RuntimeSnapshot(id: SnapshotID(rawValue: "snapshot-1"), selectedNode: makeShadowsocksRNode(tls: .disabled), routeMode: .globalProxy, logLevel: .user),
+            reader: InMemoryPacketReader(packets: []),
+            writer: InMemoryPacketWriter(),
+            statusStore: InMemoryRuntimeStatusStore(),
+            logStore: InMemoryRuntimeLogStore(),
+            plain: RecordingTransportAdapter(transport: .tcp),
+            tls: RecordingTransportAdapter(transport: .tcp),
+            credentialResolver: TestProxyCredentialResolver(credential: "aes-256-gcm:ssr-pass"),
+            batchLimit: 16,
+            flowLimit: 32
+        )
+
+        XCTAssertNotNil(runtime)
+    }
+
+    func testWireGuardAndSSHRuntimeStacksFailWithExplicitNativeBoundaryWithoutOpeningTransport() async throws {
+        let plain = RecordingTransportAdapter(transport: .tcp)
+        let quic = RecordingTransportAdapter(transport: .quic)
+        let result = proxyResult(packetID: "tcp-1")
+
+        let wireGuardOutbound = ProxyOutbound(node: makeWireGuardNode(), registry: RuntimeProxyStack.nativeBoundary(for: .wireGuard))
+        do {
+            _ = try await wireGuardOutbound.connect(result: result)
+            XCTFail("Expected WireGuard native boundary failure")
+        } catch {
+            XCTAssertEqual(error as? ProxyProtocolError, .unsupportedNativeRuntime(.wireGuard))
+        }
+
+        let sshOutbound = ProxyOutbound(node: makeSSHNode(), registry: RuntimeProxyStack.nativeBoundary(for: .ssh))
+        do {
+            _ = try await sshOutbound.connect(result: result)
+            XCTFail("Expected SSH native boundary failure")
+        } catch {
+            XCTAssertEqual(error as? ProxyProtocolError, .unsupportedNativeRuntime(.ssh))
+        }
+
+        XCTAssertEqual(plain.requests, [])
+        XCTAssertEqual(quic.requests, [])
+    }
 }
 
 private final class RecordingTransportAdapter: TransportAdapter, @unchecked Sendable {
@@ -701,6 +984,30 @@ private func makeTrustTunnelHTTP2Node() -> ProxyNode {
 
 private func makeVLESSNode(tls: TLSOptions) -> ProxyNode {
     ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .vless, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .tcp, tls: tls, udpPolicy: .disabled)
+}
+
+private func makeSOCKSNode(tls: TLSOptions) -> ProxyNode {
+    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .socks, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .tcp, tls: tls, udpPolicy: .disabled)
+}
+
+private func makeHTTPProxyNode(tls: TLSOptions) -> ProxyNode {
+    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .httpProxy, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .tcp, tls: tls, udpPolicy: .disabled)
+}
+
+private func makeSnellNode(tls: TLSOptions) -> ProxyNode {
+    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .snell, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .tcp, tls: tls, udpPolicy: .disabled)
+}
+
+private func makeShadowsocksRNode(tls: TLSOptions) -> ProxyNode {
+    ProxyNode(id: NodeID(rawValue: "node-1"), name: "Demo", protocolType: .shadowsocksR, serverHost: "example.com", serverPort: 443, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .tcp, tls: tls, udpPolicy: .disabled)
+}
+
+private func makeWireGuardNode() -> ProxyNode {
+    ProxyNode(id: NodeID(rawValue: "node-1"), name: "WG", protocolType: .wireGuard, serverHost: "example.com", serverPort: 51820, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .quic, tls: .disabled, udpPolicy: .enabled)
+}
+
+private func makeSSHNode() -> ProxyNode {
+    ProxyNode(id: NodeID(rawValue: "node-1"), name: "SSH", protocolType: .ssh, serverHost: "example.com", serverPort: 22, credentialReference: CredentialReference(keychainService: "com.irock.nodes", account: "node-1"), transport: .tcp, tls: .disabled, udpPolicy: .disabled)
 }
 
 private func makeTrojanNode(tls: TLSOptions) -> ProxyNode {

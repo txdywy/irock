@@ -535,6 +535,95 @@ final class IrockProtocolsTests: XCTestCase {
         }
     }
 
+    func testSOCKSOpenRequestBuildsNoAuthDomainIPv4AndIPv6Preludes() throws {
+        let domain = try SOCKSOpenRequest(credential: nil, destination: .host("apple.com", port: 443))
+        let ipv4 = try SOCKSOpenRequest(credential: nil, destination: .ipv4("93.184.216.34", port: 443))
+        let ipv6 = try SOCKSOpenRequest(credential: nil, destination: .ipv6("2606:2800:220:1:248:1893:25c8:1946", port: 443))
+
+        XCTAssertEqual(domain.openBytes, Data([0x05, 0x01, 0x00, 0x05, 0x01, 0x00, 0x03, 0x09]) + Data("apple.com".utf8) + Data([0x01, 0xbb]))
+        XCTAssertEqual(ipv4.openBytes, Data([0x05, 0x01, 0x00, 0x05, 0x01, 0x00, 0x01, 93, 184, 216, 34, 0x01, 0xbb]))
+        XCTAssertEqual(ipv6.openBytes, Data([0x05, 0x01, 0x00, 0x05, 0x01, 0x00, 0x04, 0x26, 0x06, 0x28, 0x00, 0x02, 0x20, 0x00, 0x01, 0x02, 0x48, 0x18, 0x93, 0x25, 0xc8, 0x19, 0x46, 0x01, 0xbb]))
+        XCTAssertEqual(domain.metadata["socksAuthenticationPresent"], "false")
+        XCTAssertEqual(domain.metadata["socksDestination"], "host:apple.com:443")
+    }
+
+    func testSOCKSOpenRequestBuildsUsernamePasswordPreludeWithoutMetadataSecret() throws {
+        let request = try SOCKSOpenRequest(credential: "user:secret", destination: .host("apple.com", port: 443))
+
+        let expected = Data([0x05, 0x02, 0x00, 0x02, 0x01, 0x04])
+            + Data("user".utf8)
+            + Data([0x06])
+            + Data("secret".utf8)
+            + Data([0x05, 0x01, 0x00, 0x03, 0x09])
+            + Data("apple.com".utf8)
+            + Data([0x01, 0xbb])
+        XCTAssertEqual(request.openBytes, expected)
+        XCTAssertEqual(request.metadata["socksAuthenticationPresent"], "true")
+        XCTAssertEqual(request.metadata["socksUsernamePresent"], "true")
+        XCTAssertNil(request.metadata["socksPassword"])
+        XCTAssertFalse(request.metadata.values.contains("secret"))
+        XCTAssertFalse(String(data: request.openBytes, encoding: .utf8)?.contains("socks-foundation") == true)
+    }
+
+    func testSOCKSOpenRequestRejectsInvalidCredentials() {
+        XCTAssertThrowsError(try SOCKSOpenRequest(credential: "   :secret", destination: .host("apple.com", port: 443))) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("missing socks username"))
+        }
+        XCTAssertThrowsError(try SOCKSOpenRequest(credential: "user:\(String(repeating: "p", count: 256))", destination: .host("apple.com", port: 443))) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("invalid socks password"))
+        }
+    }
+
+    func testHTTPProxyOpenRequestBuildsConnectPreludeWithoutCredentialMetadata() throws {
+        let request = try HTTPProxyOpenRequest(credential: "user:secret", destination: .host("apple.com", port: 443))
+
+        let expected = Data("CONNECT apple.com:443 HTTP/1.1\r\nHost: apple.com:443\r\nProxy-Authorization: Basic dXNlcjpzZWNyZXQ=\r\n\r\n".utf8)
+        XCTAssertEqual(request.openBytes, expected)
+        XCTAssertEqual(request.destinationAuthority, "apple.com:443")
+        XCTAssertEqual(request.metadata["httpProxyAuthorizationPresent"], "true")
+        XCTAssertNil(request.metadata["proxyAuthorization"])
+        XCTAssertFalse(request.metadata.values.contains("user:secret"))
+        XCTAssertFalse(request.metadata.values.contains("Basic dXNlcjpzZWNyZXQ="))
+    }
+
+    func testHTTPProxyOpenRequestBuildsIPv4AndIPv6Authorities() throws {
+        let ipv4 = try HTTPProxyOpenRequest(credential: nil, destination: .ipv4("93.184.216.34", port: 443))
+        let ipv6 = try HTTPProxyOpenRequest(credential: nil, destination: .ipv6("2606:2800:220:1:248:1893:25c8:1946", port: 443))
+
+        XCTAssertEqual(ipv4.openBytes, Data("CONNECT 93.184.216.34:443 HTTP/1.1\r\nHost: 93.184.216.34:443\r\n\r\n".utf8))
+        XCTAssertEqual(ipv6.openBytes, Data("CONNECT [2606:2800:220:1:248:1893:25c8:1946]:443 HTTP/1.1\r\nHost: [2606:2800:220:1:248:1893:25c8:1946]:443\r\n\r\n".utf8))
+        XCTAssertEqual(ipv4.metadata["httpProxyAuthorizationPresent"], "false")
+        XCTAssertEqual(ipv6.metadata["httpProxyDestination"], "[2606:2800:220:1:248:1893:25c8:1946]:443")
+    }
+
+    func testHTTPProxyOpenRequestRejectsEmptyCredentialUsername() {
+        XCTAssertThrowsError(try HTTPProxyOpenRequest(credential: "   :secret", destination: .host("apple.com", port: 443))) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("missing http proxy username"))
+        }
+    }
+
+    func testSnellOpenRequestBuildsDeterministicCredentialSafeNativeMarker() throws {
+        let request = try SnellOpenRequest(credential: "1:snell-secret", destination: .host("apple.com", port: 443))
+
+        XCTAssertEqual(request.version, 1)
+        XCTAssertEqual(request.destinationDescription, "host:apple.com:443")
+        XCTAssertEqual(request.openBytes, Data("irock-snell-native:v1:host:apple.com:443".utf8))
+        XCTAssertEqual(request.metadata["snellVersion"], "1")
+        XCTAssertEqual(request.metadata["snellPasswordPresent"], "true")
+        XCTAssertEqual(request.metadata["snellNativeStreamMarker"], "irock-snell-native:v1:host:apple.com:443")
+        XCTAssertNil(request.metadata["snellPassword"])
+        XCTAssertFalse(request.metadata.values.contains("snell-secret"))
+    }
+
+    func testSnellOpenRequestRejectsUnsupportedVersionAndMissingPassword() {
+        XCTAssertThrowsError(try SnellOpenRequest(credential: "3:snell-secret", destination: .host("apple.com", port: 443))) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("unsupported snell version"))
+        }
+        XCTAssertThrowsError(try SnellOpenRequest(credential: "1:   ", destination: .host("apple.com", port: 443))) { error in
+            XCTAssertEqual(error as? ProxyProtocolError, .invalidConfiguration("missing snell password"))
+        }
+    }
+
     func testHysteria2AuthRequestBuildsHTTP3AuthHeadersWithoutMetadataSecrets() throws {
         let request = try Hysteria2AuthRequest(authentication: " hysteria-secret ", receiveMbps: 128, padding: "pad")
 
@@ -1121,7 +1210,7 @@ final class IrockProtocolsTests: XCTestCase {
                 adapter = Hysteria2ProxyAdapter(transportRegistry: registry, credentialResolver: StaticProxyCredentialResolver(credential: credential))
             case .tuic:
                 adapter = TUICProxyAdapter(transportRegistry: registry, credentialResolver: StaticProxyCredentialResolver(credential: credential))
-            case .shadowsocks, .trustTunnel:
+            case .shadowsocks, .shadowsocksR, .socks, .httpProxy, .snell, .wireGuard, .ssh, .trustTunnel:
                 XCTFail("Unexpected protocol type")
                 return
             }
@@ -1495,6 +1584,207 @@ final class IrockProtocolsTests: XCTestCase {
 
         XCTAssertNil(transport.requests.first?.tls)
         XCTAssertEqual(transport.requests.first?.metadata["destination"], "ipv4:93.184.216.34:443")
+    }
+
+    func testSOCKSProxyAdapterOpensTCPTransportAndReturnsProxyConnection() async throws {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = SOCKSProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: [transport]),
+            credentialResolver: StaticProxyCredentialResolver(credential: "user:secret")
+        )
+        let node = makeNode(protocolType: .socks, transport: .tcp, tls: .disabled)
+        let request = ProxyRequest(node: node, destination: .ipv4("93.184.216.34", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, .ipv4("93.184.216.34", port: 443))
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests.first?.host, "example.com")
+        XCTAssertEqual(transport.requests.first?.port, 443)
+        XCTAssertEqual(transport.requests.first?.transport, .tcp)
+        XCTAssertNil(transport.requests.first?.tls)
+        XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "socks")
+        XCTAssertEqual(transport.requests.first?.metadata["socksAuthenticationPresent"], "true")
+        XCTAssertNil(transport.requests.first?.metadata["socksPassword"])
+        XCTAssertFalse(transport.requests.first?.metadata.values.contains("secret") == true)
+        XCTAssertEqual(transport.requests.first?.initialPayload, Data([0x05, 0x02, 0x00, 0x02, 0x01, 0x04]) + Data("user".utf8) + Data([0x06]) + Data("secret".utf8) + Data([0x05, 0x01, 0x00, 0x01, 93, 184, 216, 34, 0x01, 0xbb]))
+    }
+
+    func testSOCKSProxyAdapterRejectsInvalidConfigurationBeforeTransportOpen() async {
+        let cases: [(ProxyNode, ProxyProtocolError)] = [
+            (makeNode(protocolType: .trojan, transport: .tcp), .unsupportedProtocol(.trojan)),
+            (makeNode(protocolType: .socks, transport: .tcp, serverHost: "   "), .invalidConfiguration("missing socks server host")),
+            (makeNode(protocolType: .socks, transport: .tcp, serverPort: 0), .invalidConfiguration("invalid socks server port")),
+            (makeNode(protocolType: .socks, transport: .grpc), .unsupportedTransport(.grpc))
+        ]
+
+        for (node, expectedError) in cases {
+            let transport = RecordingTransportAdapter(transport: node.transport)
+            let adapter = SOCKSProxyAdapter(
+                transportRegistry: TransportAdapterRegistry(adapters: [transport]),
+                credentialResolver: StaticProxyCredentialResolver(credential: "user:secret")
+            )
+            let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443))
+
+            do {
+                _ = try await adapter.connect(request: request)
+                XCTFail("Expected SOCKS validation failure")
+            } catch let error as ProxyProtocolError {
+                XCTAssertEqual(error, expectedError)
+                XCTAssertEqual(transport.requests, [])
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testHTTPProxyAdapterOpensTCPTransportWithConnectPrelude() async throws {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = HTTPProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: [transport]),
+            credentialResolver: StaticProxyCredentialResolver(credential: "user:secret")
+        )
+        let node = makeNode(protocolType: .httpProxy, transport: .tcp, tls: .disabled)
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(connection.destination, .host("apple.com", port: 443))
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests.first?.host, "example.com")
+        XCTAssertEqual(transport.requests.first?.port, 443)
+        XCTAssertEqual(transport.requests.first?.transport, .tcp)
+        XCTAssertNil(transport.requests.first?.tls)
+        XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "httpProxy")
+        XCTAssertEqual(transport.requests.first?.metadata["httpProxyAuthorizationPresent"], "true")
+        XCTAssertNil(transport.requests.first?.metadata["proxyAuthorization"])
+        XCTAssertFalse(transport.requests.first?.metadata.values.contains("user:secret") == true)
+        XCTAssertEqual(transport.requests.first?.initialPayload, Data("CONNECT apple.com:443 HTTP/1.1\r\nHost: apple.com:443\r\nProxy-Authorization: Basic dXNlcjpzZWNyZXQ=\r\n\r\n".utf8))
+    }
+
+    func testHTTPProxyAdapterRejectsInvalidConfigurationBeforeTransportOpen() async {
+        let cases: [(ProxyNode, ProxyProtocolError)] = [
+            (makeNode(protocolType: .socks, transport: .tcp), .unsupportedProtocol(.socks)),
+            (makeNode(protocolType: .httpProxy, transport: .tcp, serverHost: "   "), .invalidConfiguration("missing http proxy server host")),
+            (makeNode(protocolType: .httpProxy, transport: .tcp, serverPort: 0), .invalidConfiguration("invalid http proxy server port")),
+            (makeNode(protocolType: .httpProxy, transport: .grpc), .unsupportedTransport(.grpc))
+        ]
+
+        for (node, expectedError) in cases {
+            let transport = RecordingTransportAdapter(transport: node.transport)
+            let adapter = HTTPProxyAdapter(
+                transportRegistry: TransportAdapterRegistry(adapters: [transport]),
+                credentialResolver: StaticProxyCredentialResolver(credential: "anonymous")
+            )
+            let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443))
+
+            do {
+                _ = try await adapter.connect(request: request)
+                XCTFail("Expected HTTP proxy validation failure")
+            } catch let error as ProxyProtocolError {
+                XCTAssertEqual(error, expectedError)
+                XCTAssertEqual(transport.requests, [])
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testSnellProxyAdapterOpensTCPTransportWithNativeMarker() async throws {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = SnellProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: [transport]),
+            credentialResolver: StaticProxyCredentialResolver(credential: "1:snell-secret")
+        )
+        let node = makeNode(protocolType: .snell, transport: .tcp, tls: .disabled)
+        let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443), metadata: ["packetID": "packet-1"])
+
+        let connection = try await adapter.connect(request: request)
+
+        XCTAssertEqual(connection.nodeID, NodeID(rawValue: "node-1"))
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests.first?.host, "example.com")
+        XCTAssertEqual(transport.requests.first?.port, 443)
+        XCTAssertEqual(transport.requests.first?.transport, .tcp)
+        XCTAssertNil(transport.requests.first?.tls)
+        XCTAssertEqual(transport.requests.first?.metadata["packetID"], "packet-1")
+        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "snell")
+        XCTAssertEqual(transport.requests.first?.metadata["snellVersion"], "1")
+        XCTAssertEqual(transport.requests.first?.metadata["snellPasswordPresent"], "true")
+        XCTAssertEqual(transport.requests.first?.metadata["snellDestination"], "host:apple.com:443")
+        XCTAssertNil(transport.requests.first?.metadata["snellPassword"])
+        XCTAssertFalse(transport.requests.first?.metadata.values.contains("snell-secret") == true)
+        XCTAssertEqual(transport.requests.first?.initialPayload, Data("irock-snell-native:v1:host:apple.com:443".utf8))
+    }
+
+    func testSnellProxyAdapterRejectsInvalidConfigurationBeforeTransportOpen() async {
+        let cases: [(ProxyNode, String, ProxyProtocolError)] = [
+            (makeNode(protocolType: .socks, transport: .tcp), "1:snell-secret", .unsupportedProtocol(.socks)),
+            (makeNode(protocolType: .snell, transport: .tcp, serverHost: "   "), "1:snell-secret", .invalidConfiguration("missing snell server host")),
+            (makeNode(protocolType: .snell, transport: .tcp, serverPort: 0), "1:snell-secret", .invalidConfiguration("invalid snell server port")),
+            (makeNode(protocolType: .snell, transport: .grpc), "1:snell-secret", .unsupportedTransport(.grpc)),
+            (makeNode(protocolType: .snell, transport: .tcp), "3:snell-secret", .invalidConfiguration("unsupported snell version")),
+            (makeNode(protocolType: .snell, transport: .tcp, credentialAccount: "1:snell-secret?obfs=http"), "1:snell-secret?obfs=http", .invalidConfiguration("unsupported snell obfs"))
+        ]
+
+        for (node, credential, expectedError) in cases {
+            let transport = RecordingTransportAdapter(transport: node.transport)
+            let adapter = SnellProxyAdapter(
+                transportRegistry: TransportAdapterRegistry(adapters: [transport]),
+                credentialResolver: StaticProxyCredentialResolver(credential: credential)
+            )
+            let request = ProxyRequest(node: node, destination: .host("apple.com", port: 443))
+
+            do {
+                _ = try await adapter.connect(request: request)
+                XCTFail("Expected Snell validation failure")
+            } catch let error as ProxyProtocolError {
+                XCTAssertEqual(error, expectedError)
+                XCTAssertEqual(transport.requests, [])
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testShadowsocksRProxyAdapterOpensCompatibleOriginPlainStream() async throws {
+        let transport = RecordingTransportAdapter(transport: .tcp)
+        let adapter = ShadowsocksRProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: [transport]),
+            credentialResolver: StaticProxyCredentialResolver(credential: "aes-256-gcm:ssr-pass")
+        )
+        let node = makeNode(protocolType: .shadowsocksR, transport: .tcp, tls: .disabled)
+
+        _ = try await adapter.connect(request: ProxyRequest(node: node, destination: .host("apple.com", port: 443)))
+
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests.first?.metadata["proxyProtocol"], "shadowsocksR")
+        XCTAssertEqual(transport.requests.first?.metadata["shadowsocksCipher"], "aes-256-gcm")
+        XCTAssertEqual(transport.requests.first?.initialPayload?.count, 79)
+        XCTAssertFalse(transport.requests.first?.metadata.values.contains("ssr-pass") == true)
+    }
+
+    func testShadowsocksRProxyAdapterRejectsInvalidConfigurationBeforeTransportOpen() async {
+        let transport = RecordingTransportAdapter(transport: .grpc)
+        let adapter = ShadowsocksRProxyAdapter(
+            transportRegistry: TransportAdapterRegistry(adapters: [transport]),
+            credentialResolver: StaticProxyCredentialResolver(credential: "aes-256-gcm:ssr-pass")
+        )
+        let request = ProxyRequest(node: makeNode(protocolType: .shadowsocksR, transport: .grpc), destination: .host("apple.com", port: 443))
+
+        do {
+            _ = try await adapter.connect(request: request)
+            XCTFail("Expected unsupported transport")
+        } catch let error as ProxyProtocolError {
+            XCTAssertEqual(error, .unsupportedTransport(.grpc))
+            XCTAssertEqual(transport.requests, [])
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
     }
 
     func testShadowsocksProxyAdapterRejectsProtocolMismatchBeforeTransportOpen() async {

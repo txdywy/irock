@@ -917,11 +917,17 @@ private extension ProxyProtocolType {
     var shortDisplayText: String {
         switch self {
         case .shadowsocks: "SS"
+        case .shadowsocksR: "SSR"
         case .vmess: "VM"
         case .vless: "VL"
         case .trojan: "TR"
         case .hysteria2: "HY2"
         case .tuic: "TUIC"
+        case .socks: "SOCKS"
+        case .httpProxy: "HTTP"
+        case .snell: "SNELL"
+        case .wireGuard: "WG"
+        case .ssh: "SSH"
         case .trustTunnel: "TT"
         }
     }

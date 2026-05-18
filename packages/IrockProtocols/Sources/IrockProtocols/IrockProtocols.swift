@@ -714,6 +714,190 @@ public struct TrojanOpenRequest: Equatable, Sendable {
     }
 }
 
+public struct SOCKSOpenRequest: Equatable, Sendable {
+    public let destinationDescription: String
+    public let openBytes: Data
+    private let authenticationPresent: Bool
+    private let usernamePresent: Bool
+
+    public var metadata: [String: String] {
+        [
+            "socksAuthenticationPresent": authenticationPresent ? "true" : "false",
+            "socksUsernamePresent": usernamePresent ? "true" : "false",
+            "socksDestination": destinationDescription
+        ]
+    }
+
+    public init(credential: String?, destination: ProxyDestination) throws {
+        let frame = try ProtocolAddressFrame(destination: destination, domainType: 0x03, ipv4Type: 0x01, ipv6Type: 0x04)
+        let userPassword = try Self.userPassword(from: credential)
+        self.destinationDescription = frame.description
+        self.authenticationPresent = userPassword != nil
+        self.usernamePresent = userPassword != nil
+
+        var bytes = Data()
+        if let userPassword {
+            bytes.append(contentsOf: [0x05, 0x02, 0x00, 0x02, 0x01, UInt8(userPassword.username.count)])
+            bytes.append(userPassword.username)
+            bytes.append(UInt8(userPassword.password.count))
+            bytes.append(userPassword.password)
+        } else {
+            bytes.append(contentsOf: [0x05, 0x01, 0x00])
+        }
+        bytes.append(contentsOf: [0x05, 0x01, 0x00])
+        bytes.append(frame.bytes)
+        self.openBytes = bytes
+    }
+
+    private struct UserPassword: Equatable, Sendable {
+        let username: Data
+        let password: Data
+    }
+
+    private static func userPassword(from credential: String?) throws -> UserPassword? {
+        guard let credential else { return nil }
+        let trimmed = credential.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.lowercased() != "anonymous" else { return nil }
+
+        let usernameText: String
+        let passwordText: String
+        if let separator = trimmed.firstIndex(of: ":") {
+            usernameText = String(trimmed[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
+            passwordText = String(trimmed[trimmed.index(after: separator)...])
+        } else {
+            usernameText = trimmed
+            passwordText = ""
+        }
+
+        let username = Data(usernameText.utf8)
+        let password = Data(passwordText.utf8)
+        guard !username.isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing socks username")
+        }
+        guard username.count <= UInt8.max else {
+            throw ProxyProtocolError.invalidConfiguration("invalid socks username")
+        }
+        guard password.count <= UInt8.max else {
+            throw ProxyProtocolError.invalidConfiguration("invalid socks password")
+        }
+        return UserPassword(username: username, password: password)
+    }
+}
+
+public struct SnellOpenRequest: Equatable, Sendable {
+    public let version: Int
+    public let destinationDescription: String
+    public let openBytes: Data
+    private let passwordPresent: Bool
+    private let marker: String
+
+    public var metadata: [String: String] {
+        [
+            "snellVersion": "\(version)",
+            "snellPasswordPresent": passwordPresent ? "true" : "false",
+            "snellDestination": destinationDescription,
+            "snellNativeStreamMarker": marker
+        ]
+    }
+
+    public init(credential: String, destination: ProxyDestination) throws {
+        let parsed = try Self.parseCredential(credential)
+        self.version = parsed.version
+        self.passwordPresent = true
+        self.destinationDescription = Self.destinationDescription(destination)
+        self.marker = "irock-snell-native:v\(parsed.version):\(destinationDescription)"
+        self.openBytes = Data(marker.utf8)
+    }
+
+    private static func parseCredential(_ credential: String) throws -> (version: Int, password: String) {
+        let trimmed = credential.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing snell credential")
+        }
+        guard !trimmed.contains("?obfs=") && !trimmed.contains("&obfs=") else {
+            throw ProxyProtocolError.invalidConfiguration("unsupported snell obfs")
+        }
+        guard let separator = trimmed.firstIndex(of: ":") else {
+            throw ProxyProtocolError.invalidConfiguration("missing snell version")
+        }
+        let versionText = String(trimmed[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let password = String(trimmed[trimmed.index(after: separator)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let version = Int(versionText) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid snell version")
+        }
+        guard version == 1 else {
+            throw ProxyProtocolError.invalidConfiguration("unsupported snell version")
+        }
+        guard !password.isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing snell password")
+        }
+        return (version, password)
+    }
+
+    private static func destinationDescription(_ destination: ProxyDestination) -> String {
+        switch destination {
+        case let .host(host, port): return "host:\(host):\(port)"
+        case let .ipv4(address, port): return "ipv4:\(address):\(port)"
+        case let .ipv6(address, port): return "ipv6:\(address):\(port)"
+        }
+    }
+}
+
+public struct HTTPProxyOpenRequest: Equatable, Sendable {
+    public let destinationAuthority: String
+    public let openBytes: Data
+    private let authorizationPresent: Bool
+
+    public var metadata: [String: String] {
+        [
+            "httpProxyAuthorizationPresent": authorizationPresent ? "true" : "false",
+            "httpProxyDestination": destinationAuthority
+        ]
+    }
+
+    public init(credential: String?, destination: ProxyDestination) throws {
+        let authority = Self.authority(for: destination)
+        let authorization = try Self.authorizationHeader(from: credential)
+        self.destinationAuthority = authority
+        self.authorizationPresent = authorization != nil
+
+        var text = "CONNECT \(authority) HTTP/1.1\r\nHost: \(authority)\r\n"
+        if let authorization {
+            text += "Proxy-Authorization: \(authorization)\r\n"
+        }
+        text += "\r\n"
+        self.openBytes = Data(text.utf8)
+    }
+
+    private static func authorizationHeader(from credential: String?) throws -> String? {
+        guard let credential else { return nil }
+        let trimmed = credential.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.lowercased() != "anonymous" else { return nil }
+
+        let usernameText: String
+        if let separator = trimmed.firstIndex(of: ":") {
+            usernameText = String(trimmed[..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            usernameText = trimmed
+        }
+        guard !usernameText.isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing http proxy username")
+        }
+        return "Basic \(Data(trimmed.utf8).base64EncodedString())"
+    }
+
+    private static func authority(for destination: ProxyDestination) -> String {
+        switch destination {
+        case let .host(host, port):
+            return "\(host):\(port)"
+        case let .ipv4(address, port):
+            return "\(address):\(port)"
+        case let .ipv6(address, port):
+            return "[\(address)]:\(port)"
+        }
+    }
+}
+
 public struct Hysteria2AuthRequest: Equatable, Sendable {
     public let path: String
     public let method: String
@@ -1333,6 +1517,7 @@ public enum ProxyProtocolError: Error, Equatable, CustomStringConvertible, Senda
     case authenticationFailed(String)
     case unsupportedTransport(TransportType)
     case unsupportedProtocol(ProxyProtocolType)
+    case unsupportedNativeRuntime(ProxyProtocolType)
     case protocolHandshakeFailed(String)
     case quicHandshakeFailed(String)
     case udpUnsupported
@@ -1355,6 +1540,8 @@ public enum ProxyProtocolError: Error, Equatable, CustomStringConvertible, Senda
             return "Unsupported transport: \(transport.rawValue)"
         case let .unsupportedProtocol(protocolType):
             return "Unsupported protocol: \(protocolType.rawValue)"
+        case let .unsupportedNativeRuntime(protocolType):
+            return "Unsupported native runtime: \(protocolType.rawValue)"
         case .protocolHandshakeFailed:
             return "Protocol handshake failed"
         case .quicHandshakeFailed:
@@ -1429,6 +1616,18 @@ public struct UnsupportedProxyAdapter: ProxyAdapter {
 
     public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
         throw ProxyProtocolError.unsupportedProtocol(request.node.protocolType)
+    }
+}
+
+public struct UnsupportedNativeRuntimeProxyAdapter: ProxyAdapter {
+    public let supportedProtocol: ProxyProtocolType
+
+    public init(protocolType: ProxyProtocolType) {
+        self.supportedProtocol = protocolType
+    }
+
+    public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
+        throw ProxyProtocolError.unsupportedNativeRuntime(request.node.protocolType)
     }
 }
 
@@ -2098,6 +2297,334 @@ public struct MissingProxyCredentialResolver: ProxyCredentialResolver {
 }
 
 public typealias MissingShadowsocksCredentialResolver = MissingProxyCredentialResolver
+
+public struct HTTPProxyAdapter<CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
+    public let supportedProtocol: ProxyProtocolType = .httpProxy
+    private let transportRegistry: TransportAdapterRegistry
+    private let credentialResolver: CredentialResolver
+
+    public init(transportRegistry: TransportAdapterRegistry, credentialResolver: CredentialResolver) {
+        self.transportRegistry = transportRegistry
+        self.credentialResolver = credentialResolver
+    }
+
+    public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
+        try validate(request.node)
+        let credential = try credentialResolver.credential(for: request.node.credentialReference)
+        let openRequest = try HTTPProxyOpenRequest(credential: credential, destination: request.destination)
+        let transportRequest = TransportRequest(
+            host: request.node.serverHost,
+            port: request.node.serverPort,
+            transport: request.node.transport,
+            tls: request.node.tls.enabled ? request.node.tls : nil,
+            metadata: transportMetadata(for: request, openRequest: openRequest),
+            initialPayload: openRequest.openBytes
+        )
+        do {
+            _ = try await transportRegistry.adapter(for: request.node.transport).open(request: transportRequest)
+        } catch let error as TransportError {
+            throw proxyProtocolError(for: error)
+        }
+        return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination)
+    }
+
+    private func validate(_ node: ProxyNode) throws {
+        guard node.protocolType == .httpProxy else {
+            throw ProxyProtocolError.unsupportedProtocol(node.protocolType)
+        }
+        guard !node.serverHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing http proxy server host")
+        }
+        guard (1...65_535).contains(node.serverPort) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid http proxy server port")
+        }
+        guard node.transport == .tcp else {
+            throw ProxyProtocolError.unsupportedTransport(node.transport)
+        }
+    }
+
+    private func transportMetadata(for request: ProxyRequest, openRequest: HTTPProxyOpenRequest) -> [String: String] {
+        var metadata = request.metadata
+        metadata["proxyProtocol"] = request.node.protocolType.rawValue
+        metadata["destination"] = openRequest.destinationAuthority
+        for (key, value) in openRequest.metadata {
+            metadata[key] = value
+        }
+        return metadata
+    }
+
+    private func proxyProtocolError(for error: TransportError) -> ProxyProtocolError {
+        switch error {
+        case .invalidConfiguration:
+            return .invalidConfiguration("transport invalid")
+        case .dnsFailed:
+            return .dnsFailed("transport dns failed")
+        case .tcpConnectFailed:
+            return .tcpConnectFailed("transport tcp connect failed")
+        case .tlsHandshakeFailed:
+            return .tlsHandshakeFailed("transport tls handshake failed")
+        case let .unsupportedTransport(transport):
+            return .unsupportedTransport(transport)
+        case .quicHandshakeFailed:
+            return .quicHandshakeFailed("transport quic handshake failed")
+        case .remoteClosed:
+            return .remoteClosed
+        case .timeout:
+            return .timeout
+        }
+    }
+}
+
+public extension HTTPProxyAdapter where CredentialResolver == MissingProxyCredentialResolver {
+    init(transportRegistry: TransportAdapterRegistry) {
+        self.init(transportRegistry: transportRegistry, credentialResolver: MissingProxyCredentialResolver())
+    }
+}
+
+public struct SOCKSProxyAdapter<CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
+    public let supportedProtocol: ProxyProtocolType = .socks
+    private let transportRegistry: TransportAdapterRegistry
+    private let credentialResolver: CredentialResolver
+
+    public init(transportRegistry: TransportAdapterRegistry, credentialResolver: CredentialResolver) {
+        self.transportRegistry = transportRegistry
+        self.credentialResolver = credentialResolver
+    }
+
+    public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
+        try validate(request.node)
+        let credential = try credentialResolver.credential(for: request.node.credentialReference)
+        let openRequest = try SOCKSOpenRequest(credential: credential, destination: request.destination)
+        let transportRequest = TransportRequest(
+            host: request.node.serverHost,
+            port: request.node.serverPort,
+            transport: request.node.transport,
+            tls: request.node.tls.enabled ? request.node.tls : nil,
+            metadata: transportMetadata(for: request, openRequest: openRequest),
+            initialPayload: openRequest.openBytes
+        )
+        do {
+            _ = try await transportRegistry.adapter(for: request.node.transport).open(request: transportRequest)
+        } catch let error as TransportError {
+            throw proxyProtocolError(for: error)
+        }
+        return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination)
+    }
+
+    private func validate(_ node: ProxyNode) throws {
+        guard node.protocolType == .socks else {
+            throw ProxyProtocolError.unsupportedProtocol(node.protocolType)
+        }
+        guard !node.serverHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing socks server host")
+        }
+        guard (1...65_535).contains(node.serverPort) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid socks server port")
+        }
+        guard node.transport == .tcp else {
+            throw ProxyProtocolError.unsupportedTransport(node.transport)
+        }
+    }
+
+    private func transportMetadata(for request: ProxyRequest, openRequest: SOCKSOpenRequest) -> [String: String] {
+        var metadata = request.metadata
+        metadata["proxyProtocol"] = request.node.protocolType.rawValue
+        metadata["destination"] = openRequest.destinationDescription
+        for (key, value) in openRequest.metadata {
+            metadata[key] = value
+        }
+        return metadata
+    }
+
+    private func proxyProtocolError(for error: TransportError) -> ProxyProtocolError {
+        switch error {
+        case .invalidConfiguration:
+            return .invalidConfiguration("transport invalid")
+        case .dnsFailed:
+            return .dnsFailed("transport dns failed")
+        case .tcpConnectFailed:
+            return .tcpConnectFailed("transport tcp connect failed")
+        case .tlsHandshakeFailed:
+            return .tlsHandshakeFailed("transport tls handshake failed")
+        case let .unsupportedTransport(transport):
+            return .unsupportedTransport(transport)
+        case .quicHandshakeFailed:
+            return .quicHandshakeFailed("transport quic handshake failed")
+        case .remoteClosed:
+            return .remoteClosed
+        case .timeout:
+            return .timeout
+        }
+    }
+}
+
+public extension SOCKSProxyAdapter where CredentialResolver == MissingProxyCredentialResolver {
+    init(transportRegistry: TransportAdapterRegistry) {
+        self.init(transportRegistry: transportRegistry, credentialResolver: MissingProxyCredentialResolver())
+    }
+}
+
+public struct SnellProxyAdapter<CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
+    public let supportedProtocol: ProxyProtocolType = .snell
+    private let transportRegistry: TransportAdapterRegistry
+    private let credentialResolver: CredentialResolver
+
+    public init(transportRegistry: TransportAdapterRegistry, credentialResolver: CredentialResolver) {
+        self.transportRegistry = transportRegistry
+        self.credentialResolver = credentialResolver
+    }
+
+    public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
+        try validate(request.node)
+        let credential = try credentialResolver.credential(for: request.node.credentialReference)
+        let openRequest = try SnellOpenRequest(credential: credential, destination: request.destination)
+        let transportRequest = TransportRequest(
+            host: request.node.serverHost,
+            port: request.node.serverPort,
+            transport: request.node.transport,
+            tls: request.node.tls.enabled ? request.node.tls : nil,
+            metadata: transportMetadata(for: request, openRequest: openRequest),
+            initialPayload: openRequest.openBytes
+        )
+        do {
+            _ = try await transportRegistry.adapter(for: request.node.transport).open(request: transportRequest)
+        } catch let error as TransportError {
+            throw proxyProtocolError(for: error)
+        }
+        return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination)
+    }
+
+    private func validate(_ node: ProxyNode) throws {
+        guard node.protocolType == .snell else {
+            throw ProxyProtocolError.unsupportedProtocol(node.protocolType)
+        }
+        guard !node.serverHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing snell server host")
+        }
+        guard (1...65_535).contains(node.serverPort) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid snell server port")
+        }
+        guard node.transport == .tcp else {
+            throw ProxyProtocolError.unsupportedTransport(node.transport)
+        }
+    }
+
+    private func transportMetadata(for request: ProxyRequest, openRequest: SnellOpenRequest) -> [String: String] {
+        var metadata = request.metadata
+        metadata["proxyProtocol"] = request.node.protocolType.rawValue
+        metadata["destination"] = openRequest.destinationDescription
+        for (key, value) in openRequest.metadata {
+            metadata[key] = value
+        }
+        return metadata
+    }
+
+    private func proxyProtocolError(for error: TransportError) -> ProxyProtocolError {
+        switch error {
+        case .invalidConfiguration: return .invalidConfiguration("transport invalid")
+        case .dnsFailed: return .dnsFailed("transport dns failed")
+        case .tcpConnectFailed: return .tcpConnectFailed("transport tcp connect failed")
+        case .tlsHandshakeFailed: return .tlsHandshakeFailed("transport tls handshake failed")
+        case let .unsupportedTransport(transport): return .unsupportedTransport(transport)
+        case .quicHandshakeFailed: return .quicHandshakeFailed("transport quic handshake failed")
+        case .remoteClosed: return .remoteClosed
+        case .timeout: return .timeout
+        }
+    }
+}
+
+public extension SnellProxyAdapter where CredentialResolver == MissingProxyCredentialResolver {
+    init(transportRegistry: TransportAdapterRegistry) {
+        self.init(transportRegistry: transportRegistry, credentialResolver: MissingProxyCredentialResolver())
+    }
+}
+
+public struct ShadowsocksRProxyAdapter<CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
+    public let supportedProtocol: ProxyProtocolType = .shadowsocksR
+    private let transportRegistry: TransportAdapterRegistry
+    private let credentialResolver: CredentialResolver
+
+    public init(transportRegistry: TransportAdapterRegistry, credentialResolver: CredentialResolver) {
+        self.transportRegistry = transportRegistry
+        self.credentialResolver = credentialResolver
+    }
+
+    public func connect(request: ProxyRequest) async throws -> any ProxyConnection {
+        try validate(request.node)
+        let credential = try credentialResolver.credential(for: request.node.credentialReference)
+        let streamRequest = try ShadowsocksStreamRequest(
+            credential: credential,
+            destination: request.destination,
+            salt: Data.random(count: try ShadowsocksStreamRequest.saltLength(forCredential: credential))
+        )
+        let transportRequest = TransportRequest(
+            host: request.node.serverHost,
+            port: request.node.serverPort,
+            transport: request.node.transport,
+            tls: request.node.tls.enabled ? request.node.tls : nil,
+            metadata: transportMetadata(for: request, streamRequest: streamRequest),
+            initialPayload: streamRequest.openBytes
+        )
+        do {
+            _ = try await transportRegistry.adapter(for: request.node.transport).open(request: transportRequest)
+        } catch let error as TransportError {
+            throw proxyProtocolError(for: error)
+        }
+        return EstablishedProxyConnection(nodeID: request.node.id, destination: request.destination)
+    }
+
+    private func validate(_ node: ProxyNode) throws {
+        guard node.protocolType == .shadowsocksR else {
+            throw ProxyProtocolError.unsupportedProtocol(node.protocolType)
+        }
+        guard !node.serverHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ProxyProtocolError.invalidConfiguration("missing shadowsocksr server host")
+        }
+        guard (1...65_535).contains(node.serverPort) else {
+            throw ProxyProtocolError.invalidConfiguration("invalid shadowsocksr server port")
+        }
+        guard node.transport == .tcp else {
+            throw ProxyProtocolError.unsupportedTransport(node.transport)
+        }
+    }
+
+    private func transportMetadata(for request: ProxyRequest, streamRequest: ShadowsocksStreamRequest) -> [String: String] {
+        var metadata = request.metadata
+        metadata["proxyProtocol"] = request.node.protocolType.rawValue
+        metadata["destination"] = destinationDescription(request.destination)
+        for (key, value) in streamRequest.metadata {
+            metadata[key] = value
+        }
+        return metadata
+    }
+
+    private func destinationDescription(_ destination: ProxyDestination) -> String {
+        switch destination {
+        case let .host(host, port): return "host:\(host):\(port)"
+        case let .ipv4(address, port): return "ipv4:\(address):\(port)"
+        case let .ipv6(address, port): return "ipv6:\(address):\(port)"
+        }
+    }
+
+    private func proxyProtocolError(for error: TransportError) -> ProxyProtocolError {
+        switch error {
+        case .invalidConfiguration: return .invalidConfiguration("transport invalid")
+        case .dnsFailed: return .dnsFailed("transport dns failed")
+        case .tcpConnectFailed: return .tcpConnectFailed("transport tcp connect failed")
+        case .tlsHandshakeFailed: return .tlsHandshakeFailed("transport tls handshake failed")
+        case let .unsupportedTransport(transport): return .unsupportedTransport(transport)
+        case .quicHandshakeFailed: return .quicHandshakeFailed("transport quic handshake failed")
+        case .remoteClosed: return .remoteClosed
+        case .timeout: return .timeout
+        }
+    }
+}
+
+public extension ShadowsocksRProxyAdapter where CredentialResolver == MissingProxyCredentialResolver {
+    init(transportRegistry: TransportAdapterRegistry) {
+        self.init(transportRegistry: transportRegistry, credentialResolver: MissingProxyCredentialResolver())
+    }
+}
 
 public struct ShadowsocksProxyAdapter<CredentialResolver: ProxyCredentialResolver>: ProxyAdapter {
     public let supportedProtocol: ProxyProtocolType = .shadowsocks

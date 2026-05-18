@@ -1,4 +1,5 @@
 import Foundation
+import IrockCore
 import XCTest
 
 final class ProtocolValidationTests: XCTestCase {
@@ -46,6 +47,21 @@ final class ProtocolValidationTests: XCTestCase {
 
     private var alphaProtocolNames: [String] {
         ["Shadowsocks", "VMess", "VLESS", "Trojan", "Hysteria2", "TUIC"]
+    }
+
+    func testShadowrocketProtocolFamiliesAreTrackedWithoutDroppingAlphaProtocols() {
+        let names = shadowrocketProtocolNames
+
+        for protocolName in alphaProtocolNames {
+            XCTAssertTrue(names.contains(protocolName), "Missing alpha protocol \(protocolName)")
+        }
+        for protocolName in ["ShadowsocksR", "SOCKS", "HTTP Proxy", "Snell", "WireGuard", "SSH"] {
+            XCTAssertTrue(names.contains(protocolName), "Missing Shadowrocket protocol \(protocolName)")
+        }
+    }
+
+    private var shadowrocketProtocolNames: [String] {
+        ProxyProtocolType.shadowrocketDisplayNames
     }
 
     private var requiredM51ValidationPaths: [String] {

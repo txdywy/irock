@@ -32,16 +32,28 @@ public enum URIImport {
         switch scheme {
         case "ss":
             return URIImportResult(protocolType: .shadowsocks, originalText: text)
+        case "ssr":
+            return URIImportResult(protocolType: .shadowsocksR, originalText: text)
         case "vmess":
             return URIImportResult(protocolType: .vmess, originalText: text)
         case "vless":
             return URIImportResult(protocolType: .vless, originalText: text)
         case "trojan":
             return URIImportResult(protocolType: .trojan, originalText: text)
-        case "hysteria2", "hy2", "realm":
+        case "hysteria", "hysteria2", "hy2", "realm":
             return URIImportResult(protocolType: .hysteria2, originalText: text)
         case "tuic":
             return URIImportResult(protocolType: .tuic, originalText: text)
+        case "socks", "socks5":
+            return URIImportResult(protocolType: .socks, originalText: text)
+        case "http", "https":
+            return URIImportResult(protocolType: .httpProxy, originalText: text)
+        case "snell":
+            return URIImportResult(protocolType: .snell, originalText: text)
+        case "wireguard", "wg":
+            return URIImportResult(protocolType: .wireGuard, originalText: text)
+        case "ssh":
+            return URIImportResult(protocolType: .ssh, originalText: text)
         case "tt":
             return URIImportResult(protocolType: .trustTunnel, originalText: text)
         default:
@@ -56,11 +68,17 @@ public enum URIImport {
         }
         switch scheme {
         case "ss": return try parseShadowsocksDraft(uriText)
+        case "ssr": return try parseShadowsocksRDraft(uriText)
         case "vmess": return try parseVMessDraft(uriText)
         case "vless": return try parseVLESSDraft(uriText)
         case "trojan": return try parseTrojanDraft(uriText)
-        case "hysteria2", "hy2", "realm": return try parseHysteria2Draft(uriText)
+        case "hysteria", "hysteria2", "hy2", "realm": return try parseHysteria2Draft(uriText)
         case "tuic": return try parseTUICDraft(uriText)
+        case "socks", "socks5": return try parseSOCKSDraft(uriText)
+        case "http", "https": return try parseHTTPProxyDraft(uriText)
+        case "snell": return try parseSnellDraft(uriText)
+        case "wireguard", "wg": return try parseWireGuardDraft(uriText)
+        case "ssh": return try parseSSHDraft(uriText)
         case "tt": return try parseTrustTunnelDraft(uriText)
         default: throw URIImportError.unsupportedScheme(scheme)
         }
@@ -102,6 +120,39 @@ public enum URIImport {
             serverHost: parsed.host,
             serverPortText: parsed.port,
             credentialAccount: parsed.userInfo,
+            transport: .tcp,
+            tlsEnabled: false,
+            tlsServerName: "",
+            udpEnabled: false
+        )
+    }
+
+    private static func parseShadowsocksRDraft(_ text: String) throws -> NodeDraft {
+        let components = try components(text)
+        guard components.scheme?.lowercased() == "ssr" else { throw URIImportError.unsupportedScheme(components.scheme ?? "") }
+        let encoded = String(text.dropFirst("ssr://".count))
+        let decoded = try decodeBase64String(encoded)
+        let parts = decoded.split(separator: ":", maxSplits: 5, omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 6 else { throw URIImportError.malformedURI }
+        let host = parts[0]
+        let port = parts[1]
+        let protocolName = parts[2].lowercased()
+        let method = parts[3]
+        let obfs = parts[4].lowercased()
+        let passwordAndParams = parts[5]
+        guard protocolName == "origin" else { throw URIImportError.unsupportedOption("ssr protocol") }
+        guard obfs == "plain" else { throw URIImportError.unsupportedOption("ssr obfs") }
+        guard let slashIndex = passwordAndParams.firstIndex(of: "/") else { throw URIImportError.malformedURI }
+        let password = try decodeBase64String(String(passwordAndParams[..<slashIndex]))
+        let queryText = String(passwordAndParams[passwordAndParams.index(after: slashIndex)...])
+        let query = ssrQueryItems(queryText)
+        let name = (try? query["remarks"].map(decodeBase64String)) ?? nil
+        return NodeDraft(
+            name: name?.isEmpty == false ? name! : "\(host):\(port)",
+            protocolType: .shadowsocksR,
+            serverHost: host,
+            serverPortText: port,
+            credentialAccount: "\(method):\(password)",
             transport: .tcp,
             tlsEnabled: false,
             tlsServerName: "",
@@ -204,7 +255,7 @@ public enum URIImport {
 
     private static func parseHysteria2Draft(_ text: String) throws -> NodeDraft {
         let components = try components(text)
-        guard ["hysteria2", "hy2", "realm"].contains(components.scheme?.lowercased() ?? "") else {
+        guard ["hysteria", "hysteria2", "hy2", "realm"].contains(components.scheme?.lowercased() ?? "") else {
             throw URIImportError.unsupportedScheme(components.scheme ?? "")
         }
         let credential = try requiredUserInfo(components)
@@ -246,6 +297,116 @@ public enum URIImport {
             tlsServerName: query["sni"] ?? host,
             udpEnabled: true,
             tlsALPN: splitList(query["alpn"])
+        )
+    }
+
+    private static func parseSOCKSDraft(_ text: String) throws -> NodeDraft {
+        let components = try components(text)
+        guard ["socks", "socks5"].contains(components.scheme?.lowercased() ?? "") else {
+            throw URIImportError.unsupportedScheme(components.scheme ?? "")
+        }
+        let host = try requiredHost(components)
+        let port = try requiredPort(components, defaultPort: 1080)
+        return NodeDraft(
+            name: nodeName(components, host: host, port: port),
+            protocolType: .socks,
+            serverHost: host,
+            serverPortText: String(port),
+            credentialAccount: optionalUserInfo(components) ?? "anonymous",
+            transport: .tcp,
+            tlsEnabled: false,
+            tlsServerName: "",
+            udpEnabled: false
+        )
+    }
+
+    private static func parseHTTPProxyDraft(_ text: String) throws -> NodeDraft {
+        let components = try components(text)
+        let scheme = components.scheme?.lowercased() ?? ""
+        guard scheme == "http" || scheme == "https" else { throw URIImportError.unsupportedScheme(components.scheme ?? "") }
+        let host = try requiredHost(components)
+        let port = try requiredPort(components, defaultPort: scheme == "https" ? 443 : 80)
+        return NodeDraft(
+            name: nodeName(components, host: host, port: port),
+            protocolType: .httpProxy,
+            serverHost: host,
+            serverPortText: String(port),
+            credentialAccount: optionalUserInfo(components) ?? "anonymous",
+            transport: .tcp,
+            tlsEnabled: scheme == "https",
+            tlsServerName: host,
+            udpEnabled: false
+        )
+    }
+
+    private static func parseSnellDraft(_ text: String) throws -> NodeDraft {
+        let components = try components(text)
+        guard components.scheme?.lowercased() == "snell" else { throw URIImportError.unsupportedScheme(components.scheme ?? "") }
+        let credential = try requiredUserInfo(components)
+        let host = try requiredHost(components)
+        let port = try requiredPort(components, defaultPort: 440)
+        let query = queryItems(components)
+        if let obfs = query["obfs"], !obfs.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw URIImportError.unsupportedOption("snell obfs")
+        }
+        let version = query["version"] ?? "1"
+        guard version == "1" else { throw URIImportError.unsupportedOption("snell version") }
+        return NodeDraft(
+            name: nodeName(components, host: host, port: port),
+            protocolType: .snell,
+            serverHost: host,
+            serverPortText: String(port),
+            credentialAccount: "\(version):\(credential)",
+            transport: .tcp,
+            tlsEnabled: false,
+            tlsServerName: "",
+            udpEnabled: false
+        )
+    }
+
+    private static func parseWireGuardDraft(_ text: String) throws -> NodeDraft {
+        let components = try components(text)
+        guard ["wireguard", "wg"].contains(components.scheme?.lowercased() ?? "") else {
+            throw URIImportError.unsupportedScheme(components.scheme ?? "")
+        }
+        let privateKey = try requiredUserInfo(components)
+        let host = try requiredHost(components)
+        let port = try requiredPort(components, defaultPort: 51820)
+        let query = queryItems(components)
+        guard let publicKey = query["publicKey"], let address = query["address"] else { throw URIImportError.missingUserInfo }
+        return NodeDraft(
+            name: nodeName(components, host: host, port: port),
+            protocolType: .wireGuard,
+            serverHost: host,
+            serverPortText: String(port),
+            credentialAccount: "privateKey=\(privateKey);publicKey=\(publicKey);address=\(address)",
+            transport: .quic,
+            tlsEnabled: false,
+            tlsServerName: "",
+            udpEnabled: true
+        )
+    }
+
+    private static func parseSSHDraft(_ text: String) throws -> NodeDraft {
+        let components = try components(text)
+        guard components.scheme?.lowercased() == "ssh" else { throw URIImportError.unsupportedScheme(components.scheme ?? "") }
+        guard let user = components.percentEncodedUser?.removingPercentEncoding, !user.isEmpty,
+              let password = components.percentEncodedPassword?.removingPercentEncoding, !password.isEmpty else {
+            throw URIImportError.missingUserInfo
+        }
+        let credential = "\(user):\(password)"
+        let host = try requiredHost(components)
+        let port = try requiredPort(components, defaultPort: 22)
+        return NodeDraft(
+            name: nodeName(components, host: host, port: port),
+            protocolType: .ssh,
+            serverHost: host,
+            serverPortText: String(port),
+            credentialAccount: credential,
+            transport: .tcp,
+            tlsEnabled: false,
+            tlsServerName: "",
+            udpEnabled: false
         )
     }
 
@@ -379,7 +540,7 @@ public enum URIImport {
 
     private static func extractSupportedURI(from text: String) throws -> String {
         let compact = text.split(whereSeparator: \.isWhitespace).joined()
-        for scheme in ["hysteria2", "vmess", "vless", "trojan", "tuic", "realm", "hy2", "tt", "ss"] {
+        for scheme in ["wireguard", "hysteria2", "hysteria", "socks5", "vmess", "vless", "trojan", "snell", "tuic", "realm", "hy2", "http", "https", "socks", "ssh", "ssr", "tt", "wg", "ss"] {
             if let range = compact.range(of: "\(scheme)://", options: .caseInsensitive) {
                 let candidate = String(compact[range.lowerBound...].prefix { $0.isASCII && !$0.isWhitespace })
                 return String(candidate.split(separator: "，", maxSplits: 1, omittingEmptySubsequences: false)[0])
@@ -443,6 +604,16 @@ public enum URIImport {
         return user
     }
 
+    private static func optionalUserInfo(_ components: URLComponents) -> String? {
+        guard let user = components.percentEncodedUser?.removingPercentEncoding, !user.isEmpty else {
+            return nil
+        }
+        if let password = components.percentEncodedPassword?.removingPercentEncoding, !password.isEmpty {
+            return "\(user):\(password)"
+        }
+        return user
+    }
+
     private static func requiredHost(_ components: URLComponents) throws -> String {
         guard let host = components.host?.trimmingCharacters(in: .whitespacesAndNewlines), !host.isEmpty else {
             throw URIImportError.missingHost
@@ -473,6 +644,17 @@ public enum URIImport {
         for item in components.queryItems ?? [] {
             guard let value = item.value, !value.isEmpty else { continue }
             result[item.name] = value
+        }
+        return result
+    }
+
+    private static func ssrQueryItems(_ text: String) -> [String: String] {
+        let query = text.hasPrefix("?") ? String(text.dropFirst()) : text
+        var result: [String: String] = [:]
+        for item in query.split(separator: "&") {
+            let parts = item.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            result[String(parts[0])] = String(parts[1]).removingPercentEncoding ?? String(parts[1])
         }
         return result
     }
