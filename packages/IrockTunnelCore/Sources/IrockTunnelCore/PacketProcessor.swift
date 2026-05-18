@@ -118,23 +118,26 @@ public struct PacketProcessor: Sendable {
             return PacketProcessingResult(packet: packet, parsedPacket: nil, flowKey: nil, action: .drop(.noRoute))
         }
 
-        let record = flowTable.record(parsed)
+        let sniffedHost = DNSSniffer.sniff(packet: parsed)?.host
+        let record = flowTable.record(parsed, host: sniffedHost)
         let key = record.key
-        return PacketProcessingResult(packet: packet, parsedPacket: parsed, flowKey: key, action: action(for: parsed, key: key))
+        
+        let decisionHost = record.host
+        return PacketProcessingResult(packet: packet, parsedPacket: parsed, flowKey: key, action: action(for: parsed, key: key, host: decisionHost))
     }
 
     public mutating func process(_ packets: [Packet]) -> [PacketProcessingResult] {
         packets.prefix(configuration.batchLimit).map { process($0) }
     }
 
-    private func action(for packet: ParsedPacket, key: FlowKey) -> PacketAction {
+    private func action(for packet: ParsedPacket, key: FlowKey, host: String?) -> PacketAction {
         switch configuration.routeMode {
         case .globalProxy:
             return .proxy(key)
         case .direct:
             return .direct(key)
         case .ruleBased:
-            let decision = configuration.routingEngine.resolve(RoutingContext(host: nil, ipAddress: packet.destinationIP.stringValue, port: packet.destinationPort))
+            let decision = configuration.routingEngine.resolve(RoutingContext(host: host, ipAddress: packet.destinationIP.stringValue, port: packet.destinationPort))
             switch decision.action {
             case .direct:
                 return .direct(key)

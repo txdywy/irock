@@ -1,3 +1,4 @@
+import Darwin
 public enum RoutingAction: Equatable, Sendable {
     case direct
     case proxy
@@ -85,8 +86,14 @@ public enum RoutingRuleParser {
             case "DOMAIN-KEYWORD":
                 rules.append(.domainKeyword(value, action))
             case "IP-CIDR":
-                guard IPv4CIDR(value) != nil else {
-                    throw RoutingRuleParseError.invalidCIDR(line: lineNumber, value: value)
+                if value.contains(":") {
+                    guard IPv6CIDR(value) != nil else {
+                        throw RoutingRuleParseError.invalidCIDR(line: lineNumber, value: value)
+                    }
+                } else {
+                    guard IPv4CIDR(value) != nil else {
+                        throw RoutingRuleParseError.invalidCIDR(line: lineNumber, value: value)
+                    }
                 }
                 rules.append(.ipCIDR(value, action))
             default:
@@ -127,7 +134,11 @@ public struct CompiledRoutingRules: Sendable {
             case let .domainKeyword(keyword, action):
                 return .domainKeyword(rule, keyword.lowercased(), action)
             case let .ipCIDR(cidr, action):
-                return .ipCIDR(rule, IPv4CIDR(cidr), action)
+                if cidr.contains(":") {
+                    return .ip6CIDR(rule, IPv6CIDR(cidr), action)
+                } else {
+                    return .ipCIDR(rule, IPv4CIDR(cidr), action)
+                }
             case let .final(action):
                 return .final(rule, action)
             }
@@ -140,6 +151,7 @@ private enum CompiledRoutingRule: Sendable {
     case domainSuffix(RoutingRule, String, RoutingAction)
     case domainKeyword(RoutingRule, String, RoutingAction)
     case ipCIDR(RoutingRule, IPv4CIDR?, RoutingAction)
+    case ip6CIDR(RoutingRule, IPv6CIDR?, RoutingAction)
     case final(RoutingRule, RoutingAction)
 }
 
@@ -160,6 +172,7 @@ public struct RoutingEngine: Sendable {
     public func resolve(_ context: RoutingContext) -> RoutingDecision {
         let normalizedHost = context.host?.normalizedRoutingHost()
         let ipAddress = context.ipAddress.flatMap(IPv4Address.init)
+        let ip6Address = context.ipAddress.flatMap(IPv6Address.init)
 
         for entry in compiledRules.entries {
             switch entry {
@@ -177,6 +190,10 @@ public struct RoutingEngine: Sendable {
                 }
             case let .ipCIDR(rule, cidr, action):
                 if let cidr, let ipAddress, cidr.contains(ipAddress) {
+                    return RoutingDecision(action: action, matchedRule: rule)
+                }
+            case let .ip6CIDR(rule, cidr, action):
+                if let cidr, let ip6Address, cidr.contains(ip6Address) {
                     return RoutingDecision(action: action, matchedRule: rule)
                 }
             case let .final(rule, action):
@@ -238,6 +255,56 @@ private struct IPv4CIDR: Sendable {
 
     func contains(_ address: IPv4Address) -> Bool {
         (address.rawValue & mask) == network.rawValue
+    }
+}
+
+
+private struct IPv6Address: Equatable, Sendable {
+    let high: UInt64
+    let low: UInt64
+
+    init?(_ text: String) {
+        var storage = in6_addr()
+        guard text.withCString({ inet_pton(AF_INET6, $0, &storage) }) == 1 else { return nil }
+        let (h, l) = withUnsafeBytes(of: storage) { bytes -> (UInt64, UInt64) in
+            let h = bytes.load(fromByteOffset: 0, as: UInt64.self).bigEndian
+            let l = bytes.load(fromByteOffset: 8, as: UInt64.self).bigEndian
+            return (h, l)
+        }
+        self.high = h
+        self.low = l
+    }
+    
+    init(high: UInt64, low: UInt64) {
+        self.high = high
+        self.low = low
+    }
+}
+
+private struct IPv6CIDR: Sendable {
+    let network: IPv6Address
+    let prefixLength: Int
+    let highMask: UInt64
+    let lowMask: UInt64
+
+    init?(_ text: String) {
+        let parts = text.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              let address = IPv6Address(String(parts[0])),
+              let prefixLength = Int(parts[1]),
+              (0...128).contains(prefixLength) else {
+            return nil
+        }
+        let hMask: UInt64 = prefixLength == 0 ? 0 : (prefixLength <= 64 ? (prefixLength == 64 ? .max : ~(UInt64.max >> prefixLength)) : .max)
+        let lMask: UInt64 = prefixLength <= 64 ? 0 : (prefixLength == 128 ? .max : ~(UInt64.max >> (prefixLength - 64)))
+        self.highMask = hMask
+        self.lowMask = lMask
+        self.network = IPv6Address(high: address.high & hMask, low: address.low & lMask)
+        self.prefixLength = prefixLength
+    }
+
+    func contains(_ address: IPv6Address) -> Bool {
+        (address.high & highMask) == network.high && (address.low & lowMask) == network.low
     }
 }
 

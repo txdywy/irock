@@ -28,11 +28,13 @@ public struct FlowRecord: Equatable, Sendable {
     public let key: FlowKey
     public let packetCount: Int
     public let lastSeenSequence: Int
+    public let host: String?
 
-    public init(key: FlowKey, packetCount: Int, lastSeenSequence: Int) {
+    public init(key: FlowKey, packetCount: Int, lastSeenSequence: Int, host: String? = nil) {
         self.key = key
         self.packetCount = packetCount
         self.lastSeenSequence = lastSeenSequence
+        self.host = host
     }
 }
 
@@ -54,17 +56,17 @@ public struct FlowTable: Equatable, Sendable {
         return records[index]
     }
 
-    public mutating func record(_ packet: ParsedPacket) -> FlowRecord {
+    public mutating func record(_ packet: ParsedPacket, host: String? = nil) -> FlowRecord {
         let key = FlowKey(packet)
         sequence += 1
 
         if let index = recordIndexByKey[key] {
-            let updated = FlowRecord(key: key, packetCount: records[index].packetCount + 1, lastSeenSequence: sequence)
+            let updated = FlowRecord(key: key, packetCount: records[index].packetCount + 1, lastSeenSequence: sequence, host: host ?? records[index].host)
             records[index] = updated
             return updated
         }
 
-        let inserted = FlowRecord(key: key, packetCount: 1, lastSeenSequence: sequence)
+        let inserted = FlowRecord(key: key, packetCount: 1, lastSeenSequence: sequence, host: host)
         guard capacity > 0 else { return inserted }
 
         records.append(inserted)
@@ -83,5 +85,42 @@ public struct FlowTable: Equatable, Sendable {
         for index in startIndex..<records.count {
             recordIndexByKey[records[index].key] = index
         }
+    }
+}
+
+public struct DNSSniffer {
+    public static func sniff(packet: ParsedPacket) -> (ip: IPAddress, host: String)? {
+        guard packet.isDNSCandidate else { return nil }
+        let payload = packet.udpPayload
+        guard payload.count > 12 else { return nil }
+        
+        let qdcount = (Int(payload[4]) << 8) | Int(payload[5])
+        guard qdcount > 0 else { return nil }
+        
+        var offset = 12
+        var name = ""
+        while offset < payload.count {
+            let length = Int(payload[offset])
+            if length == 0 {
+                offset += 1
+                break
+            }
+            if length & 0xc0 == 0xc0 {
+                offset += 2
+                break
+            }
+            offset += 1
+            guard offset + length <= payload.count else { return nil }
+            if !name.isEmpty { name += "." }
+            let label = String(decoding: payload[offset..<offset+length], as: UTF8.self)
+            name += label
+            offset += length
+        }
+        guard !name.isEmpty else { return nil }
+        // Simple sniffer just to associate the query name with the DNS request flow
+        // In a real implementation, you'd parse the DNS response to associate the IP.
+        // For a local tunnel, often the destination IP is tracked if we implement a fake IP pool,
+        // or we sniff DNS responses.
+        return nil // Placeholder since we need DNS responses, not requests, to map IP -> Host
     }
 }

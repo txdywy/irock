@@ -22,6 +22,7 @@ final class IrockRoutingTests: XCTestCase {
             "DOMAIN-SUFFIX,apple.com,DIRECT",
             "DOMAIN-KEYWORD,google,PROXY",
             "IP-CIDR,10.0.0.0/8,DIRECT",
+            "IP-CIDR,2001:db8::/32,PROXY",
             "FINAL,REJECT"
         ])
 
@@ -30,6 +31,7 @@ final class IrockRoutingTests: XCTestCase {
             .domainSuffix("apple.com", .direct),
             .domainKeyword("google", .proxy),
             .ipCIDR("10.0.0.0/8", .direct),
+            .ipCIDR("2001:db8::/32", .proxy),
             .final(.reject)
         ])
     }
@@ -149,6 +151,17 @@ final class IrockRoutingTests: XCTestCase {
 
         XCTAssertEqual(matched.action, .direct)
         XCTAssertEqual(matched.matchedRule, .ipCIDR("10.0.0.0/8", .direct))
+        XCTAssertEqual(missed.action, .proxy)
+        XCTAssertEqual(missed.matchedRule, .final(.proxy))
+    }
+
+    func testIPCIDRRuleMatchesIPv6Address() {
+        let engine = RoutingEngine(rules: [.ipCIDR("2001:db8::/32", .direct), .final(.proxy)])
+        let matched = engine.resolve(RoutingContext(host: nil, ipAddress: "2001:db8::1234", port: 443))
+        let missed = engine.resolve(RoutingContext(host: nil, ipAddress: "2002:db8::1234", port: 443))
+
+        XCTAssertEqual(matched.action, .direct)
+        XCTAssertEqual(matched.matchedRule, .ipCIDR("2001:db8::/32", .direct))
         XCTAssertEqual(missed.action, .proxy)
         XCTAssertEqual(missed.matchedRule, .final(.proxy))
     }
