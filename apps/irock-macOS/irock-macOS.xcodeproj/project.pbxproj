@@ -24,15 +24,10 @@
 		IROCKAPPUDPBUILD001 /* MacOSPlatformUDPDatagramClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKUDPFILEREF0001 /* MacOSPlatformUDPDatagramClient.swift */;};
 		IROCKASSETSBUILD00001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = IROCKASSETSFILEREF001 /* Assets.xcassets */;};
 		IROCKPROVIDERBUILD00001 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKPROVIDERFILEREF001 /* PacketTunnelProvider.swift */;};
-		IROCKFLOWIOBUILD000001 /* NEPacketTunnelFlowPacketFlowIO.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKFLOWIOFILEREF00001 /* NEPacketTunnelFlowPacketFlowIO.swift */;};
-		IROCKSTORERESBUILD0001 /* PacketTunnelAppGroupStoreResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKSTORERESFILEREF001 /* PacketTunnelAppGroupStoreResolver.swift */;};
 		IROCKSMOKERUNBUILD0001 /* MacOSPacketTunnelSmokeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKSMOKERUNFILEREF001 /* MacOSPacketTunnelSmokeRunner.swift */;};
 		IROCKLOOPRUNBUILD001 /* MacOSPacketTunnelLoopRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKLOOPRUNFILEREF01 /* MacOSPacketTunnelLoopRunner.swift */;};
 		IROCKTCPDIALBUILD001 /* MacOSPlatformTCPDialer.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKTCPDIALFILEREF01 /* MacOSPlatformTCPDialer.swift */;};
 		IROCKTUNUDPBUILD001 /* MacOSPlatformUDPDatagramClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKUDPFILEREF0001 /* MacOSPlatformUDPDatagramClient.swift */;};
-		IROCKSETCFGDBUILD001 /* PacketTunnelRuntimeSettingsConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKSETCFGDFILEREF1 /* PacketTunnelRuntimeSettingsConfiguration.swift */;};
-		IROCKSETFACTBUILD01 /* PacketTunnelRuntimeSettingsFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKSETFACTFILEREF01 /* PacketTunnelRuntimeSettingsFactory.swift */;};
-		IROCKSETAPPBUILD001 /* PacketTunnelRuntimeSettingsApplicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = IROCKSETAPPFILEREF001 /* PacketTunnelRuntimeSettingsApplicator.swift */;};
 		IROCKTUNNELEMBEDBUILD01 /* irockMacTunnelExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = IROCKTUNNELPRODUCT000001 /* irockMacTunnelExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, );};};
 /* End PBXBuildFile section */
 
@@ -150,15 +145,10 @@
 			isa = PBXGroup;
 			children = (
 				IROCKPROVIDERFILEREF001 /* PacketTunnelProvider.swift */,
-				IROCKFLOWIOFILEREF00001 /* NEPacketTunnelFlowPacketFlowIO.swift */,
-				IROCKSTORERESFILEREF001 /* PacketTunnelAppGroupStoreResolver.swift */,
 				IROCKSMOKERUNFILEREF001 /* MacOSPacketTunnelSmokeRunner.swift */,
 				IROCKLOOPRUNFILEREF01 /* MacOSPacketTunnelLoopRunner.swift */,
 				IROCKTCPDIALFILEREF01 /* MacOSPlatformTCPDialer.swift */,
 				IROCKUDPFILEREF0001 /* MacOSPlatformUDPDatagramClient.swift */,
-				IROCKSETCFGDFILEREF1 /* PacketTunnelRuntimeSettingsConfiguration.swift */,
-				IROCKSETFACTFILEREF01 /* PacketTunnelRuntimeSettingsFactory.swift */,
-				IROCKSETAPPFILEREF001 /* PacketTunnelRuntimeSettingsApplicator.swift */,
 				IROCKTUNNELINFOFILEREF1 /* Info.plist */,
 				IROCKTUNNELENTITLEFILEREF /* irockMacTunnelExtension.entitlements */,
 			);
@@ -193,15 +183,10 @@
 		IROCKAPPINFOFILEREF001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>";};
 		IROCKAPPENTITLEFILEREF1 /* irockMacApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = irockMacApp.entitlements; sourceTree = "<group>";};
 		IROCKPROVIDERFILEREF001 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>";};
-		IROCKFLOWIOFILEREF00001 /* NEPacketTunnelFlowPacketFlowIO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NEPacketTunnelFlowPacketFlowIO.swift; sourceTree = "<group>";};
-		IROCKSTORERESFILEREF001 /* PacketTunnelAppGroupStoreResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelAppGroupStoreResolver.swift; sourceTree = "<group>";};
 		IROCKSMOKERUNFILEREF001 /* MacOSPacketTunnelSmokeRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSPacketTunnelSmokeRunner.swift; sourceTree = "<group>";};
 		IROCKLOOPRUNFILEREF01 /* MacOSPacketTunnelLoopRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSPacketTunnelLoopRunner.swift; sourceTree = "<group>";};
 		IROCKTCPDIALFILEREF01 /* MacOSPlatformTCPDialer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSPlatformTCPDialer.swift; sourceTree = "<group>";};
 		IROCKUDPFILEREF0001 /* MacOSPlatformUDPDatagramClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacOSPlatformUDPDatagramClient.swift; sourceTree = "<group>";};
-		IROCKSETCFGDFILEREF1 /* PacketTunnelRuntimeSettingsConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelRuntimeSettingsConfiguration.swift; sourceTree = "<group>";};
-		IROCKSETFACTFILEREF01 /* PacketTunnelRuntimeSettingsFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelRuntimeSettingsFactory.swift; sourceTree = "<group>";};
-		IROCKSETAPPFILEREF001 /* PacketTunnelRuntimeSettingsApplicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelRuntimeSettingsApplicator.swift; sourceTree = "<group>";};
 		IROCKTUNNELINFOFILEREF1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>";};
 		IROCKTUNNELENTITLEFILEREF /* irockMacTunnelExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = irockMacTunnelExtension.entitlements; sourceTree = "<group>";};
 		IROCKAPPPRODUCT000000001 /* irockMacApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = irockMacApp.app; sourceTree = BUILT_PRODUCTS_DIR;};
@@ -210,7 +195,7 @@
 
 /* Begin PBXSourcesBuildPhase section */
 		IROCKAPPSOURCES0000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (IROCKAPPFILEBUILD000001 /* IrockMacApp.swift in Sources */, IROCKCONTENTBUILD000001 /* ContentView.swift in Sources */, IROCKVPNCFGBUILD00001 /* MacOSVPNManagerConfiguration.swift in Sources */, IROCKVPNMGRBUILD00001 /* MacOSVPNManager.swift in Sources */, IROCKAPPSTORERESBUILD01 /* MacOSAppGroupRuntimeStoreResolver.swift in Sources */, IROCKLOCALPROXYBUILD01 /* MacOSLocalProxyController.swift in Sources */, IROCKAPPTLSBUILD0001 /* MacOSTLSByteStream.swift in Sources */, IROCKUSERTUNBUILD001 /* MacOSUserModeTunController.swift in Sources */, IROCKTUNDEVBUILD001 /* MacOSUserModeTunDevice.swift in Sources */, IROCKTUNROUTEBUILD01 /* MacOSUserModeTunRouteCommands.swift in Sources */, IROCKTUNFLOWBUILD001 /* MacOSUserModeTunPacketFlowIO.swift in Sources */, IROCKTUNCREDBUILD001 /* MacOSImportedShadowsocksCredentialResolver.swift in Sources */, IROCKAPPDIALBUILD001 /* MacOSPlatformTCPDialer.swift in Sources */, IROCKAPPUDPBUILD001 /* MacOSPlatformUDPDatagramClient.swift in Sources */); runOnlyForDeploymentPostprocessing = 0;};
-		IROCKTUNNELSOURCES000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (IROCKPROVIDERBUILD00001 /* PacketTunnelProvider.swift in Sources */, IROCKFLOWIOBUILD000001 /* NEPacketTunnelFlowPacketFlowIO.swift in Sources */, IROCKSTORERESBUILD0001 /* PacketTunnelAppGroupStoreResolver.swift in Sources */, IROCKSMOKERUNBUILD0001 /* MacOSPacketTunnelSmokeRunner.swift in Sources */, IROCKLOOPRUNBUILD001 /* MacOSPacketTunnelLoopRunner.swift in Sources */, IROCKTCPDIALBUILD001 /* MacOSPlatformTCPDialer.swift in Sources */, IROCKTUNTLSBUILD0001 /* MacOSTLSByteStream.swift in Sources */, IROCKTUNUDPBUILD001 /* MacOSPlatformUDPDatagramClient.swift in Sources */, IROCKSETCFGDBUILD001 /* PacketTunnelRuntimeSettingsConfiguration.swift in Sources */, IROCKSETFACTBUILD01 /* PacketTunnelRuntimeSettingsFactory.swift in Sources */, IROCKSETAPPBUILD001 /* PacketTunnelRuntimeSettingsApplicator.swift in Sources */); runOnlyForDeploymentPostprocessing = 0;};
+		IROCKTUNNELSOURCES000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (IROCKPROVIDERBUILD00001 /* PacketTunnelProvider.swift in Sources */, IROCKSMOKERUNBUILD0001 /* MacOSPacketTunnelSmokeRunner.swift in Sources */, IROCKLOOPRUNBUILD001 /* MacOSPacketTunnelLoopRunner.swift in Sources */, IROCKTCPDIALBUILD001 /* MacOSPlatformTCPDialer.swift in Sources */, IROCKTUNTLSBUILD0001 /* MacOSTLSByteStream.swift in Sources */, IROCKTUNUDPBUILD001 /* MacOSPlatformUDPDatagramClient.swift in Sources */, IROCKSETAPPBUILD001 /* PacketTunnelRuntimeSettingsApplicator.swift in Sources */); runOnlyForDeploymentPostprocessing = 0;};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
