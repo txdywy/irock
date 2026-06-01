@@ -69,7 +69,7 @@ public struct PacketParser: Sendable {
             transportProtocol: transportProtocol,
             sourcePort: sourcePort,
             destinationPort: destinationPort,
-            isDNSCandidate: transportProtocol == .udp && destinationPort == 53,
+            isDNSCandidate: transportProtocol == .udp && (destinationPort == 53 || sourcePort == 53),
             udpPayload: udpPayload,
             transportPayload: transportPayload
         )

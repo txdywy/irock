@@ -1,5 +1,4 @@
 import Foundation
-import IrockTunnelCore
 import NetworkExtension
 
 private final class CancellationResumeGate<Value>: @unchecked Sendable {
@@ -35,14 +34,14 @@ private final class CancellationResumeGate<Value>: @unchecked Sendable {
     }
 }
 
-struct NEPacketTunnelFlowPacketFlowIO: PacketFlowIO {
+public struct NEPacketTunnelFlowPacketFlowIO: PacketFlowIO {
     private let packetFlow: NEPacketTunnelFlow
 
-    init(packetFlow: NEPacketTunnelFlow) {
+    public init(packetFlow: NEPacketTunnelFlow) {
         self.packetFlow = packetFlow
     }
 
-    func readPackets(limit: Int) async throws -> [Packet] {
+    public func readPackets(limit: Int) async throws -> [Packet] {
         guard !Task.isCancelled else { return [] }
         let packets = await readPacketObjects()
         guard !Task.isCancelled else { return [] }
@@ -65,7 +64,7 @@ struct NEPacketTunnelFlowPacketFlowIO: PacketFlowIO {
         }
     }
 
-    func writePackets(_ results: [PacketProcessingResult]) async throws {
+    public func writePackets(_ results: [PacketProcessingResult]) async throws {
         let packets = results.compactMap { result -> NEPacket? in
             guard let responsePacketBytes = result.responsePacketBytes, !responsePacketBytes.isEmpty else {
                 return nil

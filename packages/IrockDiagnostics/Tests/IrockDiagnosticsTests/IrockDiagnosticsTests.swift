@@ -1,4 +1,5 @@
 import XCTest
+import IrockCore
 import IrockProtocols
 import IrockRouting
 import IrockTransport

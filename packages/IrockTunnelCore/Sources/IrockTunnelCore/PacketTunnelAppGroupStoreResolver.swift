@@ -1,20 +1,20 @@
 import Foundation
 import IrockStorage
 
-struct PacketTunnelAppGroupStoreResolver: Sendable {
-    enum ResolverError: Error, Equatable, Sendable {
+public struct PacketTunnelAppGroupStoreResolver: Sendable {
+    public enum ResolverError: Error, Equatable, Sendable {
         case missingContainer(String)
     }
 
-    let appGroupIdentifier: String
+    public let appGroupIdentifier: String
     private let fileManager: FileManager
 
-    init(appGroupIdentifier: String = "group.dev.irock.shared", fileManager: FileManager = .default) {
+    public init(appGroupIdentifier: String = "group.dev.irock.shared", fileManager: FileManager = .default) {
         self.appGroupIdentifier = appGroupIdentifier
         self.fileManager = fileManager
     }
 
-    func makeRuntimeStoreBundle(logLimit: Int = 200) throws -> RuntimeStoreBundle {
+    public func makeRuntimeStoreBundle(logLimit: Int = 200) throws -> RuntimeStoreBundle {
         guard let containerURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
             throw ResolverError.missingContainer(appGroupIdentifier)
         }

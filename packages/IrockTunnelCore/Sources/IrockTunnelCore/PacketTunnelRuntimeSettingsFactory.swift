@@ -1,13 +1,13 @@
 import NetworkExtension
 
-struct PacketTunnelRuntimeSettingsFactory: Sendable {
-    let configuration: PacketTunnelRuntimeSettingsConfiguration
+public struct PacketTunnelRuntimeSettingsFactory: Sendable {
+    public let configuration: PacketTunnelRuntimeSettingsConfiguration
 
-    init(configuration: PacketTunnelRuntimeSettingsConfiguration = PacketTunnelRuntimeSettingsConfiguration()) {
+    public init(configuration: PacketTunnelRuntimeSettingsConfiguration = PacketTunnelRuntimeSettingsConfiguration()) {
         self.configuration = configuration
     }
 
-    func makeNetworkSettings() -> NEPacketTunnelNetworkSettings {
+    public func makeNetworkSettings() -> NEPacketTunnelNetworkSettings {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: configuration.tunnelRemoteAddress)
         let ipv4Settings = NEIPv4Settings(addresses: [configuration.ipv4Address], subnetMasks: [configuration.ipv4SubnetMask])
         ipv4Settings.includedRoutes = [.default()]

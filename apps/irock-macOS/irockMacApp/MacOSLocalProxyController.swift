@@ -603,7 +603,7 @@ final class MacOSLocalProxyController: LocalProxyControlling {
     private func runAsync<T>(_ operation: @escaping () async throws -> T) throws -> T {
         let semaphore = DispatchSemaphore(value: 0)
         let box = AsyncResultBox<T>()
-        Task {
+        Task.detached {
             do {
                 box.result = .success(try await operation())
             } catch {

@@ -62,12 +62,12 @@ let package = Package(
         ),
         .target(
             name: "IrockStorage",
-            dependencies: ["IrockCore"],
+            dependencies: ["IrockCore", "IrockProtocols"],
             path: "packages/IrockStorage/Sources/IrockStorage"
         ),
         .testTarget(
             name: "IrockStorageTests",
-            dependencies: ["IrockStorage"],
+            dependencies: ["IrockStorage", "IrockProtocols"],
             path: "packages/IrockStorage/Tests/IrockStorageTests"
         ),
         .target(
@@ -77,7 +77,7 @@ let package = Package(
         ),
         .testTarget(
             name: "IrockDiagnosticsTests",
-            dependencies: ["IrockDiagnostics", "IrockProtocols", "IrockRouting", "IrockTransport"],
+            dependencies: ["IrockDiagnostics", "IrockCore", "IrockProtocols", "IrockRouting", "IrockTransport"],
             path: "packages/IrockDiagnostics/Tests/IrockDiagnosticsTests"
         ),
         .target(
@@ -112,7 +112,7 @@ let package = Package(
         ),
         .target(
             name: "IrockTooling",
-            dependencies: ["IrockTunnelCore", "IrockRouting", "IrockPerformanceKit"],
+            dependencies: ["IrockTunnelCore", "IrockRouting", "IrockCore"],
             path: "packages/IrockTooling/Sources/IrockTooling"
         ),
         .executableTarget(

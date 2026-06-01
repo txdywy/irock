@@ -95,10 +95,11 @@ public struct DNSSniffer {
         guard payload.count > 12 else { return nil }
         
         let qdcount = (Int(payload[4]) << 8) | Int(payload[5])
-        guard qdcount > 0 else { return nil }
+        let ancount = (Int(payload[6]) << 8) | Int(payload[7])
         
+        // Parse DNS query to extract domain name
         var offset = 12
-        var name = ""
+        var queryName = ""
         while offset < payload.count {
             let length = Int(payload[offset])
             if length == 0 {
@@ -111,16 +112,61 @@ public struct DNSSniffer {
             }
             offset += 1
             guard offset + length <= payload.count else { return nil }
-            if !name.isEmpty { name += "." }
+            if !queryName.isEmpty { queryName += "." }
             let label = String(decoding: payload[offset..<offset+length], as: UTF8.self)
-            name += label
+            queryName += label
             offset += length
         }
-        guard !name.isEmpty else { return nil }
-        // Simple sniffer just to associate the query name with the DNS request flow
-        // In a real implementation, you'd parse the DNS response to associate the IP.
-        // For a local tunnel, often the destination IP is tracked if we implement a fake IP pool,
-        // or we sniff DNS responses.
-        return nil // Placeholder since we need DNS responses, not requests, to map IP -> Host
+        guard !queryName.isEmpty else { return nil }
+        
+        // If this is a DNS response (source port 53) and has answers, extract IP
+        if packet.sourcePort == 53 && ancount > 0 {
+            // Skip question section
+            let qtype = (Int(payload[offset]) << 8) | Int(payload[offset + 1])
+            let qclass = (Int(payload[offset + 2]) << 8) | Int(payload[offset + 3])
+            offset += 4
+            
+            // Parse answer section
+            for _ in 0..<ancount {
+                guard offset + 12 <= payload.count else { break }
+                
+                // Skip name (handle compression)
+                if payload[offset] & 0xc0 == 0xc0 {
+                    offset += 2
+                } else {
+                    while offset < payload.count && payload[offset] != 0 {
+                        offset += Int(payload[offset]) + 1
+                    }
+                    offset += 1
+                }
+                
+                let atype = (Int(payload[offset]) << 8) | Int(payload[offset + 1])
+                let aclass = (Int(payload[offset + 2]) << 8) | Int(payload[offset + 3])
+                let ttl = (Int(payload[offset + 4]) << 24) | (Int(payload[offset + 5]) << 16) | (Int(payload[offset + 6]) << 8) | Int(payload[offset + 7])
+                let rdlength = (Int(payload[offset + 8]) << 8) | Int(payload[offset + 9])
+                offset += 10
+                
+                guard offset + rdlength <= payload.count else { break }
+                
+                // Type A record (IPv4)
+                if atype == 1 && rdlength == 4 && aclass == 1 {
+                    let ip = IPAddress.v4(payload[offset], payload[offset + 1], payload[offset + 2], payload[offset + 3])
+                    return (ip: ip, host: queryName)
+                }
+                
+                // Type AAAA record (IPv6)
+                if atype == 28 && rdlength == 16 && aclass == 1 {
+                    guard let ipv6Address = Packet.parseIPv6AddressString(payload[offset..<offset+16]) else {
+                        offset += rdlength
+                        continue
+                    }
+                    return (ip: .v6(ipv6Address), host: queryName)
+                }
+                
+                offset += rdlength
+            }
+        }
+        
+        return nil
     }
 }

@@ -1,6 +1,5 @@
 import Foundation
 import IrockCore
-import IrockPerformanceKit
 import IrockRouting
 import IrockTunnelCore
 

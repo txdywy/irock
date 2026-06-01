@@ -1,5 +1,6 @@
 import XCTest
 import IrockCore
+import IrockProtocols
 @testable import IrockStorage
 
 final class IrockStorageTests: XCTestCase {
@@ -265,6 +266,99 @@ final class IrockStorageTests: XCTestCase {
         let store = FileRuntimeLogStore(directoryURL: directoryURL)
 
         XCTAssertThrowsError(try store.loadRecent())
+    }
+
+    // MARK: - Keychain Credential Resolver Tests
+
+    func testKeychainProxyCredentialResolverImplementsProtocol() throws {
+        let resolver = KeychainProxyCredentialResolver()
+
+        // Verify it conforms to ProxyCredentialResolver
+        let _: ProxyCredentialResolver = resolver
+    }
+
+    func testKeychainProxyCredentialResolverThrowsForMissingCredential() throws {
+        let resolver = KeychainProxyCredentialResolver()
+        let reference = CredentialReference(
+            keychainService: "com.irock.test.missing",
+            account: "nonexistent-account-\(UUID().uuidString)"
+        )
+
+        XCTAssertThrowsError(try resolver.credential(for: reference)) { error in
+            if case ProxyProtocolError.invalidConfiguration(let message) = error {
+                XCTAssertTrue(message.contains("credential not found"))
+            } else {
+                XCTFail("Expected ProxyProtocolError.invalidConfiguration")
+            }
+        }
+    }
+
+    func testKeychainProxyCredentialResolverCanStoreAndRetrieveCredential() throws {
+        let resolver = KeychainProxyCredentialResolver()
+        let reference = CredentialReference(
+            keychainService: "com.irock.test.store-retrieve",
+            account: "test-account-\(UUID().uuidString)"
+        )
+        let expectedCredential = "test-password-123"
+
+        // Store credential
+        try resolver.storeCredential(expectedCredential, for: reference)
+
+        // Retrieve credential
+        let retrievedCredential = try resolver.credential(for: reference)
+        XCTAssertEqual(retrievedCredential, expectedCredential)
+
+        // Cleanup
+        try resolver.deleteCredential(for: reference)
+    }
+
+    func testKeychainProxyCredentialResolverCanDeleteCredential() throws {
+        let resolver = KeychainProxyCredentialResolver()
+        let reference = CredentialReference(
+            keychainService: "com.irock.test.delete",
+            account: "test-account-\(UUID().uuidString)"
+        )
+
+        // Store credential
+        try resolver.storeCredential("password", for: reference)
+
+        // Delete credential
+        try resolver.deleteCredential(for: reference)
+
+        // Verify it's gone
+        XCTAssertThrowsError(try resolver.credential(for: reference))
+    }
+
+    func testKeychainProxyCredentialResolverOverwritesExistingCredential() throws {
+        let resolver = KeychainProxyCredentialResolver()
+        let reference = CredentialReference(
+            keychainService: "com.irock.test.overwrite",
+            account: "test-account-\(UUID().uuidString)"
+        )
+
+        // Store initial credential
+        try resolver.storeCredential("initial-password", for: reference)
+
+        // Overwrite with new credential
+        try resolver.storeCredential("new-password", for: reference)
+
+        // Verify new credential
+        let retrievedCredential = try resolver.credential(for: reference)
+        XCTAssertEqual(retrievedCredential, "new-password")
+
+        // Cleanup
+        try resolver.deleteCredential(for: reference)
+    }
+
+    func testKeychainProxyCredentialResolverDeleteSucceedsForMissingCredential() throws {
+        let resolver = KeychainProxyCredentialResolver()
+        let reference = CredentialReference(
+            keychainService: "com.irock.test.delete-missing",
+            account: "nonexistent-account-\(UUID().uuidString)"
+        )
+
+        // Should not throw for missing credential
+        try resolver.deleteCredential(for: reference)
     }
 
     private func makeSnapshot(id: String, nodeID: String, nodeName: String, routeMode: RouteMode) -> RuntimeSnapshot {

@@ -1,11 +1,11 @@
-struct PacketTunnelRuntimeSettingsConfiguration: Equatable, Sendable {
-    let tunnelRemoteAddress: String
-    let ipv4Address: String
-    let ipv4SubnetMask: String
-    let dnsServers: [String]
-    let mtu: Int
+public struct PacketTunnelRuntimeSettingsConfiguration: Equatable, Sendable {
+    public let tunnelRemoteAddress: String
+    public let ipv4Address: String
+    public let ipv4SubnetMask: String
+    public let dnsServers: [String]
+    public let mtu: Int
 
-    init(
+    public init(
         tunnelRemoteAddress: String = "127.0.0.1",
         ipv4Address: String = "10.255.0.2",
         ipv4SubnetMask: String = "255.255.255.0",
